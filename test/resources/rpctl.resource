@@ -13,6 +13,7 @@ Create Fake Root
         Create File    ${root}/usr/sbin/${b}
     END
     Create File    ${root}/sys/class/net/eth0/carrier    ${carrier}\n
+    Create File    ${root}/sys/class/net/wlan0/carrier    1\n
     Create File    ${root}/etc/os-release    ID=debian\n
     RETURN    ${root}
 
@@ -25,6 +26,7 @@ Rpctl
     ...    --record-commands    ${root}/cmds.log
     ...    --fake-output    id -u\=0
     ...    --fake-output    dpkg-query\=install ok installed
+    ...    --fake-output    nmcli -g WIFI-PROPERTIES.AP\=yes
     ...    --fail-commands    ${fail}
     ...    @{args}    &{opts}
     RETURN    ${r.stdout}

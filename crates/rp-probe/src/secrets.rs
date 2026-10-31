@@ -101,7 +101,10 @@ pub fn scan_text(file: &str, text: &str, values: &[(String, String)]) -> Vec<Fin
             }
         }
         for c in MAC.captures_iter(line) {
-            if !mac_is_example(&c[1]) {
+            let whole = c[0].to_ascii_lowercase();
+            // All-zero (wildcard) and broadcast are not device addresses.
+            let special = whole == "00:00:00:00:00:00" || whole == "ff:ff:ff:ff:ff:ff"; // rp-probe:allow
+            if !special && !mac_is_example(&c[1]) {
                 push("mac-address".into());
             }
         }
@@ -188,6 +191,14 @@ mod tests {
     fn allow_marker_skips_line() {
         let marker = ALLOW_MARKER;
         assert!(kinds(&format!("pi at 192.168.1.23 {marker}")).is_empty()); // rp-probe:allow
+    }
+
+    #[test]
+    fn wildcard_and_broadcast_macs_are_not_findings() {
+        let zero = ["00"; 6].join(":");
+        let bcast = ["ff"; 6].join(":");
+        assert!(kinds(&format!("{zero} passphrase")).is_empty());
+        assert!(kinds(&bcast).is_empty());
     }
 
     #[test]
