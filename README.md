@@ -18,6 +18,13 @@ cp local.env.example local.env   # 已在 .gitignore，不會被 commit
 | `WIFI_COUNTRY` | `TW` |
 | `SD_DISK` | SD 卡的磁碟代號，例如 `disk5`（見步驟 1） |
 
+`WIFI_SSID` 可以從這台 Mac 已儲存的 Wi-Fi 裡挑，密碼自己填：
+
+```bash
+./scripts/wifi-ssid.sh          # 列出已儲存的網路，輸入編號
+./scripts/wifi-ssid.sh --list   # 只列出
+```
+
 ## 1. 找出 SD 卡
 
 ```bash
