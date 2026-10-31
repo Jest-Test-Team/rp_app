@@ -70,8 +70,9 @@ fn looks_like_real_host(ip: Ipv4Addr) -> bool {
 }
 
 fn mac_is_example(first_octet: &str) -> bool {
-    // Locally administered (x2, x6, xA, xE) MACs are what docs and tests use.
-    u8::from_str_radix(first_octet, 16).map(|b| b & 0x02 != 0).unwrap_or(false)
+    // Locally administered (x2, x6, xA, xE) MACs are what docs and tests use;
+    // multicast (odd first octet) is a group address, never a device.
+    u8::from_str_radix(first_octet, 16).map(|b| b & 0x03 != 0).unwrap_or(false)
 }
 
 pub fn scan_text(file: &str, text: &str, values: &[(String, String)]) -> Vec<Finding> {
@@ -199,6 +200,7 @@ mod tests {
         let bcast = ["ff"; 6].join(":");
         assert!(kinds(&format!("{zero} passphrase")).is_empty());
         assert!(kinds(&bcast).is_empty());
+        assert!(kinds("01:00:5e:00:00:01").is_empty(), "multicast group address");
     }
 
     #[test]
