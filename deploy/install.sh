@@ -104,7 +104,11 @@ fetch() { # fetch URL DEST
   else curl -fsSL --retry 3 -o "$2" "$1"; fi
 }
 
-workdir() { mktemp -d "${TMPDIR:-/tmp}/rp-install.XXXXXX"; }
+# All scratch space lives under one directory removed on exit (workdir is
+# called inside $(...) subshells, so per-call bookkeeping would be lost).
+BASE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/rp-install.XXXXXX")
+trap 'rm -rf "$BASE_TMP"' EXIT
+workdir() { mktemp -d "$BASE_TMP/w.XXXXXX"; }
 
 # Download and verify a release archive; prints its path.
 download_release() {

@@ -92,7 +92,7 @@ Create Topology
     END
     # Plain servers: an "internet" web server, a LAN web server and an sshd stand-in on the Pi.
     Start Process    ip    netns    exec    ${NS}inet    python3    -u    -m    http.server    8080
-    ...    --bind    203.0.113.10    alias=inet-http    stderr=${TEMPDIR}/${NS}inet-http.log
+    ...    --bind    203.0.113.10    alias=inet-http    stderr=${OUTPUT_DIR}/${NS}inet-http.log
     Start Process    ip    netns    exec    ${NS}lan    python3    -m    http.server    8080
     ...    --bind    192.0.2.50    alias=lan-http
     Start Process    ip    netns    exec    ${NS}rp    python3    -m    http.server    22

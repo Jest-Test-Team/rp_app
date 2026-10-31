@@ -19,6 +19,7 @@ if [[ ! -x $VENV/bin/robot ]]; then
 fi
 
 cargo build --workspace --quiet --manifest-path "$REPO/Cargo.toml"
+rm -rf "$HERE/results/tmp"   # scratch dirs from the previous run
 
 tags=("$@")
 ((${#tags[@]})) || tags=(static unit cli installer security)

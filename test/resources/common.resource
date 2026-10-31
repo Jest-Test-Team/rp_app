@@ -37,7 +37,10 @@ Require Tool
     RETURN    ${path}
 
 New Temp Dir
-    ${d}=    Evaluate    tempfile.mkdtemp(prefix='rp-robot-')    modules=tempfile
+    [Documentation]    Scratch dirs live under results/tmp (cleared by run.sh), never in /tmp.
+    ${base}=    Evaluate    os.path.join($OUTPUT_DIR, 'tmp')    modules=os
+    Create Directory    ${base}
+    ${d}=    Evaluate    tempfile.mkdtemp(prefix='rp-robot-', dir=$base)    modules=tempfile
     RETURN    ${d}
 
 Is Linux

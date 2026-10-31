@@ -48,10 +48,10 @@ VPN Client Reaches The Internet Through The Exit Node
 VPN Traffic Is Masqueraded Behind The Pi
     ${dir}=    Render    vpn    vpn=wireguard
     Load Firewall    ${dir}/etc/rp/.check/vpn.nft
-    ${before}=    Get File Size    ${TEMPDIR}/${NS}inet-http.log
+    ${before}=    Get File Size    ${OUTPUT_DIR}/${NS}inet-http.log
     ${s}=    HTTP From    cli    203.0.113.10:8080
     Should Be Equal    ${s}    200
-    ${log}=    Get File    ${TEMPDIR}/${NS}inet-http.log
+    ${log}=    Get File    ${OUTPUT_DIR}/${NS}inet-http.log
     # Only the lines written by this request (earlier tests share the server).
     ${new}=    Evaluate    $log.encode()[int($before):].decode()
     Should Contain    ${new}    192.0.2.10
@@ -88,10 +88,10 @@ IoT Client Reaches The Internet Masqueraded Behind The Pi
     [Tags]    integration    requires-root    ap
     ${dir}=    Render AP
     Load Firewall    ${dir}/etc/rp/.check/ap.nft
-    ${before}=    Get File Size    ${TEMPDIR}/${NS}inet-http.log
+    ${before}=    Get File Size    ${OUTPUT_DIR}/${NS}inet-http.log
     ${s}=    HTTP From    iot    203.0.113.10:8080
     Should Be Equal    ${s}    200
-    ${log}=    Get File    ${TEMPDIR}/${NS}inet-http.log
+    ${log}=    Get File    ${OUTPUT_DIR}/${NS}inet-http.log
     ${new}=    Evaluate    $log.encode()[int($before):].decode()
     Should Contain    ${new}    192.0.2.10
 
