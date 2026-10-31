@@ -84,7 +84,15 @@ block_suspicious = false     # 可疑名稱先只記錄
 
 - 在路由器的 DHCP 把 DNS 設成這台裝置，**並保留一組公共 DNS 作為第二順位**（fail-open）
 - 查看事件：`rp-dns events --action blocked`；測試評分：`rp-dns score <name>`
-- 改名單後重新載入：`sudo systemctl reload rp-dns`
+- 管理封鎖清單（`dns.blocklists` 的第一個檔案；會驗證、去重、保留註解，改完自動 reload）：
+
+```bash
+sudo rpctl dns block ads.example tracker.example   # 加入（含子網域）
+sudo rpctl dns unblock tracker.example             # 移除
+sudo rpctl dns list                                # 列出
+sudo rpctl dns import ./hosts.txt                  # 合併 hosts 或一行一個網域的清單
+sudo rpctl dns import --url https://<LIST_URL>     # 只接受 https
+```
 
 ## 6. IoT／訪客 AP
 

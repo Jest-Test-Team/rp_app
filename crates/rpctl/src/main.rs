@@ -91,6 +91,9 @@ enum Cmd {
     /// MCP client management.
     #[command(subcommand)]
     Mcp(McpCmd),
+    /// Manage the DNS blocklist file (the first entry of dns.blocklists).
+    #[command(subcommand)]
+    Dns(DnsCmd),
     /// List privileged action requests.
     Actions,
     /// Approve a pending privileged request and apply it (human decision).
@@ -118,6 +121,45 @@ enum McpCmd {
     RemoveClient { name: String },
     /// List clients and their capabilities.
     Clients,
+}
+
+#[derive(Subcommand)]
+enum DnsCmd {
+    /// Show blocked domains in the list file.
+    List {
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Block domains (subdomains included). Creates the file if needed.
+    Block {
+        #[arg(required = true)]
+        domains: Vec<String>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        no_reload: bool,
+    },
+    /// Unblock domains.
+    Unblock {
+        #[arg(required = true)]
+        domains: Vec<String>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        no_reload: bool,
+    },
+    /// Merge a hosts-format or one-domain-per-line list (file or https URL).
+    Import {
+        /// Local file to import.
+        source: Option<PathBuf>,
+        /// Download from an https URL instead.
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        no_reload: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -389,6 +431,7 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             println!("apply or re-apply: sudo rpctl apply ap   (hostapd re-reads it on restart)");
         }
         Cmd::Mcp(c) => return mcp_cmd(cli, c),
+        Cmd::Dns(c) => return dns_cmd(cli, c, runner),
         Cmd::Actions => {
             let cfg = match load_config(&cli.config) {
                 Ok(c) => c,
@@ -623,6 +666,162 @@ fn agent_state(cfg: &Config, root: &Path) -> PathBuf {
 
 fn action_store(cfg: &Config, root: &Path) -> rp_policy::approvals::Store {
     rp_policy::approvals::Store::new(&agent_state(cfg, root).join("actions"))
+}
+
+/// Domain of a list line (plain or hosts format), normalised, or None.
+fn list_line_domain(line: &str) -> Option<String> {
+    let l = line.split('#').next()?.trim();
+    let mut f = l.split_whitespace();
+    let first = f.next()?;
+    let d = if first.parse::<std::net::IpAddr>().is_ok() {
+        f.next()?
+    } else if f.next().is_some() {
+        return None; // a plain list has one domain per line; anything else is malformed
+    } else {
+        first
+    };
+    rp_dns::lists::normalize(d)
+}
+
+fn dns_cmd(cli: &Cli, c: &DnsCmd, runner: &dyn Runner) -> Result<ExitCode> {
+    let cfg = match load_config(&cli.config) {
+        Ok(c) => c,
+        Err(code) => return Ok(code),
+    };
+    let d = cfg.dns.as_ref().context("no [dns] section in the config")?;
+    let file_arg = match c {
+        DnsCmd::List { file } | DnsCmd::Block { file, .. } | DnsCmd::Unblock { file, .. } => file,
+        DnsCmd::Import { file, .. } => file,
+    };
+    let path = match file_arg {
+        Some(f) => under_root(&cli.root, &f.display().to_string()),
+        None => under_root(
+            &cli.root,
+            d.blocklists.first().context("dns.blocklists is empty; add a file path to rp.toml")?,
+        ),
+    };
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        "# One domain per line, or hosts format (0.0.0.0 domain). Subdomains are included.\n\
+         # Managed with: sudo rpctl dns block|unblock|import\n"
+            .into()
+    });
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let mut present: std::collections::BTreeSet<String> =
+        lines.iter().filter_map(|l| list_line_domain(l)).collect();
+
+    let normalize_all = |ds: &[String]| -> Result<Vec<String>> {
+        ds.iter()
+            .map(|x| {
+                rp_dns::lists::normalize(x).with_context(|| format!("'{x}' is not a valid domain"))
+            })
+            .collect()
+    };
+    let (changed, reload, summary) = match c {
+        DnsCmd::List { .. } => {
+            for dom in &present {
+                println!("{dom}");
+            }
+            eprintln!("{} domain(s) in {}", present.len(), path.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+        DnsCmd::Block { domains, no_reload, .. } => {
+            let mut added = 0;
+            for dom in normalize_all(domains)? {
+                if present.insert(dom.clone()) {
+                    lines.push(dom);
+                    added += 1;
+                }
+            }
+            (added > 0, !no_reload, format!("blocked {added} new domain(s)"))
+        }
+        DnsCmd::Unblock { domains, no_reload, .. } => {
+            let gone: std::collections::BTreeSet<String> =
+                normalize_all(domains)?.into_iter().collect();
+            let before = lines.len();
+            lines.retain(|l| list_line_domain(l).is_none_or(|dom| !gone.contains(&dom)));
+            let removed = before - lines.len();
+            (removed > 0, !no_reload, format!("unblocked {removed} line(s)"))
+        }
+        DnsCmd::Import { source, url, no_reload, .. } => {
+            let incoming = match (source, url) {
+                (Some(f), None) => std::fs::read_to_string(f)
+                    .with_context(|| format!("cannot read {}", f.display()))?,
+                (None, Some(u)) => {
+                    anyhow::ensure!(
+                        u.starts_with("https://") && !u.contains(char::is_whitespace),
+                        "only https:// URLs are accepted"
+                    );
+                    let tmp =
+                        std::env::temp_dir().join(format!("rp-dns-import-{}", std::process::id()));
+                    let argv: Vec<String> =
+                        ["curl", "-fsSL", "--proto", "=https", "--max-filesize", "50000000", "-o"]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .chain([tmp.display().to_string(), u.clone()])
+                            .collect();
+                    let out = runner.run(&argv)?;
+                    anyhow::ensure!(out.ok(), "download failed: {}", out.stderr.trim());
+                    let t = std::fs::read_to_string(&tmp).unwrap_or_default();
+                    let _ = std::fs::remove_file(&tmp);
+                    t
+                }
+                _ => anyhow::bail!("give a FILE or --url URL"),
+            };
+            let (mut added, mut skipped) = (0usize, 0usize);
+            lines.push(format!(
+                "# imported: {}",
+                url.clone().unwrap_or_else(|| source.as_ref().unwrap().display().to_string())
+            ));
+            for l in incoming.lines() {
+                let t = l.split('#').next().unwrap_or("").trim();
+                if t.is_empty() {
+                    continue;
+                }
+                match list_line_domain(t) {
+                    Some(dom)
+                        if !matches!(
+                            dom.as_str(),
+                            "localhost" | "localhost.localdomain" | "local" | "broadcasthost"
+                        ) =>
+                    {
+                        if present.insert(dom.clone()) {
+                            lines.push(dom);
+                            added += 1;
+                        }
+                    }
+                    _ => skipped += 1,
+                }
+            }
+            (
+                added > 0,
+                !no_reload,
+                format!("imported {added} new domain(s), skipped {skipped} invalid line(s)"),
+            )
+        }
+    };
+    if changed {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = path.with_extension("rp-tmp");
+        std::fs::write(&tmp, lines.join("\n") + "\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644))?;
+        }
+        std::fs::rename(&tmp, &path)?;
+    }
+    println!("{summary} ({} total) in {}", present.len(), path.display());
+    if changed && reload {
+        let argv: Vec<String> =
+            ["systemctl", "reload", "rp-dns.service"].iter().map(|s| s.to_string()).collect();
+        match runner.run(&argv) {
+            Ok(o) if o.ok() => println!("rp-dns reloaded"),
+            _ => println!("note: could not reload rp-dns (run: sudo systemctl reload rp-dns)"),
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn mcp_cmd(cli: &Cli, c: &McpCmd) -> Result<ExitCode> {

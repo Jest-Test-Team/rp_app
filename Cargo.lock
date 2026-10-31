@@ -863,6 +863,7 @@ dependencies = [
  "qrcode",
  "rp-agent",
  "rp-core",
+ "rp-dns",
  "rp-policy",
  "rp-schema",
  "rpassword",
