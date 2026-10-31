@@ -1,0 +1,96 @@
+name: release
+
+# Tag pushes (vX.Y.Z) publish a GitHub Release. A manual run builds the same
+# assets but only uploads them as workflow artifacts unless publish=true.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create a GitHub Release (otherwise dry run: artifacts only)"
+        type: boolean
+        default: false
+      tag:
+        description: "Tag to release when publish=true (e.g. v0.1.0)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - armv7-unknown-linux-gnueabihf
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Install zig and cargo-zigbuild
+        run: |
+          pip install ziglang==0.13.0
+          cargo install cargo-zigbuild --locked --version 0.19.8
+      - name: Test before packaging
+        run: cargo test --workspace --locked
+      - name: Package with the same script users install with
+        run: bash deploy/install.sh --package-only dist --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.target }}
+          path: dist/rp-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  assemble:
+    name: checksums, SBOM, ${{ (github.event_name == 'push' || inputs.publish) && 'publish' || 'dry run' }}
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: dist
+          merge-multiple: true
+      - name: SBOM (CycloneDX)
+        run: |
+          cargo install cargo-cyclonedx --locked --version 0.5.7
+          cargo cyclonedx --format json --all
+          mkdir -p sbom && find crates -name '*.cdx.json' -exec cp {} sbom/ \;
+          tar -czf dist/sbom.tar.gz -C sbom .
+      - name: Add installers
+        run: cp deploy/install.sh deploy/install.ps1 dist/
+      - name: SHA256SUMS
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Build provenance attestation
+        if: github.event_name == 'push' || inputs.publish
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/rp-*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid tag '$TAG'"; exit 1; }
+          gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag

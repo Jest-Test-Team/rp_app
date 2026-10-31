@@ -16,6 +16,7 @@ Shell Scripts Pass ShellCheck
     Run Ok    shellcheck    -x    ${INSTALL_SH}    ${REPO}/test/run.sh    @{scripts}
 
 PowerShell Installer Passes PSScriptAnalyzer
+    [Tags]    static    pwsh
     Require Tool    pwsh
     ${cmd}=    Catenate    SEPARATOR=${SPACE}
     ...    if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -RequiredVersion 1.23.0 };

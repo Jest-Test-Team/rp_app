@@ -2,6 +2,7 @@
 Documentation     install.sh / install.ps1: argument validation, dry runs, packaging,
 ...               SHA256-verified release install from a local mirror, tamper detection,
 ...               uninstall and purge. Nothing touches the real system: --root is used.
+...               PowerShell installer cases live in 51_installer_ps1.robot.
 Resource          ../resources/common.resource
 Suite Setup       Build Release Mirror
 Test Tags         installer
@@ -103,23 +104,6 @@ Installed Binary Runs
     ${v}=    Run Ok    ${root}/usr/local/bin/rpctl    --version
     Should Start With    ${v}    rpctl
 
-PowerShell Dry Run Prints The Plan
-    [Tags]    installer    pwsh
-    Require Tool    pwsh
-    ${out}=    Run Ok    pwsh    -NoProfile    -NonInteractive    -File    ${INSTALL_PS1}
-    ...    -Target    pi@example.invalid    -Triple    armv7-unknown-linux-gnueabihf
-    ...    -Version    v0.1.0    -DryRun
-    Should Contain    ${out}    releases/download/v0.1.0/rp-armv7-unknown-linux-gnueabihf.tar.gz
-    Should Contain    ${out}    would: ssh pi@example.invalid sudo bash /tmp/install.sh
-
-PowerShell Rejects Malicious Arguments
-    [Tags]    installer    pwsh
-    [Template]    PowerShell Rejects
-    -Version    v1;reboot
-    -Repo       evil;rm
-    -Prefix     /x$(id)
-    -Target     a@b;id
-
 *** Keywords ***
 Build Release Mirror
     [Documentation]    Package the current tree with install.sh --package-only and lay it
@@ -144,14 +128,3 @@ Installer Rejects
     [Arguments]    ${flag}    ${value}    ${message}
     ${r}=    Run Expecting    1    bash    ${INSTALL_SH}    --dry-run    ${flag}    ${value}
     Should Contain    ${r.stdout}    ${message}
-
-PowerShell Rejects
-    [Arguments]    ${param}    ${value}
-    Require Tool    pwsh
-    @{target}=    Create List    -Target    pi@example.invalid
-    IF    '${param}' == '-Target'    @{target}=    Create List
-    ${r}=    Run Process    pwsh    -NoProfile    -NonInteractive    -File    ${INSTALL_PS1}
-    ...    @{target}    -Triple    armv7-unknown-linux-gnueabihf    -DryRun
-    ...    ${param}    ${value}    stderr=STDOUT
-    Should Not Be Equal As Integers    ${r.rc}    0
-    Should Contain Any    ${r.stdout}    ValidatePattern    does not match    Cannot validate

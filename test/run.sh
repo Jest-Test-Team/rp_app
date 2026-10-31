@@ -23,7 +23,7 @@ cargo build --workspace --quiet --manifest-path "$REPO/Cargo.toml"
 tags=("$@")
 ((${#tags[@]})) || tags=(static unit cli installer security)
 
-args=(--outputdir "$HERE/results" --exclude perf)
+args=(--outputdir "$HERE/results" --exclude perf --runemptysuite)
 if [[ ${tags[0]} != all ]]; then
   for t in "${tags[@]}"; do args+=(--include "$t"); done
 fi

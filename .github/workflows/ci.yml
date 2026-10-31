@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  push:
+    branches: [main, pi-wifi-flash]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: robot (static, unit, cli, installer, security)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Robot suites
+        run: bash test/run.sh static unit cli installer security
+      - name: Upload Robot report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-linux
+          path: test/results/
+          retention-days: 14
+
+  integration:
+    name: robot (integration, network namespaces)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install nftables and iproute2
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nftables iproute2
+      - name: Robot integration suites (root, isolated network namespaces)
+        env:
+          RP_ALLOW_ROOT: "1"
+        run: bash test/run.sh integration
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-integration
+          path: test/results/
+          retention-days: 14
+
+  cross:
+    name: cross-build ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [armv7-unknown-linux-gnueabihf, aarch64-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install zig and cargo-zigbuild
+        run: |
+          pip install ziglang==0.13.0
+          cargo install cargo-zigbuild --locked --version 0.19.8
+      - name: Package
+        run: bash deploy/install.sh --package-only dist --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rp-${{ matrix.target }}
+          path: dist/
+          retention-days: 7
+
+  windows-installer:
+    name: robot (install.ps1 on Windows)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Robot PowerShell suites
+        shell: pwsh
+        run: ./test/run.ps1 -Tags pwsh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-windows
+          path: test/results/
+          retention-days: 14
