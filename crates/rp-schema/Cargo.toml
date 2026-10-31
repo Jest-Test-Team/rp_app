@@ -1,0 +1,15 @@
+[package]
+name = "rp-schema"
+description = "Shared configuration and event types for the rp edge security gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+ipnet.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

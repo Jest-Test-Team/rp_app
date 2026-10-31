@@ -1,0 +1,17 @@
+[package]
+name = "rp-core"
+description = "Config validation, file rendering and safe apply/rollback for the rp edge gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rp-schema = { path = "../rp-schema" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+ipnet.workspace = true
+thiserror.workspace = true
+similar.workspace = true
