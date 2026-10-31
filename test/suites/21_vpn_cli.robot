@@ -116,7 +116,43 @@ Add Peer Refuses Duplicates And Needs The Server Key
     ...    bad;name
     Should Contain    ${bad.stdout}    must be letters
 
+Peer Lifecycle: Add With --write, List, Revoke
+    [Documentation]    The config file is edited in place (comments kept, backup made) and the
+    ...                rendered tunnel config follows it.
+    ${root}=    Create Fake Root
+    Create File    ${root}/etc/rp/wireguard/private.key    ${SERVER_KEY}\n
+    ${cfg}=    Copy Config To Temp
+    Run Ok    ${RPCTL}    --config    ${cfg}    --root    ${root}    vpn    add-peer    laptop
+    ...    --no-qr    --write
+    ${text}=    Get File    ${cfg}
+    Should Contain    ${text}    name = "laptop"
+    Should Contain    ${text}    \# Test fixture
+    ${backups}=    List Files In Directory    ${cfg.rsplit('/', 1)[0]}    rp.toml.bak-*
+    Length Should Be    ${backups}    1
+    ${peers}=    Run Ok    ${RPCTL}    --config    ${cfg}    vpn    peers
+    Should Contain    ${peers}    laptop
+    Should Contain    ${peers}    198.51.100.3
+    ${conf}=    Run Ok    ${RPCTL}    --config    ${cfg}    render    vpn
+    Should Contain    ${conf}    \# laptop
+    Run Ok    ${RPCTL}    --config    ${cfg}    vpn    remove-peer    laptop
+    ${after}=    Run Ok    ${RPCTL}    --config    ${cfg}    render    vpn
+    Should Not Contain    ${after}    \# laptop
+    Should Contain    ${after}    \# phone
+
+Removing An Unknown Peer Is An Error And Leaves The Config Alone
+    ${cfg}=    Copy Config To Temp
+    ${before}=    Get File    ${cfg}
+    ${r}=    Run Expecting    1    ${RPCTL}    --config    ${cfg}    vpn    remove-peer    nobody
+    Should Contain    ${r.stdout}    no WireGuard peer named
+    ${after}=    Get File    ${cfg}
+    Should Be Equal    ${before}    ${after}
+
 *** Keywords ***
+Copy Config To Temp
+    ${dir}=    New Temp Dir
+    Copy File    ${WG}    ${dir}/rp.toml
+    RETURN    ${dir}/rp.toml
+
 Module Matches Golden
     [Arguments]    ${config}    ${golden}
     ${out}=    New Temp Dir

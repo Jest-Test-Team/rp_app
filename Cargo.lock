@@ -352,6 +352,7 @@ dependencies = [
  "rp-schema",
  "serde",
  "serde_json",
+ "toml_edit",
 ]
 
 [[package]]

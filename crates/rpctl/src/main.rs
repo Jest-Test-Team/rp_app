@@ -99,7 +99,15 @@ enum VpnCmd {
         /// Do not print the QR code.
         #[arg(long)]
         no_qr: bool,
+        /// Also add the peer to the config file (a backup is kept).
+        #[arg(long)]
+        write: bool,
     },
+    /// Revoke a WireGuard client: remove it from the config file (a backup is
+    /// kept). Run `rpctl apply vpn` afterwards to drop it from the tunnel.
+    RemovePeer { name: String },
+    /// List WireGuard clients.
+    Peers,
 }
 
 fn module(name: &str) -> Result<Box<dyn Module>> {
@@ -251,12 +259,60 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 rep.backup_id.unwrap_or_default()
             );
         }
-        Cmd::Vpn(VpnCmd::AddPeer { name, host, no_qr }) => {
+        Cmd::Vpn(VpnCmd::AddPeer { name, host, no_qr, write }) => {
             let cfg = match load_config(&cli.config) {
                 Ok(c) => c,
                 Err(code) => return Ok(code),
             };
-            return add_peer(&cfg, &cli.root, name, *host, !no_qr);
+            let peer = add_peer(&cfg, &cli.root, name, *host, !no_qr)?;
+            if *write {
+                edit_config(&cli.config, |doc| {
+                    let peers = peers_array(doc)?;
+                    let mut t = toml_edit::Table::new();
+                    t["name"] = toml_edit::value(peer.name.clone());
+                    t["public_key"] = toml_edit::value(peer.public_key.clone());
+                    t["host"] = toml_edit::value(i64::from(peer.host));
+                    peers.push(t);
+                    Ok(())
+                })?;
+                println!(
+                    "added '{name}' to {} — now run: sudo rpctl apply vpn",
+                    cli.config.display()
+                );
+            }
+        }
+        Cmd::Vpn(VpnCmd::RemovePeer { name }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let known = cfg.vpn.as_ref().map(|v| v.wireguard.peers.iter().any(|p| &p.name == name));
+            if known != Some(true) {
+                anyhow::bail!("no WireGuard peer named '{name}'");
+            }
+            edit_config(&cli.config, |doc| {
+                let peers = peers_array(doc)?;
+                peers.retain(|t| t.get("name").and_then(|v| v.as_str()) != Some(name.as_str()));
+                Ok(())
+            })?;
+            println!(
+                "revoked '{name}' in {} — now run: sudo rpctl apply vpn",
+                cli.config.display()
+            );
+        }
+        Cmd::Vpn(VpnCmd::Peers) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            for p in cfg.vpn.iter().flat_map(|v| v.wireguard.peers.iter()) {
+                println!(
+                    "{:<20} host={:<4} {}",
+                    p.name,
+                    p.host,
+                    rp_core::vpn::wg_peer_addr(&cfg, p.host)
+                );
+            }
         }
         Cmd::Status => {
             let cfg = load_config(&cli.config).ok();
@@ -298,7 +354,7 @@ fn add_peer(
     name: &str,
     host: Option<u32>,
     qr: bool,
-) -> Result<ExitCode> {
+) -> Result<rp_schema::WgPeer> {
     use rp_core::wg;
     let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode == rp_schema::VpnMode::Wireguard) else {
         anyhow::bail!("vpn.mode must be \"wireguard\" to add peers");
@@ -320,12 +376,9 @@ fn add_peer(
     let server_public = wg::public_from_private(&server_private).map_err(anyhow::Error::msg)?;
 
     let kp = wg::generate();
+    let peer = rp_schema::WgPeer { name: name.to_string(), public_key: kp.public.clone(), host };
     let mut candidate = cfg.clone();
-    candidate.vpn.as_mut().unwrap().wireguard.peers.push(rp_schema::WgPeer {
-        name: name.to_string(),
-        public_key: kp.public.clone(),
-        host,
-    });
+    candidate.vpn.as_mut().unwrap().wireguard.peers.push(peer.clone());
     rp_core::config::validate(&candidate)?;
 
     let client = wg::client_config(cfg, host, &kp.private, &server_public);
@@ -338,7 +391,41 @@ fn add_peer(
     }
     println!("# ---- add this to /etc/rp/rp.toml, then run: sudo rpctl apply vpn ----");
     print!("{}", wg::peer_toml(name, &kp.public, host));
-    Ok(ExitCode::SUCCESS)
+    Ok(peer)
+}
+
+/// `[[vpn.wireguard.peers]]` in a TOML document, created if missing.
+fn peers_array(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::ArrayOfTables> {
+    let vpn =
+        doc.get_mut("vpn").and_then(|v| v.as_table_mut()).context("config has no [vpn] table")?;
+    let wg = vpn.entry("wireguard").or_insert_with(|| toml_edit::Item::Table(Default::default()));
+    let wg = wg.as_table_mut().context("[vpn.wireguard] is not a table")?;
+    let peers =
+        wg.entry("peers").or_insert_with(|| toml_edit::Item::ArrayOfTables(Default::default()));
+    peers.as_array_of_tables_mut().context("vpn.wireguard.peers must be [[vpn.wireguard.peers]]")
+}
+
+/// Edit the config preserving comments/formatting; keeps a timestamped backup
+/// and refuses to write a result that fails validation.
+fn edit_config(
+    path: &Path,
+    f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,
+) -> Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    let mut doc: toml_edit::DocumentMut = text.parse()?;
+    f(&mut doc)?;
+    let out = doc.to_string();
+    rp_core::config::parse(&out).context("edited config would be invalid; not written")?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let backup = path.with_extension(format!("toml.bak-{stamp}"));
+    std::fs::copy(path, &backup)?;
+    let tmp = path.with_extension("toml.rp-tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 /// argv the dead-man timer uses to call this binary back with the same config.
