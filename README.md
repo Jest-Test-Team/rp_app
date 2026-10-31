@@ -82,7 +82,7 @@ hostname; iw dev wlan0 link; ip -4 addr show wlan0
 - Edimax 小網卡**只支援 2.4 GHz**；路由器只開 5 GHz 或只開 WPA3 都會連不上。
 - 也可以先用手機熱點（開「最大相容性」/ 2.4 GHz），Mac 連同一個熱點。
 - `04-find-pi.sh` 找不到 `.local` 時會掃 ARP 表，列出 Raspberry Pi / Edimax 的 MAC 和 IP。
-- 改了 Wi-Fi 設定想重來：重跑步驟 3、4（cloud-init 只在第一次開機套用）。
+- 改了 Wi-Fi 設定想重來：SD 卡插回 Mac，只要重跑步驟 4。腳本每次都會換新的 `instance_id`，讓 cloud-init 在下次開機重新套用設定，不用重新燒錄。
 
 ## 備案：Raspberry Pi Imager 圖形介面
 
