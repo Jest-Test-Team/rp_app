@@ -6,10 +6,14 @@ Test Template     Crate Unit Tests Pass
 
 *** Test Cases ***    CRATE         MIN_TESTS
 rp-schema             rp-schema     2
-rp-core               rp-core       45
+rp-core               rp-core       55
 rpctl                 rpctl         2
 rp-probe              rp-probe      7
 rp-dns                rp-dns        13
+rp-http               rp-http       2
+rp-policy             rp-policy     14
+rp-agent              rp-agent      6
+rp-mcp                rp-mcp        3
 
 *** Keywords ***
 Crate Unit Tests Pass
