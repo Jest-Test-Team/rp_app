@@ -74,6 +74,33 @@ Unconfirmed Firewall Change Rolls Back Automatically
     Should Contain    ${s}    applied=false
     As Root On Device    nft list table inet rp    rc=1
 
+WireGuard Exit Node Applies Forwards And Rolls Back Cleanly
+    [Tags]    destructive    vpn
+    Require Apply
+    As Root On Device    rpctl --config ${CFG} apply base --no-packages && rpctl confirm
+    ${vpn}=    Catenate    SEPARATOR=\n
+    ...    [vpn]
+    ...    mode = "wireguard"
+    ...    [vpn.wireguard]
+    ...    endpoint = "vpn.example.invalid:51820"
+    As Root On Device    cp ${CFG} ${CFG}.e2e-orig
+    ${b64}=    Evaluate    base64.b64encode(('\n' + $vpn + '\n').encode()).decode()    modules=base64
+    As Root On Device    echo ${b64} | base64 -d >> ${CFG}
+    FOR    ${round}    IN RANGE    2
+        As Root On Device    rpctl --config ${CFG} apply vpn && rpctl confirm
+        As Root On Device    ip link show wg0
+        ${fwd}=    As Root On Device    sysctl -n net.ipv4.ip_forward
+        Should Be Equal    ${fwd}    1
+        ${rules}=    As Root On Device    nft list table inet rp
+        Should Contain    ${rules}    vpn_block4
+        As Root On Device    test -s /etc/rp/wireguard/private.key && test "$(stat -c %a /etc/rp/wireguard/private.key)" = 600
+        As Root On Device    rpctl --config ${CFG} rollback vpn
+        ${off}=    As Root On Device    sysctl -n net.ipv4.ip_forward
+        Should Be Equal    ${off}    0
+        As Root On Device    ip link show wg0    rc=1
+    END
+    As Root On Device    mv ${CFG}.e2e-orig ${CFG} && rpctl --config ${CFG} rollback base
+
 *** Keywords ***
 Require Apply
     Skip If    '${APPLY}' != '1'    set RP_E2E_APPLY=1 to run state-changing tests
