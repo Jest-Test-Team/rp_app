@@ -1,0 +1,16 @@
+# Managed by rpctl — local edits will be overwritten.
+[Unit]
+Description=rp access point (hostapd) on wlan0
+After=network.target NetworkManager.service
+Wants=rp-ap-dnsmasq.service
+
+[Service]
+ExecStartPre=/usr/sbin/ip link set wlan0 up
+ExecStartPre=/usr/sbin/ip addr replace 198.51.100.1/24 dev wlan0
+ExecStart=/usr/sbin/hostapd /etc/rp/ap/hostapd.conf
+ExecStopPost=-/usr/sbin/ip addr flush dev wlan0
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

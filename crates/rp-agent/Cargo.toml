@@ -1,0 +1,21 @@
+[package]
+name = "rp-agent"
+description = "Edge agent for the rp gateway: read-only observation API and privileged-action requests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rp-core = { path = "../rp-core" }
+rp-schema = { path = "../rp-schema" }
+rp-policy = { path = "../rp-policy" }
+rp-http = { path = "../rp-http" }
+rp-dns = { path = "../rp-dns" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ipnet.workspace = true

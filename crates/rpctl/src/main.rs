@@ -1,0 +1,773 @@
+//! rpctl — configure, apply and roll back the rp edge security gateway.
+//!
+//! Exit codes: 0 ok · 1 error · 2 preflight failed · 3 invalid config.
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use rp_core::apply::{self, ApplyOptions, Target};
+use rp_core::files::under_root;
+use rp_core::module::{lookup, Module, MODULES};
+use rp_core::preflight::{self, Status};
+use rp_core::runner::{RecordingRunner, Runner, SystemRunner};
+use rp_schema::Config;
+
+const EXIT_PREFLIGHT: u8 = 2;
+const EXIT_CONFIG: u8 = 3;
+
+#[derive(Parser)]
+#[command(name = "rpctl", version, about = "Raspberry Pi edge security gateway control")]
+struct Cli {
+    /// Config file.
+    #[arg(long, env = "RP_CONFIG", default_value = "/etc/rp/rp.toml", global = true)]
+    config: PathBuf,
+    /// Alternate filesystem root (testing / image preparation).
+    #[arg(long, default_value = "/", global = true)]
+    root: PathBuf,
+    /// Machine-readable output.
+    #[arg(long, global = true)]
+    json: bool,
+    /// Record commands to FILE instead of running them (testing).
+    #[arg(long, hide = true, global = true)]
+    record_commands: Option<PathBuf>,
+    /// With --record-commands: comma-separated command prefixes that fail.
+    #[arg(long, hide = true, global = true)]
+    fail_commands: Option<String>,
+    /// With --record-commands: canned stdout, `PREFIX=STDOUT` (repeatable).
+    #[arg(long, hide = true, global = true)]
+    fake_output: Vec<String>,
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// List modules.
+    Modules,
+    /// Validate the config file.
+    Check,
+    /// Check that the system is safe to apply a module to.
+    Preflight { module: String },
+    /// Print (or write to --out) the files a module manages.
+    Render {
+        module: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Apply a module.
+    Apply {
+        module: String,
+        /// Show the diff and commands without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not apt-get install missing packages.
+        #[arg(long)]
+        no_packages: bool,
+        /// Do not arm the automatic-rollback timer for firewall changes.
+        #[arg(long)]
+        no_confirm_timer: bool,
+    },
+    /// Keep the last firewall change (cancels the automatic rollback).
+    Confirm,
+    /// Restore files from the last (or a given) backup.
+    Rollback {
+        module: String,
+        #[arg(long)]
+        backup: Option<String>,
+        /// Invoked by the automatic-rollback timer.
+        #[arg(long, hide = true)]
+        auto: bool,
+    },
+    /// Show module state and drift.
+    Status,
+    /// VPN helpers.
+    #[command(subcommand)]
+    Vpn(VpnCmd),
+    /// Access point helpers.
+    #[command(subcommand)]
+    Ap(ApCmd),
+    /// MCP client management.
+    #[command(subcommand)]
+    Mcp(McpCmd),
+    /// List privileged action requests.
+    Actions,
+    /// Approve a pending privileged request and apply it (human decision).
+    Approve { id: String },
+    /// Deny a pending privileged request.
+    Deny { id: String },
+    /// Re-add unexpired approved quarantines after a firewall reload.
+    #[command(hide = true)]
+    QuarantineRestore,
+    /// Audit log tools.
+    #[command(subcommand)]
+    Audit(AuditCmd),
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Create a client token (printed once; only its hash is stored).
+    AddClient {
+        name: String,
+        /// Comma-separated: read, active, privileged
+        #[arg(long, default_value = "read")]
+        cap: String,
+    },
+    /// Revoke a client.
+    RemoveClient { name: String },
+    /// List clients and their capabilities.
+    Clients,
+}
+
+#[derive(Subcommand)]
+enum AuditCmd {
+    /// Verify the hash chains of the agent and MCP audit logs.
+    Verify,
+}
+
+#[derive(Subcommand)]
+enum ApCmd {
+    /// Set the WPA2 passphrase (8-63 chars). Prompted without echo, or read
+    /// from stdin with --stdin. Stored root-only, never printed or logged.
+    SetPassphrase {
+        #[arg(long)]
+        stdin: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum VpnCmd {
+    /// Create a WireGuard client: prints its config and QR code once, plus the
+    /// TOML to add to rp.toml. The client's private key is never stored.
+    AddPeer {
+        name: String,
+        /// Host number inside the tunnel subnet (default: next free).
+        #[arg(long)]
+        host: Option<u32>,
+        /// Do not print the QR code.
+        #[arg(long)]
+        no_qr: bool,
+        /// Also add the peer to the config file (a backup is kept).
+        #[arg(long)]
+        write: bool,
+    },
+    /// Revoke a WireGuard client: remove it from the config file (a backup is
+    /// kept). Run `rpctl apply vpn` afterwards to drop it from the tunnel.
+    RemovePeer { name: String },
+    /// List WireGuard clients.
+    Peers,
+}
+
+fn module(name: &str) -> Result<Box<dyn Module>> {
+    lookup(name).with_context(|| format!("unknown module '{name}' (known: {})", MODULES.join(", ")))
+}
+
+/// A module that is configured, or an error explaining why not.
+fn enabled_module(name: &str, cfg: &Config) -> Result<Box<dyn Module>> {
+    let m = module(name)?;
+    m.enabled(cfg).map_err(|e| anyhow::anyhow!("module '{name}' is not configured: {e}"))?;
+    Ok(m)
+}
+
+fn load_config(path: &Path) -> std::result::Result<Config, ExitCode> {
+    rp_core::config::load(path).map_err(|e| {
+        eprintln!("error: {e}");
+        ExitCode::from(EXIT_CONFIG)
+    })
+}
+
+fn print_checks(checks: &[preflight::Check], json: bool) {
+    if json {
+        println!("{}", serde_json::to_string_pretty(checks).unwrap());
+        return;
+    }
+    for c in checks {
+        let mark = match c.status {
+            Status::Pass => "PASS",
+            Status::Warn => "WARN",
+            Status::Fail => "FAIL",
+        };
+        println!("[{mark}] {:<16} {}", c.name, c.detail);
+    }
+}
+
+fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
+    let target = Target { root: cli.root.clone(), runner };
+    match &cli.cmd {
+        Cmd::Modules => {
+            for m in MODULES {
+                println!("{m}");
+            }
+        }
+        Cmd::Check => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&cfg)?);
+            } else {
+                println!("config OK: {}", cli.config.display());
+            }
+        }
+        Cmd::Preflight { module: name } => {
+            module(name)?;
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let facts = preflight::gather(&cfg, &target);
+            let checks = preflight::evaluate(&cfg, name, &facts, false);
+            print_checks(&checks, cli.json);
+            if !preflight::passed(&checks) {
+                return Ok(ExitCode::from(EXIT_PREFLIGHT));
+            }
+        }
+        Cmd::Render { module: name, out } => {
+            module(name)?;
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let m = enabled_module(name, &cfg)?;
+            for f in m.render(&cfg) {
+                match out {
+                    Some(dir) => {
+                        let p = under_root(dir, &f.path);
+                        std::fs::create_dir_all(p.parent().unwrap())?;
+                        std::fs::write(&p, &f.content)?;
+                        println!("{}", p.display());
+                    }
+                    None => println!("==> {} (mode {:o})\n{}", f.path, f.mode, f.content),
+                }
+            }
+        }
+        Cmd::Apply { module: name, dry_run, no_packages, no_confirm_timer } => {
+            module(name)?;
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let m = enabled_module(name, &cfg)?;
+            let facts = preflight::gather(&cfg, &target);
+            let checks = preflight::evaluate(&cfg, name, &facts, *dry_run);
+            if !preflight::passed(&checks) {
+                print_checks(&checks, false);
+                eprintln!("preflight failed; nothing was changed");
+                return Ok(ExitCode::from(EXIT_PREFLIGHT));
+            }
+            let opts = ApplyOptions {
+                dry_run: *dry_run,
+                install_packages: !no_packages,
+                dead_man_secs: (!no_confirm_timer).then_some(cfg.base.confirm_timeout_secs),
+                rpctl_argv: self_argv(cli)?,
+            };
+            let report = apply::apply(m.as_ref(), &cfg, &target, &opts)?;
+            if report.changes.is_empty() {
+                println!("{name}: already up to date");
+                return Ok(ExitCode::SUCCESS);
+            }
+            for c in &report.changes {
+                print!("{}", c.diff);
+            }
+            let verb = if *dry_run { "would run" } else { "ran" };
+            for s in &report.steps {
+                println!("{verb}: {s}");
+            }
+            if *dry_run {
+                println!("dry run: {} file(s) would change", report.changes.len());
+            } else {
+                println!("{name}: applied {} file(s)", report.changes.len());
+                for n in m.next_steps(&cfg) {
+                    println!("next: {n}");
+                }
+                if report.needs_confirm {
+                    println!(
+                        "IMPORTANT: run `rpctl confirm` within {}s or the change is rolled back automatically",
+                        cfg.base.confirm_timeout_secs
+                    );
+                }
+            }
+        }
+        Cmd::Confirm => {
+            let done = apply::confirm(&target)?;
+            if done.is_empty() {
+                println!("nothing to confirm");
+            } else {
+                println!("confirmed: {}", done.join(", "));
+            }
+        }
+        Cmd::Rollback { module: name, backup, auto } => {
+            let m = module(name)?;
+            let rep = apply::rollback(m.as_ref(), &target, backup.as_deref())?;
+            let why = if *auto { " (automatic: change was not confirmed)" } else { "" };
+            println!(
+                "{name}: rolled back {} file(s) from backup {}{why}",
+                rep.changes.len(),
+                rep.backup_id.unwrap_or_default()
+            );
+        }
+        Cmd::Vpn(VpnCmd::AddPeer { name, host, no_qr, write }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let peer = add_peer(&cfg, &cli.root, name, *host, !no_qr)?;
+            if *write {
+                edit_config(&cli.config, |doc| {
+                    let peers = peers_array(doc)?;
+                    let mut t = toml_edit::Table::new();
+                    t["name"] = toml_edit::value(peer.name.clone());
+                    t["public_key"] = toml_edit::value(peer.public_key.clone());
+                    t["host"] = toml_edit::value(i64::from(peer.host));
+                    peers.push(t);
+                    Ok(())
+                })?;
+                println!(
+                    "added '{name}' to {} — now run: sudo rpctl apply vpn",
+                    cli.config.display()
+                );
+            }
+        }
+        Cmd::Vpn(VpnCmd::RemovePeer { name }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let known = cfg.vpn.as_ref().map(|v| v.wireguard.peers.iter().any(|p| &p.name == name));
+            if known != Some(true) {
+                anyhow::bail!("no WireGuard peer named '{name}'");
+            }
+            edit_config(&cli.config, |doc| {
+                let peers = peers_array(doc)?;
+                peers.retain(|t| t.get("name").and_then(|v| v.as_str()) != Some(name.as_str()));
+                Ok(())
+            })?;
+            println!(
+                "revoked '{name}' in {} — now run: sudo rpctl apply vpn",
+                cli.config.display()
+            );
+        }
+        Cmd::Vpn(VpnCmd::Peers) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            for p in cfg.vpn.iter().flat_map(|v| v.wireguard.peers.iter()) {
+                println!(
+                    "{:<20} host={:<4} {}",
+                    p.name,
+                    p.host,
+                    rp_core::vpn::wg_peer_addr(&cfg, p.host)
+                );
+            }
+        }
+        Cmd::Ap(ApCmd::SetPassphrase { stdin }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let a = cfg.ap.as_ref().context("no [ap] section in the config")?;
+            let pass = if *stdin {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line.trim_end_matches(['\r', '\n']).to_string()
+            } else {
+                let p = rpassword::prompt_password("New Wi-Fi passphrase: ")?;
+                let again = rpassword::prompt_password("Repeat: ")?;
+                anyhow::ensure!(p == again, "passphrases do not match");
+                p
+            };
+            anyhow::ensure!(
+                rp_core::ap::valid_passphrase(&pass),
+                "passphrase must be 8-63 printable ASCII characters"
+            );
+            let path = under_root(&cli.root, &a.passphrase_file);
+            write_secret(&path, &rp_core::ap::psk_file_content(&pass))?;
+            println!("passphrase saved to {} (mode 600)", a.passphrase_file);
+            println!("apply or re-apply: sudo rpctl apply ap   (hostapd re-reads it on restart)");
+        }
+        Cmd::Mcp(c) => return mcp_cmd(cli, c),
+        Cmd::Actions => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let store = action_store(&cfg, &cli.root);
+            let list = store.list();
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else if list.is_empty() {
+                println!("no action requests");
+            } else {
+                for a in list {
+                    println!(
+                        "{}  {:<9} {:<15} by {:<12} {}",
+                        a.id,
+                        format!("{:?}", a.status).to_lowercase(),
+                        a.tool,
+                        a.principal,
+                        a.summary
+                    );
+                }
+            }
+        }
+        Cmd::Approve { id } | Cmd::Deny { id } => {
+            let approve = matches!(cli.cmd, Cmd::Approve { .. });
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let store = action_store(&cfg, &cli.root);
+            let audit =
+                rp_policy::audit::Audit::open(&agent_state(&cfg, &cli.root).join("audit.jsonl"))?;
+            let admin =
+                format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
+            let pending = store.get(id)?;
+            if !approve {
+                store.decide(id, false, &admin)?;
+                audit.record(
+                    &admin,
+                    &pending.tool,
+                    &pending.args,
+                    "denied",
+                    &format!("id={id}"),
+                )?;
+                println!("denied {id}: {}", pending.summary);
+                return Ok(ExitCode::SUCCESS);
+            }
+            // The stored request is data: validate it again and build the exact command.
+            let argv = rp_agent::actions::command(&cfg, &pending.tool, &pending.args)
+                .map_err(|e| anyhow::anyhow!("request no longer valid: {e}"))?;
+            let a = store.decide(id, true, &admin)?;
+            audit.record(&admin, &a.tool, &a.args, "approved", &format!("id={id}"))?;
+            let out = runner.run(&argv)?;
+            let ok = out.ok();
+            store.finish(id, ok, if ok { "applied" } else { out.stderr.trim() })?;
+            audit.record(
+                &admin,
+                &a.tool,
+                &a.args,
+                if ok { "executed" } else { "error" },
+                &format!("id={id}"),
+            )?;
+            if !ok {
+                anyhow::bail!("applying {id} failed: {}", out.stderr.trim());
+            }
+            println!("approved and applied {id}: {} (expires automatically)", a.summary);
+        }
+        Cmd::QuarantineRestore => {
+            let Ok(cfg) = rp_core::config::load(&cli.config) else { return Ok(ExitCode::SUCCESS) };
+            if cfg.agent.is_none() || cfg.ap.is_none() {
+                return Ok(ExitCode::SUCCESS);
+            }
+            let now = rp_policy::approvals::now();
+            let mut restored = 0;
+            for a in action_store(&cfg, &cli.root).list() {
+                let Some(left) = a.remaining_minutes(now) else { continue };
+                let mut args = a.args.clone();
+                args["ttl_minutes"] = serde_json::json!(left);
+                if let Ok(argv) = rp_agent::actions::command(&cfg, &a.tool, &args) {
+                    if runner.run(&argv).map(|o| o.ok()).unwrap_or(false) {
+                        restored += 1;
+                    }
+                }
+            }
+            println!("restored {restored} active quarantine(s)");
+        }
+        Cmd::Audit(AuditCmd::Verify) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let mut logs = vec![agent_state(&cfg, &cli.root).join("audit.jsonl")];
+            if let Some(m) = &cfg.mcp {
+                logs.push(under_root(&cli.root, &m.audit_log));
+            }
+            let mut bad = false;
+            for l in logs {
+                if !l.exists() {
+                    println!("{}: (no log yet)", l.display());
+                    continue;
+                }
+                match rp_policy::audit::verify(&l) {
+                    Ok(n) => println!("{}: OK ({n} entries)", l.display()),
+                    Err((line, why)) => {
+                        bad = true;
+                        println!("{}: BROKEN at line {line}: {why}", l.display());
+                    }
+                }
+            }
+            if bad {
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+        Cmd::Status => {
+            let cfg = load_config(&cli.config).ok();
+            let state = target.load_state();
+            let mut rows = Vec::new();
+            for name in MODULES {
+                let m = module(name)?;
+                let st = state.modules.get(*name);
+                let drift = cfg.as_ref().map(|c| apply::plan(m.as_ref(), c, &target).len());
+                rows.push(serde_json::json!({
+                    "module": name,
+                    "applied": st.map(|s| !s.rolled_back).unwrap_or(false),
+                    "confirmed": st.map(|s| s.confirmed).unwrap_or(false),
+                    "backup_id": st.map(|s| s.backup_id.clone()),
+                    "pending_changes": drift,
+                }));
+            }
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                for r in rows {
+                    println!(
+                        "{:<6} applied={} confirmed={} pending_changes={}",
+                        r["module"].as_str().unwrap_or(""),
+                        r["applied"],
+                        r["confirmed"],
+                        r["pending_changes"]
+                    );
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn add_peer(
+    cfg: &Config,
+    root: &Path,
+    name: &str,
+    host: Option<u32>,
+    qr: bool,
+) -> Result<rp_schema::WgPeer> {
+    use rp_core::wg;
+    let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode == rp_schema::VpnMode::Wireguard) else {
+        anyhow::bail!("vpn.mode must be \"wireguard\" to add peers");
+    };
+    if v.wireguard.endpoint.is_none() {
+        anyhow::bail!("set vpn.wireguard.endpoint (public host:port) first");
+    }
+    if v.wireguard.peers.iter().any(|p| p.name == name) {
+        anyhow::bail!("a peer named '{name}' already exists");
+    }
+    let host = match host {
+        Some(h) => h,
+        None => wg::next_free_host(cfg).context("tunnel subnet is full")?,
+    };
+    let key_path = under_root(root, wg::SERVER_KEY_PATH);
+    let server_private = std::fs::read_to_string(&key_path).with_context(|| {
+        format!("cannot read {} (run `sudo rpctl apply vpn` first, as root)", key_path.display())
+    })?;
+    let server_public = wg::public_from_private(&server_private).map_err(anyhow::Error::msg)?;
+
+    let kp = wg::generate();
+    let peer = rp_schema::WgPeer { name: name.to_string(), public_key: kp.public.clone(), host };
+    let mut candidate = cfg.clone();
+    candidate.vpn.as_mut().unwrap().wireguard.peers.push(peer.clone());
+    rp_core::config::validate(&candidate)?;
+
+    let client = wg::client_config(cfg, host, &kp.private, &server_public);
+    println!("# ---- client config for '{name}' (shown ONCE; the private key is not stored) ----");
+    print!("{client}");
+    if qr {
+        let code = qrcode::QrCode::new(client.as_bytes())?;
+        let art = code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build();
+        println!("\n{art}");
+    }
+    println!("# ---- add this to /etc/rp/rp.toml, then run: sudo rpctl apply vpn ----");
+    print!("{}", wg::peer_toml(name, &kp.public, host));
+    Ok(peer)
+}
+
+/// `[[vpn.wireguard.peers]]` in a TOML document, created if missing.
+fn peers_array(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::ArrayOfTables> {
+    let vpn =
+        doc.get_mut("vpn").and_then(|v| v.as_table_mut()).context("config has no [vpn] table")?;
+    let wg = vpn.entry("wireguard").or_insert_with(|| toml_edit::Item::Table(Default::default()));
+    let wg = wg.as_table_mut().context("[vpn.wireguard] is not a table")?;
+    let peers =
+        wg.entry("peers").or_insert_with(|| toml_edit::Item::ArrayOfTables(Default::default()));
+    peers.as_array_of_tables_mut().context("vpn.wireguard.peers must be [[vpn.wireguard.peers]]")
+}
+
+/// Edit the config preserving comments/formatting; keeps a timestamped backup
+/// and refuses to write a result that fails validation.
+fn edit_config(
+    path: &Path,
+    f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,
+) -> Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    let mut doc: toml_edit::DocumentMut = text.parse()?;
+    f(&mut doc)?;
+    let out = doc.to_string();
+    rp_core::config::parse(&out).context("edited config would be invalid; not written")?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let backup = path.with_extension(format!("toml.bak-{stamp}"));
+    std::fs::copy(path, &backup)?;
+    let tmp = path.with_extension("toml.rp-tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+fn agent_state(cfg: &Config, root: &Path) -> PathBuf {
+    under_root(root, &cfg.agent.clone().unwrap_or_default().state_dir)
+}
+
+fn action_store(cfg: &Config, root: &Path) -> rp_policy::approvals::Store {
+    rp_policy::approvals::Store::new(&agent_state(cfg, root).join("actions"))
+}
+
+fn mcp_cmd(cli: &Cli, c: &McpCmd) -> Result<ExitCode> {
+    use rp_policy::auth::{hash_token, new_token, Client, Clients};
+    let cfg = match load_config(&cli.config) {
+        Ok(c) => c,
+        Err(code) => return Ok(code),
+    };
+    let m = cfg.mcp.as_ref().context("no [mcp] section in the config")?;
+    let path = under_root(&cli.root, &m.clients_file);
+    let mut clients = if path.exists() && std::fs::metadata(&path)?.len() > 0 {
+        Clients::load(&path).map_err(anyhow::Error::msg)?
+    } else {
+        Clients::default()
+    };
+    match c {
+        McpCmd::AddClient { name, cap } => {
+            anyhow::ensure!(
+                !name.is_empty()
+                    && name.len() <= 32
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "client name must be 1-32 letters, digits, '-' or '_'"
+            );
+            anyhow::ensure!(
+                !clients.clients.iter().any(|c| &c.name == name),
+                "client '{name}' exists"
+            );
+            let mut caps = std::collections::BTreeSet::new();
+            for c in cap.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+                caps.insert(match c {
+                    "read" => rp_policy::Capability::Read,
+                    "active" => rp_policy::Capability::Active,
+                    "privileged" => rp_policy::Capability::Privileged,
+                    other => anyhow::bail!("unknown capability '{other}'"),
+                });
+            }
+            let token = new_token();
+            clients.clients.push(Client {
+                name: name.clone(),
+                sha256: hash_token(&token),
+                capabilities: caps,
+            });
+            write_secret(&path, &clients.to_toml())?;
+            println!("client '{name}' created. Token (shown ONCE, store it in your MCP client):");
+            println!("{token}");
+            println!("restart to load it: sudo systemctl restart rp-mcp");
+        }
+        McpCmd::RemoveClient { name } => {
+            let before = clients.clients.len();
+            clients.clients.retain(|c| &c.name != name);
+            anyhow::ensure!(clients.clients.len() < before, "no client named '{name}'");
+            write_secret(&path, &clients.to_toml())?;
+            println!("revoked '{name}' — restart to apply: sudo systemctl restart rp-mcp");
+        }
+        McpCmd::Clients => {
+            for c in &clients.clients {
+                let caps: Vec<&str> = c.capabilities.iter().map(|c| c.as_str()).collect();
+                println!("{:<20} {}", c.name, caps.join(","));
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Write a secret atomically with mode 600 from the start (never world-readable).
+fn write_secret(path: &Path, content: &str) -> Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("rp-tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut f = opts.open(&tmp)?;
+    f.write_all(content.as_bytes())?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// argv the dead-man timer uses to call this binary back with the same config.
+fn self_argv(cli: &Cli) -> Result<Vec<String>> {
+    let exe = std::env::current_exe().context("cannot locate rpctl binary")?;
+    let config = std::path::absolute(&cli.config)?;
+    let mut v = vec![exe.display().to_string(), "--config".into(), config.display().to_string()];
+    if cli.root != Path::new("/") {
+        v.extend(["--root".into(), std::path::absolute(&cli.root)?.display().to_string()]);
+    }
+    Ok(v)
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let result = match &cli.record_commands {
+        Some(path) => {
+            let fails: Vec<&str> = cli
+                .fail_commands
+                .as_deref()
+                .map(|s| s.split(',').filter(|p| !p.is_empty()).collect())
+                .unwrap_or_default();
+            let mut rec = RecordingRunner::failing(&fails);
+            for spec in &cli.fake_output {
+                let (prefix, out) = spec.split_once('=').unwrap_or((spec.as_str(), ""));
+                rec = rec.with_response(prefix, &out.replace("\\n", "\n"));
+            }
+            let r = run(&cli, &rec);
+            let mut log = std::fs::read_to_string(path).unwrap_or_default();
+            for c in rec.calls() {
+                log.push_str(&c);
+                log.push('\n');
+            }
+            if let Err(e) = std::fs::write(path, log) {
+                eprintln!("error: cannot write {}: {e}", path.display());
+            }
+            r
+        }
+        None => run(&cli, &SystemRunner),
+    };
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_is_well_formed() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn unknown_module_is_an_error() {
+        assert!(module("nope").is_err());
+        assert!(module("base").is_ok());
+    }
+}

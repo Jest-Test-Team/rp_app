@@ -1,0 +1,5 @@
+[device]
+wan_if = "eth0"
+lan_cidrs = ["192.0.2.0/24"]
+[base]
+confirm_timeout_secs = 5

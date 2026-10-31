@@ -1,0 +1,19 @@
+[package]
+name = "rp-dns"
+description = "Filtering, logging DNS forwarder for the rp edge security gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rp-core = { path = "../rp-core" }
+rp-schema = { path = "../rp-schema" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+hickory-proto.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+socket2.workspace = true

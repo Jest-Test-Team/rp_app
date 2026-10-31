@@ -1,0 +1,14 @@
+# Managed by rpctl — local edits will be overwritten.
+[Unit]
+Description=rp access point DHCP on wlan0
+After=rp-ap-hostapd.service
+BindsTo=rp-ap-hostapd.service
+
+[Service]
+ExecStartPre=/usr/bin/install -d -m 0755 /var/lib/rp/ap
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/rp/ap/dnsmasq.conf
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

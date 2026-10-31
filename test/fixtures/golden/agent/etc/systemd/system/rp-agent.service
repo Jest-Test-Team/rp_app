@@ -1,0 +1,35 @@
+# Managed by rpctl — local edits will be overwritten.
+[Unit]
+Description=rp edge agent (read-only observation API)
+After=network-online.target rp-firewall.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/rp-agent --config /etc/rp/rp.toml run
+Restart=on-failure
+RestartSec=2
+# Root only to read root-owned sources (conntrack, the DNS event DB);
+# everything else is taken away. It never changes network state.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_NET_ADMIN
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rp/agent
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

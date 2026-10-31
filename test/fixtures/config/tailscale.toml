@@ -1,0 +1,11 @@
+# Test fixture.
+[device]
+wan_if = "eth0"
+lan_cidrs = ["192.0.2.0/24"]
+
+[vpn]
+mode = "tailscale"
+
+[vpn.tailscale]
+auth_key_file = "/etc/rp/tailscale.key"
+hostname = "rp-exit"

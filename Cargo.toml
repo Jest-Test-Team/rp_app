@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Jest-Test-Team/rp_app"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+toml_edit = "0.22"
+ipnet = { version = "2", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+similar = "2"
+regex = "1"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+base64 = "0.22"
+qrcode = { version = "0.14", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "sync", "io-util", "io-std", "signal"] }
+hickory-proto = { version = "0.24", default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+socket2 = "0.5"
+rpassword = "7"
+sha2 = "0.10"
+hex = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = "s"

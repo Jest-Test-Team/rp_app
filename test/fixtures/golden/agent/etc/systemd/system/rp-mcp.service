@@ -1,0 +1,40 @@
+# Managed by rpctl — local edits will be overwritten.
+[Unit]
+Description=rp MCP server (tools for AI clients, enforced by rp-policy)
+After=rp-agent.service
+Wants=rp-agent.service
+
+[Service]
+# Secrets are handed over as credentials, readable only by this service.
+LoadCredential=agent-token:/etc/rp/agent.token
+LoadCredential=clients:/etc/rp/mcp-clients.toml
+Environment=RP_MCP_AGENT_TOKEN_FILE=%d/agent-token
+Environment=RP_MCP_CLIENTS_FILE=%d/clients
+ExecStart=/usr/local/bin/rp-mcp --config /etc/rp/rp.toml
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+StateDirectory=rp-mcp
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

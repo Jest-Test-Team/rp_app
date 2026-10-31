@@ -1,0 +1,4 @@
+[device]
+wan_if = "eth0"
+lan_cidrs = ["192.0.2.0/24"]
+surprise = true
