@@ -1,7 +1,9 @@
 #!/bin/sh
-# Runs ON THE PI at boot (via cloud-init bootcmd, see 03-configure-boot.sh --diag).
-#   pi-diag.sh early  — write a marker, then schedule the full dump in 120 s
-#   pi-diag.sh        — full dump
+# Runs ON THE PI at boot (via cloud-init, see 03-configure-boot.sh --diag).
+#   pi-diag.sh early  — bootcmd (pre-sysinit): marker + USB/driver snapshot.
+#                        Never call systemctl/systemd-run/nmcli here: D-Bus is not
+#                        up yet and any such call deadlocks the whole boot.
+#   pi-diag.sh full   — runcmd (late boot): wait 60 s for NetworkManager, then dump.
 # Writes network diagnostics to the FAT boot partition so the Mac can read them
 # without a network. Secrets (Wi-Fi PSK) are never printed.
 OUT=/boot/firmware/rp-diag.txt
@@ -18,16 +20,13 @@ if [ "${1-}" = early ]; then
     run sh -c "dmesg | grep -iE 'rtl|8192|8188|wlan|cfg80211|firmware' | tail -40"
   } >"$OUT" 2>&1
   sync
-  # --no-block is essential: bootcmd runs before sysinit.target, and a blocking
-  # systemd-run waits on a timer job that waits on cloud-init — a boot deadlock.
-  systemd-run --no-block --on-active=120 --unit=rp-diag sh /boot/firmware/rp-diag.sh >>"$OUT" 2>&1
-  sync
   exit 0
 fi
 
-
+sleep 60
 {
-  echo "== full dump at $(date -Is)"
+  echo
+  echo "== full dump at $(date -Is), uptime $(cut -d' ' -f1 /proc/uptime)s"
   run uname -a
   run cat /proc/device-tree/model
   run uptime

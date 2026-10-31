@@ -49,10 +49,12 @@ runcmd:
 - [systemctl, enable, --now, ssh]
 EOF
 
-# --diag: dump network diagnostics to the boot partition on every boot (rp-diag.txt).
+# --diag: dump network diagnostics to the boot partition (rp-diag.txt).
+# The full dump is appended to runcmd (late boot); bootcmd only takes a snapshot.
 if ((diag)); then
   cp "$(dirname "$0")/pi-diag.sh" "$boot/rp-diag.sh"
   cat >>"$boot/user-data" <<'EOF'
+- [sh, /boot/firmware/rp-diag.sh, full]
 
 bootcmd:
 - [sh, /boot/firmware/rp-diag.sh, early]
