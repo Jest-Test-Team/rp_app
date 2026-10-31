@@ -258,7 +258,16 @@ pub fn vpn(ctx: &Ctx) -> Value {
 
 /// Connection-tracking flows (metadata only: addresses, ports, byte counts).
 pub fn flows(ctx: &Ctx, limit: usize) -> Value {
-    let text = ctx.read("/proc/net/nf_conntrack").unwrap_or_default();
+    // Newer kernels drop the procfs view; `conntrack -o extended` prints the
+    // same line format, read over netlink.
+    let (text, source) = match ctx.read("/proc/net/nf_conntrack") {
+        Some(t) => (t, "procfs"),
+        None if ctx.root == Path::new("/") => (
+            run_with_timeout(&["conntrack", "-L", "-o", "extended"]).unwrap_or_default(),
+            "conntrack",
+        ),
+        None => (String::new(), "none"),
+    };
     let mut flows = Vec::new();
     for l in text.lines() {
         let f: Vec<&str> = l.split_whitespace().collect();
@@ -291,7 +300,7 @@ pub fn flows(ctx: &Ctx, limit: usize) -> Value {
     let mut top: Vec<(String, u64)> = by_dst.into_iter().collect();
     top.sort_by_key(|a| std::cmp::Reverse(a.1));
     top.truncate(10);
-    json!({"flows": flows, "count": flows.len(), "top_destinations": top})
+    json!({"flows": flows, "count": flows.len(), "top_destinations": top, "source": source})
 }
 
 pub fn dns_events(ctx: &Ctx, since_mins: i64, action: Option<&str>, limit: u32) -> Value {

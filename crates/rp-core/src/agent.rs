@@ -123,6 +123,11 @@ impl Module for Agent {
         f
     }
 
+    fn packages(&self, _cfg: &Config) -> Vec<&'static str> {
+        // conntrack reads flows over netlink (newer kernels have no procfs view).
+        vec!["conntrack"]
+    }
+
     fn validate_steps(&self, _cfg: &Config) -> Vec<Step> {
         vec![Step::cmd(&[
             "/usr/local/bin/rp-agent",
