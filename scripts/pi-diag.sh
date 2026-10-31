@@ -6,16 +6,25 @@
 # without a network. Secrets (Wi-Fi PSK) are never printed.
 OUT=/boot/firmware/rp-diag.txt
 
+run() { echo; echo "== $*"; "$@" 2>&1 | sed -E 's/(psk|password)[=:].*/\1=<hidden>/I'; }
+
 if [ "${1-}" = early ]; then
-  echo "== early marker: cloud-init bootcmd ran at $(date -Is), uptime $(cut -d' ' -f1 /proc/uptime)s" >"$OUT"
+  {
+    echo "== early marker: cloud-init bootcmd ran at $(date -Is), uptime $(cut -d' ' -f1 /proc/uptime)s"
+    run cat /proc/device-tree/model
+    run uname -r
+    run lsusb
+    run ip -br link
+    run sh -c "dmesg | grep -iE 'rtl|8192|8188|wlan|cfg80211|firmware' | tail -40"
+  } >"$OUT" 2>&1
   sync
-  # Run outside cloud-init's cgroup so it isn't killed when cloud-init finishes.
-  systemd-run --on-active=120 --unit=rp-diag sh /boot/firmware/rp-diag.sh >>"$OUT" 2>&1
+  # --no-block is essential: bootcmd runs before sysinit.target, and a blocking
+  # systemd-run waits on a timer job that waits on cloud-init — a boot deadlock.
+  systemd-run --no-block --on-active=120 --unit=rp-diag sh /boot/firmware/rp-diag.sh >>"$OUT" 2>&1
   sync
   exit 0
 fi
 
-run() { echo; echo "== $*"; "$@" 2>&1 | sed -E 's/(psk|password)[=:].*/\1=<hidden>/I'; }
 
 {
   echo "== full dump at $(date -Is)"
