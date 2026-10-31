@@ -16,3 +16,4 @@ serde.workspace = true
 serde_json.workspace = true
 qrcode.workspace = true
 toml_edit.workspace = true
+rpassword.workspace = true

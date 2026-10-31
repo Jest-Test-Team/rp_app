@@ -21,6 +21,59 @@ pub struct Config {
     /// DNS firewall. Absent = module disabled.
     #[serde(default)]
     pub dns: Option<Dns>,
+    /// Protected Wi-Fi access point for IoT / guest devices. Absent = disabled.
+    #[serde(default)]
+    pub ap: Option<Ap>,
+}
+
+/// An isolated access point: clients get internet through the uplink but can't
+/// reach the home LAN, each other, or this box's management services.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ap {
+    #[serde(default = "default_ap_if")]
+    pub interface: String,
+    pub ssid: String,
+    /// Root-only file written by `rpctl ap set-passphrase`; never put the passphrase in rp.toml.
+    #[serde(default = "default_psk_file")]
+    pub passphrase_file: String,
+    /// ISO 3166 country code (regulatory domain).
+    pub country: String,
+    /// 2.4 GHz channel 1-13.
+    #[serde(default = "default_channel")]
+    pub channel: u8,
+    #[serde(default = "default_ap_subnet")]
+    pub subnet: ipnet::Ipv4Net,
+    #[serde(default = "default_lease")]
+    pub lease_time: String,
+    /// DNS servers handed out by DHCP when the dns module is not configured.
+    #[serde(default = "default_ap_dns")]
+    pub dns_servers: Vec<std::net::Ipv4Addr>,
+    /// Let home-LAN machines open connections to AP clients (e.g. to manage IoT devices).
+    #[serde(default = "default_true")]
+    pub lan_can_reach_clients: bool,
+    /// Destinations AP clients MAY reach despite isolation.
+    #[serde(default)]
+    pub allow_lan: Vec<IpNet>,
+}
+
+fn default_ap_if() -> String {
+    "wlan0".into()
+}
+fn default_psk_file() -> String {
+    "/etc/rp/ap.psk".into()
+}
+fn default_channel() -> u8 {
+    6
+}
+fn default_ap_subnet() -> ipnet::Ipv4Net {
+    "10.77.0.0/24".parse().unwrap()
+}
+fn default_lease() -> String {
+    "12h".into()
+}
+fn default_ap_dns() -> Vec<std::net::Ipv4Addr> {
+    vec![std::net::Ipv4Addr::new(1, 1, 1, 1), std::net::Ipv4Addr::new(9, 9, 9, 9)]
 }
 
 /// DNS firewall: a filtering, logging forwarder for LAN clients.

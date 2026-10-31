@@ -104,7 +104,8 @@ pub fn score(name: &str) -> Score {
         let reg = all[all.len() - 2];
         let reg_digits = reg.chars().filter(|c| c.is_ascii_digit()).count();
         let reg_vowels = reg.chars().filter(|c| "aeiou".contains(*c)).count();
-        if reg.len() >= 12 && entropy(reg) >= 3.4 && (reg_digits >= 2 || reg_vowels * 5 < reg.len()) {
+        if reg.len() >= 12 && entropy(reg) >= 3.4 && (reg_digits >= 2 || reg_vowels * 5 < reg.len())
+        {
             value += 40;
             reasons.push("random-registered-name");
         }

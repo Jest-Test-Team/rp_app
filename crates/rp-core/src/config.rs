@@ -89,6 +89,9 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
     if let Some(d) = &cfg.dns {
         validate_dns(d, &mut errs);
     }
+    if let Some(a) = &cfg.ap {
+        validate_ap(cfg, a, &mut errs);
+    }
 
     let t = cfg.base.confirm_timeout_secs;
     if !(30..=3600).contains(&t) {
@@ -280,6 +283,58 @@ fn validate_dns(d: &rp_schema::Dns, errs: &mut Vec<String>) {
     }
 }
 
+fn validate_ap(cfg: &Config, a: &rp_schema::Ap, errs: &mut Vec<String>) {
+    if !valid_ifname(&a.interface) {
+        errs.push(format!("ap.interface '{}' is not a valid interface name", a.interface));
+    }
+    if a.interface == cfg.device.wan_if || a.interface == cfg.device.mgmt_if() {
+        errs.push(format!(
+            "ap.interface '{}' is your uplink/management interface; the AP would cut you off",
+            a.interface
+        ));
+    }
+    if a.ssid.is_empty() || a.ssid.len() > 32 || a.ssid.chars().any(|c| c.is_control()) {
+        errs.push("ap.ssid must be 1-32 bytes without control characters".into());
+    }
+    if a.country.len() != 2 || !a.country.chars().all(|c| c.is_ascii_uppercase()) {
+        errs.push(format!("ap.country '{}' must be a two-letter code like TW", a.country));
+    }
+    if !(1..=13).contains(&a.channel) {
+        errs.push(format!("ap.channel {} must be a 2.4 GHz channel 1-13", a.channel));
+    }
+    if !(16..=29).contains(&a.subnet.prefix_len()) {
+        errs.push(format!("ap.subnet {} must be between /16 and /29", a.subnet));
+    }
+    if a.subnet.network() != a.subnet.addr() {
+        errs.push(format!("ap.subnet {} has host bits set", a.subnet));
+    }
+    let net = IpNet::V4(a.subnet.trunc());
+    let mut others: Vec<IpNet> = cfg.device.lan_cidrs.clone();
+    if let Some(v) = &cfg.vpn {
+        others.push(IpNet::V4(v.wireguard.subnet));
+    }
+    for o in others {
+        if o.contains(&net.network()) || net.contains(&o.network()) {
+            errs.push(format!("ap.subnet {} overlaps {o}", a.subnet));
+        }
+    }
+    if !a.passphrase_file.starts_with('/') {
+        errs.push("ap.passphrase_file must be an absolute path".into());
+    }
+    let lease_ok = a.lease_time == "infinite"
+        || a.lease_time
+            .strip_suffix(['s', 'm', 'h', 'd'])
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    if !lease_ok {
+        errs.push(format!("ap.lease_time '{}' must look like 12h, 30m or infinite", a.lease_time));
+    }
+    for n in &a.allow_lan {
+        if is_catch_all(n) {
+            errs.push(format!("ap.allow_lan entry {n} would expose every network"));
+        }
+    }
+}
+
 /// A WireGuard key is 32 bytes, base64 encoded: 43 chars + '='.
 pub fn valid_wg_key(k: &str) -> bool {
     k.len() == 44
@@ -454,6 +509,39 @@ mod tests {
             "[device]\nwan_if = \"eth0\"\nlan_cidrs = [\"192.0.2.0/24\"]\n[dns]\nupstreams = [\"1.1.1.1:53\", \"127.0.0.1:5353\"]\n"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn ap_validation() {
+        let e = errors(
+            r#"
+            [device]
+            wan_if = "eth0"
+            lan_cidrs = ["10.77.0.0/16"]
+            [ap]
+            interface = "eth0"
+            ssid = ""
+            country = "tw"
+            channel = 36
+            subnet = "10.77.0.0/30"
+            passphrase_file = "ap.psk"
+            lease_time = "forever"
+            allow_lan = ["0.0.0.0/0"]
+            "#,
+        );
+        for needle in [
+            "would cut you off",
+            "ap.ssid",
+            "two-letter code",
+            "channel 1-13",
+            "between /16 and /29",
+            "overlaps",
+            "absolute path",
+            "12h, 30m",
+            "expose every network",
+        ] {
+            assert!(e.iter().any(|m| m.contains(needle)), "missing '{needle}' in {e:?}");
+        }
     }
 
     #[test]

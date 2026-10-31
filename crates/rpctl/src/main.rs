@@ -85,6 +85,19 @@ enum Cmd {
     /// VPN helpers.
     #[command(subcommand)]
     Vpn(VpnCmd),
+    /// Access point helpers.
+    #[command(subcommand)]
+    Ap(ApCmd),
+}
+
+#[derive(Subcommand)]
+enum ApCmd {
+    /// Set the WPA2 passphrase (8-63 chars). Prompted without echo, or read
+    /// from stdin with --stdin. Stored root-only, never printed or logged.
+    SetPassphrase {
+        #[arg(long)]
+        stdin: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -314,6 +327,31 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 );
             }
         }
+        Cmd::Ap(ApCmd::SetPassphrase { stdin }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let a = cfg.ap.as_ref().context("no [ap] section in the config")?;
+            let pass = if *stdin {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line.trim_end_matches(['\r', '\n']).to_string()
+            } else {
+                let p = rpassword::prompt_password("New Wi-Fi passphrase: ")?;
+                let again = rpassword::prompt_password("Repeat: ")?;
+                anyhow::ensure!(p == again, "passphrases do not match");
+                p
+            };
+            anyhow::ensure!(
+                rp_core::ap::valid_passphrase(&pass),
+                "passphrase must be 8-63 printable ASCII characters"
+            );
+            let path = under_root(&cli.root, &a.passphrase_file);
+            write_secret(&path, &rp_core::ap::psk_file_content(&pass))?;
+            println!("passphrase saved to {} (mode 600)", a.passphrase_file);
+            println!("apply or re-apply: sudo rpctl apply ap   (hostapd re-reads it on restart)");
+        }
         Cmd::Status => {
             let cfg = load_config(&cli.config).ok();
             let state = target.load_state();
@@ -424,6 +462,27 @@ fn edit_config(
     std::fs::copy(path, &backup)?;
     let tmp = path.with_extension("toml.rp-tmp");
     std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Write a secret atomically with mode 600 from the start (never world-readable).
+fn write_secret(path: &Path, content: &str) -> Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("rp-tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut f = opts.open(&tmp)?;
+    f.write_all(content.as_bytes())?;
+    f.sync_all()?;
     std::fs::rename(&tmp, path)?;
     Ok(())
 }

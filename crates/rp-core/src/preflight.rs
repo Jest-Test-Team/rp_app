@@ -50,6 +50,11 @@ pub struct Facts {
     /// Source address of the SSH session running rpctl, if any.
     pub ssh_client: Option<IpAddr>,
     pub authorized_keys: bool,
+    /// For the ap module: passphrase file present with a valid WPA2 passphrase.
+    pub ap_psk_ok: bool,
+    /// For the ap module: does the interface support AP mode (None = unknown).
+    pub ap_capable: Option<bool>,
+    pub ap_iface_exists: bool,
 }
 
 pub const REQUIRED_BINARIES: &[&str] = &["nft", "systemctl", "sshd", "sysctl", "ip"];
@@ -97,6 +102,18 @@ pub fn gather(cfg: &Config, t: &Target) -> Facts {
     let mut key_files = vec![under_root(&t.root, "/root/.ssh/authorized_keys")];
     if let Ok(rd) = fs::read_dir(under_root(&t.root, "/home")) {
         key_files.extend(rd.flatten().map(|e| e.path().join(".ssh/authorized_keys")));
+    }
+    if let Some(a) = &cfg.ap {
+        f.ap_iface_exists =
+            under_root(&t.root, &format!("/sys/class/net/{}", a.interface)).exists();
+        f.ap_psk_ok = fs::read_to_string(under_root(&t.root, &a.passphrase_file))
+            .ok()
+            .and_then(|t| t.lines().next().map(str::to_string))
+            .and_then(|l| l.strip_prefix("00:00:00:00:00:00 ").map(str::to_string)) // rp-probe:allow
+            .is_some_and(|p| crate::ap::valid_passphrase(&p));
+        f.ap_capable =
+            run_stdout(t, &["nmcli", "-g", "WIFI-PROPERTIES.AP", "device", "show", &a.interface])
+                .map(|o| o.trim() == "yes");
     }
     f.authorized_keys = key_files.iter().any(|p| {
         fs::read_to_string(p)
@@ -189,6 +206,42 @@ pub fn evaluate(cfg: &Config, module: &str, facts: &Facts, dry_run: bool) -> Vec
             "your current SSH source address is NOT in the ssh allow-list; applying would lock you out",
         )),
         None => out.push(Check::new("ssh_lockout", Pass, "not running over SSH")),
+    }
+
+    if module == "ap" {
+        if let Some(a) = &cfg.ap {
+            out.push(if facts.ap_iface_exists {
+                Check::new("ap_iface", Pass, format!("{} exists", a.interface))
+            } else {
+                Check::new("ap_iface", Fail, format!("interface {} does not exist", a.interface))
+            });
+            out.push(if facts.ap_psk_ok {
+                Check::new("ap_passphrase", Pass, "passphrase file is valid")
+            } else {
+                Check::new(
+                    "ap_passphrase",
+                    Fail,
+                    format!(
+                        "{} missing or invalid — run: sudo rpctl ap set-passphrase",
+                        a.passphrase_file
+                    ),
+                )
+            });
+            out.push(match facts.ap_capable {
+                Some(true) => Check::new("ap_mode", Pass, "adapter supports AP mode"),
+                Some(false) => Check::new("ap_mode", Fail, "adapter does not support AP mode"),
+                None => {
+                    Check::new("ap_mode", Warn, "could not determine AP support (nmcli missing?)")
+                }
+            });
+            if a.interface == cfg.device.mgmt_if() {
+                out.push(Check::new(
+                    "ap_lockout",
+                    Fail,
+                    "the AP interface is your management interface",
+                ));
+            }
+        }
     }
 
     if module == "base" && !cfg.ssh.password_auth && !facts.authorized_keys {
