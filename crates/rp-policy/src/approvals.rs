@@ -37,6 +37,18 @@ pub struct Action {
     pub status: Status,
     pub decided_by: Option<String>,
     pub result: Option<String>,
+    /// When the change was applied (for expiry and restore after reloads).
+    #[serde(default)]
+    pub executed_at: Option<i64>,
+}
+
+impl Action {
+    /// Minutes left on an executed change, if it is still in force.
+    pub fn remaining_minutes(&self, now: i64) -> Option<i64> {
+        let at = self.executed_at?;
+        let left = at + self.ttl_minutes * 60 - now;
+        (self.status == Status::Executed && left > 0).then(|| (left + 59) / 60)
+    }
 }
 
 pub fn now() -> i64 {
@@ -112,6 +124,7 @@ impl Store {
             status: Status::Pending,
             decided_by: None,
             result: None,
+            executed_at: None,
         };
         self.save(&a)?;
         Ok(a)
@@ -165,6 +178,9 @@ impl Store {
         }
         a.status = if ok { Status::Executed } else { Status::Failed };
         a.result = Some(result.into());
+        if ok {
+            a.executed_at = Some(now());
+        }
         self.save(&a)?;
         Ok(a)
     }
@@ -195,7 +211,10 @@ mod tests {
             s.decide(&a.id, true, "admin").unwrap_err(),
             StoreError::NotPending(a.id.clone(), Status::Approved)
         );
-        assert_eq!(s.finish(&a.id, true, "ok").unwrap().status, Status::Executed);
+        let done = s.finish(&a.id, true, "ok").unwrap();
+        assert_eq!(done.status, Status::Executed);
+        assert_eq!(done.remaining_minutes(now()), Some(60));
+        assert_eq!(done.remaining_minutes(now() + 3600), None, "expired after the TTL");
     }
 
     #[test]

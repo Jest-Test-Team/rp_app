@@ -1,6 +1,7 @@
 //! Core logic for the rp edge security gateway: config validation, rendering
 //! of managed system files, preflight checks and safe apply / rollback.
 
+pub mod agent;
 pub mod ap;
 pub mod apply;
 pub mod base;

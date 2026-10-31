@@ -23,6 +23,9 @@ fn unit() -> String {
          DefaultDependencies=no\nWants=network-pre.target\nBefore=network-pre.target shutdown.target\n\
          Conflicts=shutdown.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n\
          ExecStart=/usr/sbin/nft -f {NFT_PATH}\nExecReload=/usr/sbin/nft -f {NFT_PATH}\n\
+         # Re-add unexpired approved quarantines (a reload recreates the table).\n\
+         ExecStartPost=-/usr/local/bin/rpctl quarantine-restore\n\
+         ExecReload=-/usr/local/bin/rpctl quarantine-restore\n\
          ExecStop=-/usr/sbin/nft delete table inet rp\n\n[Install]\nWantedBy=sysinit.target\n"
     )
 }

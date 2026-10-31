@@ -92,6 +92,45 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
     if let Some(a) = &cfg.ap {
         validate_ap(cfg, a, &mut errs);
     }
+    if let Some(a) = &cfg.agent {
+        if !(1..=1024).contains(&a.scan_max_hosts) {
+            errs.push("agent.scan_max_hosts must be 1-1024".into());
+        }
+        if !(1..=1440).contains(&a.pending_minutes) {
+            errs.push("agent.pending_minutes must be 1-1440".into());
+        }
+        if !(1..=10_080).contains(&a.max_ttl_minutes) {
+            errs.push("agent.max_ttl_minutes must be 1-10080".into());
+        }
+        for n in &a.scan_allow {
+            if n.prefix_len() < 16 {
+                errs.push(format!("agent.scan_allow entry {n} is too broad (use /16 or smaller)"));
+            }
+        }
+        for p in [&a.token_file, &a.state_dir] {
+            if !p.starts_with('/') || p.contains(['\'', ' ']) {
+                errs.push(format!("agent path '{p}' must be absolute without quotes or spaces"));
+            }
+        }
+    }
+    if let Some(m) = &cfg.mcp {
+        if cfg.agent.is_none() {
+            errs.push("[mcp] needs an [agent] section".into());
+        }
+        if !(1..=1000).contains(&m.rate_limit_per_minute) {
+            errs.push("mcp.rate_limit_per_minute must be 1-1000".into());
+        }
+        for c in &m.stdio_capabilities {
+            if !matches!(c.as_str(), "read" | "active" | "privileged") {
+                errs.push(format!("mcp.stdio_capabilities: unknown capability '{c}'"));
+            }
+        }
+        for p in [&m.clients_file, &m.agent_token_file, &m.audit_log] {
+            if !p.starts_with('/') || p.contains(['\'', ' ']) {
+                errs.push(format!("mcp path '{p}' must be absolute without quotes or spaces"));
+            }
+        }
+    }
 
     let t = cfg.base.confirm_timeout_secs;
     if !(30..=3600).contains(&t) {

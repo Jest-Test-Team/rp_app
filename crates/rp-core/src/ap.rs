@@ -193,8 +193,13 @@ pub fn snippet(cfg: &Config) -> String {
     s.push_str("table inet rp {\n");
     set(&mut s, "ap_block4", "ipv4_addr", &block4);
     set(&mut s, "ap_allow4", "ipv4_addr", &allow4);
+    // Filled only by approved block_device / isolate_client actions; entries expire.
+    s.push_str("\tset ap_quarantine4 {\n\t\ttype ipv4_addr\n\t\tflags timeout\n\t}\n");
+    s.push_str("\tset ap_quarantine_mac {\n\t\ttype ether_addr\n\t\tflags timeout\n\t}\n");
 
     s.push_str("\n\tchain mod_input {\n");
+    let _ = writeln!(s, "\t\tiifname \"{w}\" ip saddr @ap_quarantine4 drop");
+    let _ = writeln!(s, "\t\tiifname \"{w}\" ether saddr @ap_quarantine_mac drop");
     let _ = writeln!(s, "\t\tiifname \"{w}\" udp sport 68 udp dport 67 accept");
     if cfg.dns.is_some() {
         let _ = writeln!(s, "\t\tiifname \"{w}\" ip saddr {} udp dport 53 accept", a.subnet);
@@ -203,6 +208,9 @@ pub fn snippet(cfg: &Config) -> String {
     s.push_str("\t}\n");
 
     s.push_str("\n\tchain mod_forward {\n");
+    let _ = writeln!(s, "\t\tiifname \"{w}\" ip saddr @ap_quarantine4 drop");
+    let _ = writeln!(s, "\t\toifname \"{w}\" ip daddr @ap_quarantine4 drop");
+    let _ = writeln!(s, "\t\tiifname \"{w}\" ether saddr @ap_quarantine_mac drop");
     // Peer-to-peer through the router (hairpin); over-the-air is blocked by ap_isolate.
     let _ = writeln!(s, "\t\tiifname \"{w}\" oifname \"{w}\" drop");
     // DNS-over-TLS / -QUIC bypasses the DNS firewall: log it (and still allow).
@@ -388,6 +396,16 @@ mod tests {
         assert!(s.contains("iifname \"eth0\" oifname \"wlan0\" ip saddr @lan4 accept"));
         assert!(!snippet(&cfg("lan_can_reach_clients = false\n"))
             .contains("oifname \"wlan0\" ip saddr @lan4"));
+    }
+
+    #[test]
+    fn quarantine_rules_come_first() {
+        let s = snippet(&cfg(""));
+        let q = s.find("iifname \"wlan0\" ip saddr @ap_quarantine4 drop").unwrap();
+        let dhcp = s.find("udp sport 68 udp dport 67 accept").unwrap();
+        assert!(q < dhcp, "quarantined clients get nothing, not even DHCP");
+        assert!(s.contains("set ap_quarantine_mac {\n\t\ttype ether_addr\n\t\tflags timeout"));
+        assert!(s.contains("oifname \"wlan0\" ip daddr @ap_quarantine4 drop"));
     }
 
     #[test]

@@ -128,7 +128,7 @@ function New-SourceArchive([string] $TargetTriple, [string] $WorkDir) {
     if ($DryRun) { return $out }
     $stage = Join-Path $WorkDir $name
     New-Item -ItemType Directory -Force -Path (Join-Path $stage 'bin'), (Join-Path $stage 'configs') | Out-Null
-    foreach ($bin in 'rpctl', 'rp-dns') {
+    foreach ($bin in 'rpctl', 'rp-dns', 'rp-agent', 'rp-mcp') {
         Copy-Item (Join-Path $src "target/$TargetTriple/release/$bin") (Join-Path $stage 'bin/')
     }
     Copy-Item (Join-Path $src 'configs/rp.example.toml') (Join-Path $stage 'configs/')

@@ -11,6 +11,9 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/nft -f /etc/rp/nftables.nft
 ExecReload=/usr/sbin/nft -f /etc/rp/nftables.nft
+# Re-add unexpired approved quarantines (a reload recreates the table).
+ExecStartPost=-/usr/local/bin/rpctl quarantine-restore
+ExecReload=-/usr/local/bin/rpctl quarantine-restore
 ExecStop=-/usr/sbin/nft delete table inet rp
 
 [Install]
