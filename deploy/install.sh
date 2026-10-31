@@ -64,6 +64,10 @@ done
 
 [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid --repo '$repo'"
 [[ $tag == latest || $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$ ]] || die "invalid release tag '$tag'"
+case "$target" in
+  ""|armv7-unknown-linux-gnueabihf|aarch64-unknown-linux-gnu|x86_64-unknown-linux-gnu) ;;
+  *) die "unsupported target '$target' (armv7-unknown-linux-gnueabihf, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu)" ;;
+esac
 [[ $prefix =~ ^/[A-Za-z0-9/_.-]*$ ]] || die "invalid --prefix '$prefix'"
 [[ -z $host || $host =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$|^[A-Za-z0-9._:-]+$ ]] || die "invalid --host '$host'"
 

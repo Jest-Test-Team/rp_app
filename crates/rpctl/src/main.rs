@@ -270,8 +270,11 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.record_commands {
         Some(path) => {
-            let fails: Vec<&str> =
-                cli.fail_commands.as_deref().map(|s| s.split(',').collect()).unwrap_or_default();
+            let fails: Vec<&str> = cli
+                .fail_commands
+                .as_deref()
+                .map(|s| s.split(',').filter(|p| !p.is_empty()).collect())
+                .unwrap_or_default();
             let mut rec = RecordingRunner::failing(&fails);
             for spec in &cli.fake_output {
                 let (prefix, out) = spec.split_once('=').unwrap_or((spec.as_str(), ""));

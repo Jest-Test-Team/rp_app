@@ -1,0 +1,4 @@
+// Managed by rpctl — local edits will be overwritten.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
