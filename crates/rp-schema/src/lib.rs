@@ -86,6 +86,18 @@ pub struct Mcp {
     pub agent_token_file: String,
     #[serde(default = "default_mcp_rate")]
     pub rate_limit_per_minute: u32,
+    /// Capabilities of the local stdio transport (e.g. `ssh device rp-mcp --stdio`).
+    #[serde(default = "default_stdio_caps")]
+    pub stdio_capabilities: Vec<String>,
+    #[serde(default = "default_mcp_audit")]
+    pub audit_log: String,
+}
+
+fn default_stdio_caps() -> Vec<String> {
+    vec!["read".into()]
+}
+fn default_mcp_audit() -> String {
+    "/var/lib/rp-mcp/audit.jsonl".into()
 }
 
 fn default_agent_listen() -> std::net::SocketAddr {

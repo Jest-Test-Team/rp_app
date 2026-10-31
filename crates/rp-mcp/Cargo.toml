@@ -1,0 +1,18 @@
+[package]
+name = "rp-mcp"
+description = "MCP server exposing rp agent tools to AI clients, enforced by rp-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rp-core = { path = "../rp-core" }
+rp-schema = { path = "../rp-schema" }
+rp-policy = { path = "../rp-policy" }
+rp-http = { path = "../rp-http" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde_json.workspace = true

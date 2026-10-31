@@ -219,6 +219,26 @@ pub async fn request(
     bearer: Option<&str>,
     body: Option<&serde_json::Value>,
 ) -> Result<(u16, serde_json::Value), String> {
+    request_with_headers(addr, method, path, bearer, &[], body).await
+}
+
+/// Like [`request`] with extra headers (names/values must not contain CR/LF).
+pub async fn request_with_headers(
+    addr: &str,
+    method: &str,
+    path: &str,
+    bearer: Option<&str>,
+    extra: &[(&str, &str)],
+    body: Option<&serde_json::Value>,
+) -> Result<(u16, serde_json::Value), String> {
+    for (k, v) in extra {
+        if k.contains(['\r', '\n', ':']) || v.contains(['\r', '\n']) {
+            return Err("header injection attempt".into());
+        }
+    }
+    if path.contains(['\r', '\n', ' ']) {
+        return Err("invalid request path".into());
+    }
     let fut = async {
         let mut s = TcpStream::connect(addr).await.map_err(|e| format!("connect {addr}: {e}"))?;
         let payload = body.map(|b| serde_json::to_vec(b).unwrap()).unwrap_or_default();
@@ -231,6 +251,9 @@ pub async fn request(
         }
         if let Some(t) = bearer {
             head.push_str(&format!("Authorization: Bearer {t}\r\n"));
+        }
+        for (k, v) in extra {
+            head.push_str(&format!("{k}: {v}\r\n"));
         }
         head.push_str("\r\n");
         s.write_all(head.as_bytes()).await.map_err(|e| e.to_string())?;

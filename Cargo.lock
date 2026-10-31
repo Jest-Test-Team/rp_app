@@ -794,6 +794,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rp-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rp-core",
+ "rp-http",
+ "rp-policy",
+ "rp-schema",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "rp-policy"
 version = "0.1.0"
 dependencies = [
