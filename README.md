@@ -74,7 +74,7 @@ cp local.env.example local.env   # 已在 .gitignore，不會被 commit
 連上後確認：
 
 ```bash
-hostname; iw dev wlan0 link; ip -4 addr show wlan0
+hostname; nmcli -f IN-USE,SSID,CHAN,SIGNAL dev wifi | grep "^\*"; ip -4 -br addr show wlan0
 ```
 
 ## 連不上時
