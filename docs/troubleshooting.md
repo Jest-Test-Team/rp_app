@@ -107,3 +107,28 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 ```
 
 直接讀實體 SD 卡（`/dev/diskNs2`）需要 sudo。用完記得刪除解壓縮的映像檔（數 GB）。
+
+## Gateway 已知問題（開發與實測中發現並已處理）
+
+| 現象 | 原因 | 處理 |
+|---|---|---|
+| 改了 `ssh.password_auth` 卻沒生效 | sshd 取**第一個**讀到的值；cloud-init 的 `50-cloud-init.conf` 先被讀到 | rpctl 的 drop-in 命名為 `10-rp.conf`，排在前面 |
+| 開啟 IPv6 forwarding 後 uplink 失去 IPv6 位址 | forwarding=1 時 kernel 預設忽略 RA | vpn 模組同時設定 `accept_ra = 2` |
+| rollback VPN 後仍在轉發 | 刪掉 sysctl 檔不會改變目前的值 | rollback 明確執行 `sysctl -w net.ipv4.ip_forward=0` |
+| 裝 `dnsmasq` 後 DNS 埠衝突 | 完整 `dnsmasq` 套件會自動啟動並綁 53 埠 | 只裝 `dnsmasq-base`，以 DHCP-only（`port=0`）執行 |
+| AP 套用後失去管理連線 | wlan0 同時是管理介面 | config 與 preflight 都拒絕在管理介面上啟用 AP；先接 eth0 |
+| DNS 查詢每次都慢 400 ms | 第一個 upstream 掛掉，每次都等逾時 | upstream 失敗後 30 秒內先跳過（hold-down） |
+| 被隔離的 IoT 裝置仍能用舊連線 | 規則在 conntrack 接受 established 之後才檢查 | quarantine 規則放在最先執行的 `mod_prefilter` |
+| 稽核 `audit verify` 顯示 chain 斷掉 | rp-agent 與 `rpctl approve` 兩個 process 寫同一個檔，agent 快取了舊的鏈頭 | 每次寫入都加檔案鎖並重新讀取鏈頭 |
+| `get_flows` 永遠是空的 | 新版 kernel 沒有 `/proc/net/nf_conntrack` | agent 改用 `conntrack -L -o extended`（agent 模組會安裝 `conntrack`） |
+| 防火牆重載後 quarantine 消失 | 重載會重建 table，timeout 元素跟著消失 | `rp-firewall` 啟動／重載後執行 `rpctl quarantine-restore` 補回剩餘時間 |
+
+## Gateway 快速診斷
+
+```bash
+sudo rpctl status                 # 各模組是否套用、是否已確認、是否有未套用的變更
+sudo rpctl preflight <module>     # 套用前的安全檢查
+sudo nft list table inet rp       # 目前生效的規則
+sudo journalctl -u rp-firewall -u rp-dns -u rp-agent -u rp-mcp -u rp-ap-hostapd -n 100
+sudo rpctl audit verify           # 稽核 chain 是否完整
+```

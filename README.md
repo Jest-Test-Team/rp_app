@@ -1,6 +1,21 @@
-# rp_app — Raspberry Pi 2 B 無線開機設定
+# rp_app — Raspberry Pi Edge Security Gateway
 
-用腳本把 SD 卡重灌成 **Raspberry Pi OS Lite (32-bit, Trixie)**，第一次開機就透過 Edimax USB Wi-Fi 連上網、開好 SSH，不需要網路線或螢幕。
+兩部分：
+
+1. **無線開機設定**（本頁）：用腳本把 SD 卡重灌成 Raspberry Pi OS Lite (32-bit, Trixie)，第一次開機就透過 USB Wi-Fi 連上網、開好 SSH。
+2. **Edge Security Gateway**（Rust）：VPN exit node（Tailscale／WireGuard，親友無法進入 LAN）、DNS 防火牆、隔離的 IoT AP、唯讀觀測 agent，以及受 policy 管控、特權動作需人工核准的 MCP server。→ [docs/gateway.md](docs/gateway.md)
+
+```bash
+# Gateway 快速開始（在 Pi 上）
+bash install.sh                       # 下載 release 並核對 SHA256（或 --from-source）
+sudo rpctl preflight base && sudo rpctl apply base && sudo rpctl confirm
+```
+
+完整文件：[docs/](docs/README.md)　架構：[docs/architecture.md](docs/architecture.md)　威脅模型：[docs/threat-model.md](docs/threat-model.md)　實測：[docs/benchmarks.md](docs/benchmarks.md)
+
+---
+
+## 無線開機設定
 
 > ⚠️ 燒錄會**清空整張 SD 卡**。
 

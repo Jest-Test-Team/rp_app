@@ -4,9 +4,14 @@
 
 | 文件 | 內容 |
 |---|---|
-| [setup.md](setup.md) | 從燒錄到 SSH 登入的完整步驟 |
-| [scripts.md](scripts.md) | 每支腳本的用途、參數與安全檢查 |
+| [setup.md](setup.md) | 燒錄 SD 卡、Wi-Fi／SSH 首次開機設定、登入 |
+| [scripts.md](scripts.md) | 燒錄相關腳本的用途與安全檢查 |
 | [troubleshooting.md](troubleshooting.md) | 已知問題、根本原因與診斷方法 |
+| [gateway.md](gateway.md) | Edge Security Gateway：安裝、各模組、MCP、測試 |
+| [architecture.md](architecture.md) | 元件、資料平面／控制平面、可組合防火牆、apply 與核准流程 |
+| [threat-model.md](threat-model.md) | 攻擊者、對策與對應測試、已知限制 |
+| [benchmarks.md](benchmarks.md) | 實測：加密、轉發、DNS 延遲、偵測率、binary 大小 |
+| [hardware-matrix.md](hardware-matrix.md) | 各代 Pi 的功能對照與這台裝置的實測 |
 
 ## 環境
 
@@ -27,23 +32,27 @@
 
 ## Repo 結構
 
-程式碼在 `rp_app/`（git repo）：
-
 ```
 rp_app/
-├── local.env.example     # 設定範本（可 commit）
-├── local.env             # 實際值（gitignored，權限 600）
-├── README.md             # 快速上手
-└── scripts/
-    ├── lib.sh                 # 共用函式
-    ├── 00-preflight.sh        # 列出外接磁碟
-    ├── 01-download-image.sh   # 下載並驗證映像檔
-    ├── 02-flash-sd.sh         # 燒錄（有安全檢查）
-    ├── 03-configure-boot.sh   # 寫入 cloud-init 設定
-    ├── 04-find-pi.sh          # 等待 Pi 上線
-    ├── ssh-pi.sh              # SSH 登入
-    ├── wifi-ssid.sh           # 從 Mac 已存的 Wi-Fi 挑 SSID
-    └── pi-diag.sh             # 在 Pi 上執行的診斷腳本
+├── Cargo.toml / rust-toolchain.toml   # Rust workspace
+├── crates/
+│   ├── rp-schema/    # 設定型別（rp.toml）
+│   ├── rp-core/      # 驗證、渲染、apply/rollback 引擎、模組 base/vpn/dns/ap/agent
+│   ├── rpctl/        # 管理 CLI
+│   ├── rp-dns/       # DNS 防火牆
+│   ├── rp-policy/    # 授權、參數驗證、核准、稽核
+│   ├── rp-http/      # 精簡 HTTP/1.1
+│   ├── rp-agent/     # 觀測 API
+│   ├── rp-mcp/       # MCP server
+│   └── rp-probe/     # 測試／稽核工具
+├── deploy/           # install.sh、install.ps1
+├── configs/          # rp.example.toml
+├── test/             # Robot Framework（suites、resources、fixtures）
+├── scripts/          # SD 卡燒錄與首次開機腳本
+├── docs/             # 本文件
+├── .github/workflows # ci.yml、release.yml
+├── local.env.example
+└── local.env         # 實際值（gitignored）
 ```
 
 ## 機密資料原則
