@@ -1,0 +1,10 @@
+# Managed by rpctl — local edits will be overwritten.
+# DNS firewall: answer LAN clients only.
+table inet rp {
+	chain mod_input {
+		ip saddr @lan4 udp dport 53 accept
+		ip6 saddr @lan6 udp dport 53 accept
+		ip saddr @lan4 tcp dport 53 accept
+		ip6 saddr @lan6 tcp dport 53 accept
+	}
+}

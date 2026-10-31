@@ -1,0 +1,72 @@
+#!/usr/sbin/nft -f
+# Managed by rpctl — local edits will be overwritten.
+
+table inet rp
+delete table inet rp
+
+table inet rp {
+	set ssh_allow4 {
+		type ipv4_addr
+		flags interval
+		elements = { 192.0.2.0/24 }
+	}
+	set ssh_allow6 {
+		type ipv6_addr
+		flags interval
+	}
+	set lan4 {
+		type ipv4_addr
+		flags interval
+		elements = { 192.0.2.0/24 }
+	}
+	set lan6 {
+		type ipv6_addr
+		flags interval
+	}
+
+	# Extension points: module snippets in /etc/rp/nft.d append here.
+	chain mod_input {
+	}
+
+	chain mod_forward {
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		iif "lo" accept
+		ip protocol icmp limit rate 20/second accept
+		meta l4proto ipv6-icmp accept
+		udp sport 67 udp dport 68 accept
+		udp sport 547 udp dport 546 accept
+		udp dport 5353 accept
+		tcp dport 22 ip saddr @ssh_allow4 accept
+		tcp dport 22 ip6 saddr @ssh_allow6 accept
+		jump mod_input
+		limit rate 10/minute burst 20 packets log prefix "rp-input-drop "
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		jump mod_forward
+		limit rate 10/minute burst 20 packets log prefix "rp-forward-drop "
+	}
+
+	chain output {
+		type filter hook output priority filter; policy accept;
+	}
+}
+
+# Managed by rpctl — local edits will be overwritten.
+# DNS firewall: answer LAN clients only.
+table inet rp {
+	chain mod_input {
+		ip saddr @lan4 udp dport 53 accept
+		ip6 saddr @lan6 udp dport 53 accept
+		ip saddr @lan4 tcp dport 53 accept
+		ip6 saddr @lan6 tcp dport 53 accept
+	}
+}

@@ -67,6 +67,8 @@ pub struct Engine {
     pub cfg: Dns,
     pub lists: RwLock<Arc<Lists>>,
     limiter: Mutex<RateLimiter>,
+    /// Per upstream: skip it until this instant after a failure.
+    down_until: Mutex<Vec<Option<Instant>>>,
     pub events: Sink,
     pub stats: Stats,
 }
@@ -75,6 +77,7 @@ impl Engine {
     pub fn new(cfg: Dns, lists: Lists, events: Sink) -> Self {
         Self {
             limiter: Mutex::new(RateLimiter::new(cfg.rate_limit_qps)),
+            down_until: Mutex::new(vec![None; cfg.upstreams.len()]),
             cfg,
             lists: RwLock::new(Arc::new(lists)),
             events,
@@ -180,24 +183,46 @@ impl Engine {
         }
     }
 
+    /// Upstream indexes in try order: healthy ones first (config order), then
+    /// ones marked down — so a dead resolver costs one timeout per hold-down,
+    /// not one per query.
+    fn upstream_order(&self) -> Vec<usize> {
+        let now = Instant::now();
+        let down = self.down_until.lock().unwrap();
+        let (mut healthy, mut sick): (Vec<usize>, Vec<usize>) =
+            (0..self.cfg.upstreams.len()).partition(|&i| down[i].is_none_or(|t| t <= now));
+        healthy.append(&mut sick);
+        healthy
+    }
+
+    fn mark(&self, i: usize, ok: bool) {
+        let mut down = self.down_until.lock().unwrap();
+        down[i] = if ok { None } else { Some(Instant::now() + UPSTREAM_HOLD_DOWN) };
+    }
+
     async fn forward(&self, packet: &[u8], id: u16, via_tcp: bool) -> Option<Vec<u8>> {
         let timeout = Duration::from_millis(self.cfg.upstream_timeout_ms);
-        for up in &self.cfg.upstreams {
+        for i in self.upstream_order() {
+            let up = self.cfg.upstreams[i];
             let r = if via_tcp {
-                tokio::time::timeout(timeout, forward_tcp(*up, packet)).await
+                tokio::time::timeout(timeout, forward_tcp(up, packet)).await
             } else {
-                tokio::time::timeout(timeout, forward_udp(*up, packet)).await
+                tokio::time::timeout(timeout, forward_udp(up, packet)).await
             };
-            if let Ok(Ok(resp)) = r {
+            match r {
                 // Only accept a reply that answers our query.
-                if resp.len() >= 2 && u16::from_be_bytes([resp[0], resp[1]]) == id {
+                Ok(Ok(resp)) if resp.len() >= 2 && u16::from_be_bytes([resp[0], resp[1]]) == id => {
+                    self.mark(i, true);
                     return Some(resp);
                 }
+                _ => self.mark(i, false),
             }
         }
         None
     }
 }
+
+const UPSTREAM_HOLD_DOWN: Duration = Duration::from_secs(30);
 
 async fn forward_udp(up: SocketAddr, packet: &[u8]) -> std::io::Result<Vec<u8>> {
     let bind: SocketAddr = if up.is_ipv4() {

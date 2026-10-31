@@ -109,6 +109,7 @@ fn main() -> ExitCode {
         Cmd::DnsBench { server, name, count } => {
             let mut ms = Vec::new();
             let mut failures = 0;
+            let mut rcodes = std::collections::BTreeMap::<String, u32>::new();
             for _ in 0..count {
                 match dnsprobe::query(
                     server,
@@ -117,7 +118,10 @@ fn main() -> ExitCode {
                     false,
                     Duration::from_secs(2),
                 ) {
-                    Ok(a) => ms.push(a.millis),
+                    Ok(a) => {
+                        ms.push(a.millis);
+                        *rcodes.entry(a.rcode).or_default() += 1;
+                    }
                     Err(_) => failures += 1,
                 }
             }
@@ -127,7 +131,7 @@ fn main() -> ExitCode {
             };
             println!(
                 "{}",
-                serde_json::json!({"count": count, "failures": failures, "p50_ms": pct(0.5), "p95_ms": pct(0.95), "p99_ms": pct(0.99)})
+                serde_json::json!({"count": count, "failures": failures, "rcodes": rcodes, "p50_ms": pct(0.5), "p95_ms": pct(0.95), "p99_ms": pct(0.99)})
             );
             if failures == count {
                 ExitCode::FAILURE
