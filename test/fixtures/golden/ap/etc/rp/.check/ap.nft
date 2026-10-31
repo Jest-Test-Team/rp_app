@@ -25,6 +25,11 @@ table inet rp {
 	}
 
 	# Extension points: module snippets in /etc/rp/nft.d append here.
+	# mod_prefilter runs before connection tracking accepts anything, so a
+	# quarantine also cuts connections that were already established.
+	chain mod_prefilter {
+	}
+
 	chain mod_input {
 	}
 
@@ -33,6 +38,7 @@ table inet rp {
 
 	chain input {
 		type filter hook input priority filter; policy drop;
+		jump mod_prefilter
 		ct state established,related accept
 		ct state invalid drop
 		iif "lo" accept
@@ -49,6 +55,7 @@ table inet rp {
 
 	chain forward {
 		type filter hook forward priority filter; policy drop;
+		jump mod_prefilter
 		ct state established,related accept
 		ct state invalid drop
 		jump mod_forward
@@ -81,16 +88,17 @@ table inet rp {
 		flags timeout
 	}
 
-	chain mod_input {
+	chain mod_prefilter {
 		iifname "wlan0" ip saddr @ap_quarantine4 drop
+		oifname "wlan0" ip daddr @ap_quarantine4 drop
 		iifname "wlan0" ether saddr @ap_quarantine_mac drop
+	}
+
+	chain mod_input {
 		iifname "wlan0" udp sport 68 udp dport 67 accept
 	}
 
 	chain mod_forward {
-		iifname "wlan0" ip saddr @ap_quarantine4 drop
-		oifname "wlan0" ip daddr @ap_quarantine4 drop
-		iifname "wlan0" ether saddr @ap_quarantine_mac drop
 		iifname "wlan0" oifname "wlan0" drop
 		iifname "wlan0" tcp dport 853 limit rate 6/minute log prefix "rp-ap-dot "
 		iifname "wlan0" udp dport 853 limit rate 6/minute log prefix "rp-ap-doq "

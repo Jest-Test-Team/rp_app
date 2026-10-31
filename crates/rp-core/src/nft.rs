@@ -61,9 +61,13 @@ fn base_table(cfg: &Config) -> String {
     set(&mut s, "lan6", "ipv6_addr", &lan6);
 
     s.push_str("\n\t# Extension points: module snippets in /etc/rp/nft.d append here.\n");
+    s.push_str("\t# mod_prefilter runs before connection tracking accepts anything, so a\n");
+    s.push_str("\t# quarantine also cuts connections that were already established.\n");
+    s.push_str("\tchain mod_prefilter {\n\t}\n\n");
     s.push_str("\tchain mod_input {\n\t}\n\n\tchain mod_forward {\n\t}\n");
 
     s.push_str("\n\tchain input {\n\t\ttype filter hook input priority filter; policy drop;\n");
+    s.push_str("\t\tjump mod_prefilter\n");
     s.push_str("\t\tct state established,related accept\n");
     s.push_str("\t\tct state invalid drop\n");
     s.push_str("\t\tiif \"lo\" accept\n");
@@ -82,6 +86,7 @@ fn base_table(cfg: &Config) -> String {
     s.push_str("\t}\n");
 
     s.push_str("\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;\n");
+    s.push_str("\t\tjump mod_prefilter\n");
     s.push_str("\t\tct state established,related accept\n");
     s.push_str("\t\tct state invalid drop\n");
     s.push_str("\t\tjump mod_forward\n");
@@ -125,6 +130,17 @@ mod tests {
         assert!(jump < log);
         assert!(r.contains("\t\tjump mod_forward\n"));
         assert!(r.trim_end().ends_with("include \"/etc/rp/nft.d/*.nft\""));
+    }
+
+    #[test]
+    fn prefilter_runs_before_established_accept() {
+        let r = ruleset(&cfg(""));
+        for chain in ["chain input {", "chain forward {"] {
+            let at = r.find(chain).unwrap();
+            let pre = r[at..].find("jump mod_prefilter").unwrap();
+            let est = r[at..].find("ct state established,related accept").unwrap();
+            assert!(pre < est, "{chain}: prefilter must come first");
+        }
     }
 
     #[test]

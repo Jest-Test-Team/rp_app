@@ -102,6 +102,18 @@ Create Topology
     ...    --bind    0.0.0.0    alias=rp-dns53
     Start Process    ip    netns    exec    ${NS}iot    python3    -m    http.server    8080
     ...    --bind    198.51.100.130    alias=iot-http
+    # TCP echo on the "internet" host, for long-lived connection tests.
+    ${echo}=    Catenate    SEPARATOR=\n
+    ...    import socketserver
+    ...    class H(socketserver.BaseRequestHandler):
+    ...    \ \ \ \ def handle(self):
+    ...    \ \ \ \ \ \ \ \ while True:
+    ...    \ \ \ \ \ \ \ \ \ \ \ \ d = self.request.recv(64)
+    ...    \ \ \ \ \ \ \ \ \ \ \ \ if not d: return
+    ...    \ \ \ \ \ \ \ \ \ \ \ \ self.request.sendall(d)
+    ...    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    ...    socketserver.ThreadingTCPServer(('203.0.113.10', 7777), H).serve_forever()
+    Start Process    ip    netns    exec    ${NS}inet    python3    -c    ${echo}    alias=inet-echo
     Sleep    1s
 
 Destroy Topology

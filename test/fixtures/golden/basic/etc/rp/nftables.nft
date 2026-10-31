@@ -27,6 +27,11 @@ table inet rp {
 	}
 
 	# Extension points: module snippets in /etc/rp/nft.d append here.
+	# mod_prefilter runs before connection tracking accepts anything, so a
+	# quarantine also cuts connections that were already established.
+	chain mod_prefilter {
+	}
+
 	chain mod_input {
 	}
 
@@ -35,6 +40,7 @@ table inet rp {
 
 	chain input {
 		type filter hook input priority filter; policy drop;
+		jump mod_prefilter
 		ct state established,related accept
 		ct state invalid drop
 		iif "lo" accept
@@ -51,6 +57,7 @@ table inet rp {
 
 	chain forward {
 		type filter hook forward priority filter; policy drop;
+		jump mod_prefilter
 		ct state established,related accept
 		ct state invalid drop
 		jump mod_forward

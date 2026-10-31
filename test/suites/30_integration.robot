@@ -137,6 +137,65 @@ IoT Gets DNS From The Pi Only When The DNS Module Is Configured
     ${open}=    TCP Connects From    iot    198.51.100.129    53
     Should Be Equal    ${open}    open
 
+Approved Quarantine By IP Cuts The Client Off And Expires
+    [Tags]    integration    requires-root    ap    mcp
+    [Documentation]    The exact element command `rpctl approve` runs, applied in the Pi namespace.
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${ok}=    HTTP From    iot    203.0.113.10:8080
+    Should Be Equal    ${ok}    200
+    ${r}=    In NS    rp    nft    add    element    inet    rp    ap_quarantine4    { 198.51.100.130 timeout 15s }
+    Should Be Equal As Integers    ${r.rc}    0    msg=${r.stdout}
+    ${t0}=    Evaluate    time.monotonic()    modules=time
+    ${blocked}=    HTTP From    iot    203.0.113.10:8080
+    Should Be Equal    ${blocked}    0
+    ${lan}=    HTTP From    lan    198.51.100.130:8080
+    Should Be Equal    ${lan}    0    msg=traffic towards a quarantined client is dropped too
+    ${left}=    Evaluate    max(0, 16 - (time.monotonic() - $t0))    modules=time
+    Sleep    ${left}s
+    ${back}=    HTTP From    iot    203.0.113.10:8080
+    Should Be Equal    ${back}    200    msg=the quarantine must expire on its own
+
+Quarantine Cuts A Connection That Was Already Established
+    [Tags]    integration    requires-root    ap    mcp
+    [Documentation]    Quarantine rules run before conntrack accepts established traffic.
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${client}=    Catenate    SEPARATOR=\n
+    ...    import socket, time
+    ...    s = socket.create_connection(('203.0.113.10', 7777), timeout=3)
+    ...    s.sendall(b'1'); print('first', s.recv(8) == b'1', flush=True)
+    ...    time.sleep(3)
+    ...    try:
+    ...    \ \ s.sendall(b'2'); print('second', 'ok' if s.recv(8) == b'2' else 'closed')
+    ...    except Exception:
+    ...    \ \ print('second', 'blocked')
+    Start Process    ip    netns    exec    ${NS}iot    python3    -c    ${client}    alias=longlived
+    Sleep    1.5s
+    In NS    rp    nft    add    element    inet    rp    ap_quarantine4    { 198.51.100.130 timeout 1m }
+    ${r}=    Wait For Process    longlived    timeout=20s
+    Should Contain    ${r.stdout}    first True
+    Should Contain    ${r.stdout}    second blocked    msg=established connection survived: ${r.stdout}
+    In NS    rp    nft    flush    set    inet    rp    ap_quarantine4
+
+Approved Isolation By MAC Survives An IP Change
+    [Tags]    integration    requires-root    ap    mcp
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${mac}=    In NS    iot    cat    /sys/class/net/eth0/address
+    ${r}=    In NS    rp    nft    add    element    inet    rp    ap_quarantine_mac    { ${mac.stdout.strip()} timeout 1m }
+    Should Be Equal As Integers    ${r.rc}    0    msg=${r.stdout}
+    ${blocked}=    HTTP From    iot    203.0.113.10:8080
+    Should Be Equal    ${blocked}    0
+    In NS    iot    ip    addr    add    198.51.100.131/25    dev    eth0
+    ${code}=    Catenate    SEPARATOR=\n
+    ...    import socket
+    ...    s = socket.socket(); s.settimeout(3); s.bind(('198.51.100.131', 0))
+    ...    print('open' if s.connect_ex(('203.0.113.10', 8080)) == 0 else 'closed')
+    ${moved}=    In NS    iot    python3    -c    ${code}
+    Should Be Equal    ${moved.stdout.strip()}    closed
+    In NS    iot    ip    addr    del    198.51.100.131/25    dev    eth0
+
 *** Keywords ***
 Render AP
     [Arguments]    ${extra}=${EMPTY}    ${dns}=${False}
