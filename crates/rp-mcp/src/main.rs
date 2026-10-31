@@ -29,6 +29,9 @@ struct Cli {
     agent_token_file: Option<PathBuf>,
     #[arg(long, env = "RP_MCP_CLIENTS_FILE")]
     clients_file: Option<PathBuf>,
+    /// Resolve configured file paths under this root (testing).
+    #[arg(long, default_value = "/")]
+    root: PathBuf,
 }
 
 fn caps(list: &[String]) -> BTreeSet<Capability> {
@@ -45,13 +48,13 @@ fn caps(list: &[String]) -> BTreeSet<Capability> {
 async fn run(cli: Cli) -> Result<()> {
     let cfg = rp_core::config::load(&cli.config)?;
     let m = cfg.mcp.clone().context("no [mcp] section in the config")?;
-    let token_path =
-        cli.agent_token_file.clone().unwrap_or_else(|| PathBuf::from(&m.agent_token_file));
+    let at = |p: &str| rp_core::files::under_root(&cli.root, p);
+    let token_path = cli.agent_token_file.clone().unwrap_or_else(|| at(&m.agent_token_file));
     let agent_token = std::fs::read_to_string(&token_path)
         .with_context(|| format!("cannot read agent token {}", token_path.display()))?
         .trim()
         .to_string();
-    let audit = Audit::open(std::path::Path::new(&m.audit_log))
+    let audit = Audit::open(&at(&m.audit_log))
         .map_err(|e| eprintln!("rp-mcp: warning: audit log disabled: {e}"))
         .ok();
     let d = Arc::new(Dispatcher {
@@ -81,7 +84,7 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    let clients_path = cli.clients_file.clone().unwrap_or_else(|| PathBuf::from(&m.clients_file));
+    let clients_path = cli.clients_file.clone().unwrap_or_else(|| at(&m.clients_file));
     let clients = Arc::new(Clients::load(&clients_path).map_err(anyhow::Error::msg)?);
     let listener = tokio::net::TcpListener::bind(m.listen)
         .await

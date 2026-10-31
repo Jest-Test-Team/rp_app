@@ -829,7 +829,9 @@ dependencies = [
  "clap",
  "hickory-proto",
  "regex",
+ "rp-http",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -859,7 +861,9 @@ dependencies = [
  "anyhow",
  "clap",
  "qrcode",
+ "rp-agent",
  "rp-core",
+ "rp-policy",
  "rp-schema",
  "rpassword",
  "serde",

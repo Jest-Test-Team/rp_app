@@ -24,8 +24,8 @@ PowerShell Rejects Malicious Arguments
 PowerShell Rejects
     [Arguments]    ${param}    ${value}
     Require Tool    pwsh
-    @{target}=    Create List    -Target    pi@example.invalid
-    IF    '${param}' == '-Target'    @{target}=    Create List
+    @{target}=    IF    '${param}' == '-Target'    Create List
+    ...    ELSE    Create List    -Target    pi@example.invalid
     ${r}=    Run Process    pwsh    -NoProfile    -NonInteractive    -File    ${INSTALL_PS1}
     ...    @{target}    -Triple    armv7-unknown-linux-gnueabihf    -DryRun
     ...    ${param}    ${value}    stderr=STDOUT

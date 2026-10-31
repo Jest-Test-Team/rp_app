@@ -13,3 +13,5 @@ clap.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 hickory-proto.workspace = true
+rp-http = { path = "../rp-http" }
+tokio.workspace = true

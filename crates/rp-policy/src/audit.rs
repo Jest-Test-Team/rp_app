@@ -41,9 +41,28 @@ pub fn args_digest(args: &serde_json::Value) -> String {
     hex::encode(Sha256::digest(serde_json::to_vec(args).unwrap_or_default()))
 }
 
+/// Last entry's hash, read from the end of the file.
+fn last_hash(f: &mut std::fs::File) -> std::io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let len = f.metadata()?.len();
+    let start = len.saturating_sub(8192);
+    f.seek(SeekFrom::Start(start))?;
+    let mut tail = String::new();
+    f.read_to_string(&mut tail)?;
+    Ok(tail
+        .lines()
+        .rev()
+        .find_map(|l| serde_json::from_str::<Entry>(l).ok())
+        .map(|e| e.hash)
+        .unwrap_or_else(|| GENESIS.to_string()))
+}
+
+/// Writers in different processes (rp-agent, rpctl approve) share one log, so
+/// every append takes an exclusive file lock and re-reads the chain head —
+/// nothing is cached between appends.
 pub struct Audit {
     path: PathBuf,
-    last: Mutex<String>,
+    local: Mutex<()>,
 }
 
 impl Audit {
@@ -51,13 +70,7 @@ impl Audit {
         if let Some(d) = path.parent() {
             std::fs::create_dir_all(d)?;
         }
-        let last = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| t.lines().last().map(str::to_string))
-            .and_then(|l| serde_json::from_str::<Entry>(&l).ok())
-            .map(|e| e.hash)
-            .unwrap_or_else(|| GENESIS.to_string());
-        Ok(Self { path: path.to_path_buf(), last: Mutex::new(last) })
+        Ok(Self { path: path.to_path_buf(), local: Mutex::new(()) })
     }
 
     pub fn record(
@@ -68,7 +81,17 @@ impl Audit {
         decision: &str,
         detail: &str,
     ) -> std::io::Result<Entry> {
-        let mut last = self.last.lock().unwrap();
+        let _guard = self.local.lock().unwrap();
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).read(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&self.path)?;
+        f.lock()?;
+        let prev = last_hash(&mut f)?;
         let mut e = Entry {
             ts: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -79,21 +102,13 @@ impl Audit {
             args_sha256: args_digest(args),
             decision: decision.into(),
             detail: detail.chars().take(500).collect(),
-            prev: last.clone(),
+            prev,
             hash: String::new(),
         };
         e.hash = entry_hash(&e);
-        let mut opts = std::fs::OpenOptions::new();
-        opts.create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(&self.path)?;
         writeln!(f, "{}", serde_json::to_string(&e).unwrap())?;
         f.sync_data()?;
-        *last = e.hash.clone();
+        f.unlock()?;
         Ok(e)
     }
 }
@@ -173,6 +188,17 @@ mod tests {
             std::fs::read_to_string(&p2).unwrap().lines().map(String::from).collect();
         std::fs::write(&p2, format!("{}\n{}\n", lines[0], lines[2])).unwrap();
         assert_eq!(verify(&p2).unwrap_err().0, 2);
+    }
+
+    #[test]
+    fn two_writers_on_one_file_keep_the_chain_intact() {
+        let p = tmp("two");
+        let a = Audit::open(&p).unwrap();
+        let b = Audit::open(&p).unwrap();
+        a.record("agent", "t", &json!({}), "pending", "").unwrap();
+        b.record("admin", "t", &json!({}), "approved", "").unwrap();
+        a.record("agent", "t", &json!({}), "allowed", "").unwrap();
+        assert_eq!(verify(&p), Ok(3));
     }
 
     #[test]

@@ -59,6 +59,31 @@ enum Cmd {
         #[arg(long)]
         silent: bool,
     },
+    /// Send one JSON-RPC message to an MCP HTTP endpoint and print the reply as JSON:
+    /// {"status": <http>, "body": <reply>}. The token is read from an env var so it
+    /// never appears in process listings.
+    Mcp {
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value = "/mcp")]
+        path: String,
+        /// Environment variable holding the bearer token (omit for none).
+        #[arg(long)]
+        token_env: Option<String>,
+        #[arg(long)]
+        method: String,
+        #[arg(long, default_value = "{}")]
+        params: String,
+        /// Send as a notification (no id).
+        #[arg(long)]
+        notify: bool,
+        /// Extra header NAME:VALUE (repeatable), e.g. Origin:http://evil.example
+        #[arg(long)]
+        header: Vec<String>,
+        /// Send this raw body instead of a JSON-RPC message.
+        #[arg(long)]
+        raw: Option<String>,
+    },
     /// Accept one TCP connection and report received throughput as JSON.
     TputServer {
         #[arg(long)]
@@ -87,6 +112,55 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Mcp { addr, path, token_env, method, params, notify, header, raw } => {
+            let token = token_env.and_then(|v| std::env::var(v).ok());
+            let params: serde_json::Value = match serde_json::from_str(&params) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: --params is not JSON: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut msg = serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params});
+            if !notify {
+                msg["id"] = serde_json::json!(1);
+            }
+            let headers: Vec<(String, String)> = header
+                .iter()
+                .filter_map(|h| {
+                    h.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                })
+                .collect();
+            let hdr_refs: Vec<(&str, &str)> =
+                headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let r = rt.block_on(async {
+                match raw {
+                    Some(body) => raw_post(&addr, &path, token.as_deref(), &body).await,
+                    None => {
+                        rp_http::request_with_headers(
+                            &addr,
+                            "POST",
+                            &path,
+                            token.as_deref(),
+                            &hdr_refs,
+                            Some(&msg),
+                        )
+                        .await
+                    }
+                }
+            });
+            match r {
+                Ok((status, body)) => {
+                    println!("{}", serde_json::json!({"status": status, "body": body}));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    println!("{}", serde_json::json!({"status": 0, "error": e}));
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Cmd::DnsQuery { server, name, r#type, tcp, timeout_ms } => {
             let qtype = match hickory_proto::rr::RecordType::from_str(&r#type.to_uppercase()) {
                 Ok(t) => t,
@@ -218,4 +292,26 @@ fn main() -> ExitCode {
             }
         }
     }
+}
+
+/// POST an arbitrary body (for malformed-input tests).
+async fn raw_post(
+    addr: &str,
+    path: &str,
+    token: Option<&str>,
+    body: &str,
+) -> Result<(u16, serde_json::Value), String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.map_err(|e| e.to_string())?;
+    let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{auth}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.map_err(|e| e.to_string())?;
+    let (head, rest) = out.split_once("\r\n\r\n").unwrap_or((&out, ""));
+    let status = head.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    Ok((status, serde_json::from_str(rest).unwrap_or(serde_json::Value::Null)))
 }
