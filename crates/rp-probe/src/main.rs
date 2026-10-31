@@ -5,8 +5,12 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use std::str::FromStr;
+use std::time::Duration;
+
 use clap::{Parser, Subcommand};
 
+mod dnsprobe;
 mod secrets;
 mod tput;
 
@@ -19,6 +23,42 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Send one DNS query and print {rcode, answers, ms} as JSON.
+    DnsQuery {
+        #[arg(long)]
+        server: std::net::SocketAddr,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "A")]
+        r#type: String,
+        #[arg(long)]
+        tcp: bool,
+        #[arg(long, default_value_t = 3000)]
+        timeout_ms: u64,
+    },
+    /// Send N queries and print latency percentiles as JSON.
+    DnsBench {
+        #[arg(long)]
+        server: std::net::SocketAddr,
+        #[arg(long, default_value = "www.example.")]
+        name: String,
+        #[arg(long, default_value_t = 200)]
+        count: u32,
+    },
+    /// Send raw bytes (hex) over UDP and report whether anything came back.
+    DnsRaw {
+        #[arg(long)]
+        server: std::net::SocketAddr,
+        #[arg(long)]
+        hex: String,
+    },
+    /// Run a fake upstream resolver (answers 203.0.113.99), or a dead one with --silent.
+    DnsFakeUpstream {
+        #[arg(long)]
+        bind: std::net::SocketAddr,
+        #[arg(long)]
+        silent: bool,
+    },
     /// Accept one TCP connection and report received throughput as JSON.
     TputServer {
         #[arg(long)]
@@ -47,6 +87,83 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::DnsQuery { server, name, r#type, tcp, timeout_ms } => {
+            let qtype = match hickory_proto::rr::RecordType::from_str(&r#type.to_uppercase()) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: bad type: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match dnsprobe::query(server, &name, qtype, tcp, Duration::from_millis(timeout_ms)) {
+                Ok(a) => {
+                    println!("{}", a.json());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    println!("{}", serde_json::json!({"rcode": "Timeout", "error": e.to_string()}));
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::DnsBench { server, name, count } => {
+            let mut ms = Vec::new();
+            let mut failures = 0;
+            for _ in 0..count {
+                match dnsprobe::query(
+                    server,
+                    &name,
+                    hickory_proto::rr::RecordType::A,
+                    false,
+                    Duration::from_secs(2),
+                ) {
+                    Ok(a) => ms.push(a.millis),
+                    Err(_) => failures += 1,
+                }
+            }
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let pct = |p: f64| {
+                ms.get(((ms.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0)
+            };
+            println!(
+                "{}",
+                serde_json::json!({"count": count, "failures": failures, "p50_ms": pct(0.5), "p95_ms": pct(0.95), "p99_ms": pct(0.99)})
+            );
+            if failures == count {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Cmd::DnsRaw { server, hex } => {
+            let bytes: Result<Vec<u8>, _> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(hex.get(i..i + 2).unwrap_or("zz"), 16))
+                .collect();
+            match bytes {
+                Ok(b) => match dnsprobe::send_raw(server, &b, Duration::from_millis(800)) {
+                    Ok(got) => {
+                        println!("{}", serde_json::json!({"reply": got}));
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::FAILURE
+                    }
+                },
+                Err(_) => {
+                    eprintln!("error: --hex must be hex bytes");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::DnsFakeUpstream { bind, silent } => match dnsprobe::fake_upstream(bind, silent) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::TputServer { bind } => match tput::serve_once(bind) {
             Ok(r) => {
                 println!("{}", r.json("server"));

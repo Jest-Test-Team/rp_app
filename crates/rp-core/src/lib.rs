@@ -4,6 +4,7 @@
 pub mod apply;
 pub mod base;
 pub mod config;
+pub mod dns;
 pub mod files;
 pub mod module;
 pub mod nft;
