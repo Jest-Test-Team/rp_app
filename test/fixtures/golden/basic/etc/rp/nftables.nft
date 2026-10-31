@@ -26,6 +26,13 @@ table inet rp {
 		elements = { 2001:db8:1::/64 }
 	}
 
+	# Extension points: module snippets in /etc/rp/nft.d append here.
+	chain mod_input {
+	}
+
+	chain mod_forward {
+	}
+
 	chain input {
 		type filter hook input priority filter; policy drop;
 		ct state established,related accept
@@ -38,6 +45,7 @@ table inet rp {
 		udp dport 5353 accept
 		tcp dport 22 ip saddr @ssh_allow4 accept
 		tcp dport 22 ip6 saddr @ssh_allow6 accept
+		jump mod_input
 		limit rate 10/minute burst 20 packets log prefix "rp-input-drop "
 	}
 
@@ -45,9 +53,13 @@ table inet rp {
 		type filter hook forward priority filter; policy drop;
 		ct state established,related accept
 		ct state invalid drop
+		jump mod_forward
+		limit rate 10/minute burst 20 packets log prefix "rp-forward-drop "
 	}
 
 	chain output {
 		type filter hook output priority filter; policy accept;
 	}
 }
+
+include "/etc/rp/nft.d/*.nft"

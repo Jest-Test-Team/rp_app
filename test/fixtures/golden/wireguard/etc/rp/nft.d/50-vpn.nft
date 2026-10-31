@@ -1,0 +1,39 @@
+# Managed by rpctl — local edits will be overwritten.
+# VPN exit node (Wireguard): internet yes, home LAN no.
+table inet rp {
+	set vpn_block4 {
+		type ipv4_addr
+		flags interval
+		elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.2.0/24, 192.168.0.0/16, 224.0.0.0/3 }
+	}
+	set vpn_block6 {
+		type ipv6_addr
+		flags interval
+		elements = { ::1/128, fc00::/7, fe80::/10, ff00::/8 }
+	}
+	set vpn_allow4 {
+		type ipv4_addr
+		flags interval
+	}
+	set vpn_allow6 {
+		type ipv6_addr
+		flags interval
+	}
+
+	chain mod_input {
+		udp dport 51820 accept
+	}
+
+	chain mod_forward {
+		iifname "wg0" oifname "eth0" ip daddr @vpn_allow4 accept
+		iifname "wg0" oifname "eth0" ip6 daddr @vpn_allow6 accept
+		iifname "wg0" ip daddr @vpn_block4 drop
+		iifname "wg0" ip6 daddr @vpn_block6 drop
+		iifname "wg0" oifname "eth0" accept
+	}
+
+	chain vpn_postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		oifname "eth0" ip saddr 198.51.100.0/24 masquerade
+	}
+}

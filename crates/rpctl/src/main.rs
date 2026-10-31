@@ -82,10 +82,35 @@ enum Cmd {
     },
     /// Show module state and drift.
     Status,
+    /// VPN helpers.
+    #[command(subcommand)]
+    Vpn(VpnCmd),
+}
+
+#[derive(Subcommand)]
+enum VpnCmd {
+    /// Create a WireGuard client: prints its config and QR code once, plus the
+    /// TOML to add to rp.toml. The client's private key is never stored.
+    AddPeer {
+        name: String,
+        /// Host number inside the tunnel subnet (default: next free).
+        #[arg(long)]
+        host: Option<u32>,
+        /// Do not print the QR code.
+        #[arg(long)]
+        no_qr: bool,
+    },
 }
 
 fn module(name: &str) -> Result<Box<dyn Module>> {
     lookup(name).with_context(|| format!("unknown module '{name}' (known: {})", MODULES.join(", ")))
+}
+
+/// A module that is configured, or an error explaining why not.
+fn enabled_module(name: &str, cfg: &Config) -> Result<Box<dyn Module>> {
+    let m = module(name)?;
+    m.enabled(cfg).map_err(|e| anyhow::anyhow!("module '{name}' is not configured: {e}"))?;
+    Ok(m)
 }
 
 fn load_config(path: &Path) -> std::result::Result<Config, ExitCode> {
@@ -143,11 +168,12 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             }
         }
         Cmd::Render { module: name, out } => {
-            let m = module(name)?;
+            module(name)?;
             let cfg = match load_config(&cli.config) {
                 Ok(c) => c,
                 Err(code) => return Ok(code),
             };
+            let m = enabled_module(name, &cfg)?;
             for f in m.render(&cfg) {
                 match out {
                     Some(dir) => {
@@ -161,11 +187,12 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             }
         }
         Cmd::Apply { module: name, dry_run, no_packages, no_confirm_timer } => {
-            let m = module(name)?;
+            module(name)?;
             let cfg = match load_config(&cli.config) {
                 Ok(c) => c,
                 Err(code) => return Ok(code),
             };
+            let m = enabled_module(name, &cfg)?;
             let facts = preflight::gather(&cfg, &target);
             let checks = preflight::evaluate(&cfg, name, &facts, *dry_run);
             if !preflight::passed(&checks) {
@@ -195,6 +222,9 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 println!("dry run: {} file(s) would change", report.changes.len());
             } else {
                 println!("{name}: applied {} file(s)", report.changes.len());
+                for n in m.next_steps(&cfg) {
+                    println!("next: {n}");
+                }
                 if report.needs_confirm {
                     println!(
                         "IMPORTANT: run `rpctl confirm` within {}s or the change is rolled back automatically",
@@ -220,6 +250,13 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 rep.changes.len(),
                 rep.backup_id.unwrap_or_default()
             );
+        }
+        Cmd::Vpn(VpnCmd::AddPeer { name, host, no_qr }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            return add_peer(&cfg, &cli.root, name, *host, !no_qr);
         }
         Cmd::Status => {
             let cfg = load_config(&cli.config).ok();
@@ -252,6 +289,55 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             }
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn add_peer(
+    cfg: &Config,
+    root: &Path,
+    name: &str,
+    host: Option<u32>,
+    qr: bool,
+) -> Result<ExitCode> {
+    use rp_core::wg;
+    let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode == rp_schema::VpnMode::Wireguard) else {
+        anyhow::bail!("vpn.mode must be \"wireguard\" to add peers");
+    };
+    if v.wireguard.endpoint.is_none() {
+        anyhow::bail!("set vpn.wireguard.endpoint (public host:port) first");
+    }
+    if v.wireguard.peers.iter().any(|p| p.name == name) {
+        anyhow::bail!("a peer named '{name}' already exists");
+    }
+    let host = match host {
+        Some(h) => h,
+        None => wg::next_free_host(cfg).context("tunnel subnet is full")?,
+    };
+    let key_path = under_root(root, wg::SERVER_KEY_PATH);
+    let server_private = std::fs::read_to_string(&key_path).with_context(|| {
+        format!("cannot read {} (run `sudo rpctl apply vpn` first, as root)", key_path.display())
+    })?;
+    let server_public = wg::public_from_private(&server_private).map_err(anyhow::Error::msg)?;
+
+    let kp = wg::generate();
+    let mut candidate = cfg.clone();
+    candidate.vpn.as_mut().unwrap().wireguard.peers.push(rp_schema::WgPeer {
+        name: name.to_string(),
+        public_key: kp.public.clone(),
+        host,
+    });
+    rp_core::config::validate(&candidate)?;
+
+    let client = wg::client_config(cfg, host, &kp.private, &server_public);
+    println!("# ---- client config for '{name}' (shown ONCE; the private key is not stored) ----");
+    print!("{client}");
+    if qr {
+        let code = qrcode::QrCode::new(client.as_bytes())?;
+        let art = code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build();
+        println!("\n{art}");
+    }
+    println!("# ---- add this to /etc/rp/rp.toml, then run: sudo rpctl apply vpn ----");
+    print!("{}", wg::peer_toml(name, &kp.public, host));
     Ok(ExitCode::SUCCESS)
 }
 

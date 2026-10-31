@@ -1,0 +1,16 @@
+# Test fixture — documentation address ranges only.
+[device]
+wan_if = "eth0"
+lan_cidrs = ["192.0.2.0/24"]
+
+[vpn]
+mode = "wireguard"
+
+[vpn.wireguard]
+subnet = "198.51.100.0/24"
+endpoint = "vpn.example.org:51820"
+
+[[vpn.wireguard.peers]]
+name = "phone"
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+host = 2

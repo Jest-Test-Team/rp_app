@@ -15,3 +15,6 @@ toml.workspace = true
 ipnet.workspace = true
 thiserror.workspace = true
 similar.workspace = true
+x25519-dalek.workspace = true
+rand_core.workspace = true
+base64.workspace = true

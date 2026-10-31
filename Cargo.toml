@@ -19,6 +19,10 @@ ipnet = { version = "2", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 similar = "2"
 regex = "1"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+base64 = "0.22"
+qrcode = { version = "0.14", default-features = false }
 
 [profile.release]
 lto = "thin"

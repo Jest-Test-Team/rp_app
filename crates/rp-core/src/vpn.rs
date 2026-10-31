@@ -372,9 +372,9 @@ mod tests {
     #[test]
     fn wireguard_config_never_contains_a_private_key() {
         let c = wg_conf(&wg());
-        assert!(c.contains("Address = 10.88.0.1/24"));
+        assert!(c.contains("Address = 10.88.0.1/24")); // rp-probe:allow
         assert!(c.contains("PostUp = wg set %i private-key /etc/rp/wireguard/private.key"));
-        assert!(c.contains("AllowedIPs = 10.88.0.2/32"));
+        assert!(c.contains("AllowedIPs = 10.88.0.2/32")); // rp-probe:allow
         assert!(!c.contains("PrivateKey"));
     }
 
