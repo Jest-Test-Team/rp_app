@@ -24,6 +24,96 @@ pub struct Config {
     /// Protected Wi-Fi access point for IoT / guest devices. Absent = disabled.
     #[serde(default)]
     pub ap: Option<Ap>,
+    /// Edge agent: read-only observation API (+ privileged action requests).
+    #[serde(default)]
+    pub agent: Option<Agent>,
+    /// MCP server exposing agent tools to AI clients, behind rp-policy.
+    #[serde(default)]
+    pub mcp: Option<Mcp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Agent {
+    #[serde(default = "default_agent_listen")]
+    pub listen: std::net::SocketAddr,
+    /// Bearer token callers (rp-mcp) must present. Generated on apply.
+    #[serde(default = "default_agent_token")]
+    pub token_file: String,
+    /// Networks `scan_network` may target. Empty = LAN + AP subnet.
+    #[serde(default)]
+    pub scan_allow: Vec<IpNet>,
+    #[serde(default = "default_scan_max")]
+    pub scan_max_hosts: u32,
+    /// Where action requests and the audit log live.
+    #[serde(default = "default_agent_state")]
+    pub state_dir: String,
+    /// Minutes a privileged request waits for approval before expiring.
+    #[serde(default = "default_pending")]
+    pub pending_minutes: i64,
+    /// Upper bound for how long an approved privileged change lasts.
+    #[serde(default = "default_max_ttl")]
+    pub max_ttl_minutes: i64,
+}
+
+impl Default for Agent {
+    fn default() -> Self {
+        Self {
+            listen: default_agent_listen(),
+            token_file: default_agent_token(),
+            scan_allow: Vec::new(),
+            scan_max_hosts: default_scan_max(),
+            state_dir: default_agent_state(),
+            pending_minutes: default_pending(),
+            max_ttl_minutes: default_max_ttl(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mcp {
+    /// Streamable HTTP endpoint (POST /mcp). Use a Tailscale address for remote clients.
+    #[serde(default = "default_mcp_listen")]
+    pub listen: std::net::SocketAddr,
+    /// Client token hashes and capabilities (managed by `rpctl mcp add-client`).
+    #[serde(default = "default_mcp_clients")]
+    pub clients_file: String,
+    /// rp-agent address.
+    #[serde(default = "default_agent_listen")]
+    pub agent: std::net::SocketAddr,
+    #[serde(default = "default_agent_token")]
+    pub agent_token_file: String,
+    #[serde(default = "default_mcp_rate")]
+    pub rate_limit_per_minute: u32,
+}
+
+fn default_agent_listen() -> std::net::SocketAddr {
+    "127.0.0.1:9850".parse().unwrap()
+}
+fn default_mcp_listen() -> std::net::SocketAddr {
+    "127.0.0.1:9851".parse().unwrap()
+}
+fn default_agent_token() -> String {
+    "/etc/rp/agent.token".into()
+}
+fn default_mcp_clients() -> String {
+    "/etc/rp/mcp-clients.toml".into()
+}
+fn default_scan_max() -> u32 {
+    256
+}
+fn default_agent_state() -> String {
+    "/var/lib/rp/agent".into()
+}
+fn default_pending() -> i64 {
+    15
+}
+fn default_max_ttl() -> i64 {
+    1440
+}
+fn default_mcp_rate() -> u32 {
+    60
 }
 
 /// An isolated access point: clients get internet through the uplink but can't
