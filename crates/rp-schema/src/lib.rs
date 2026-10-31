@@ -18,6 +18,75 @@ pub struct Config {
     /// VPN exit node. Absent = module disabled.
     #[serde(default)]
     pub vpn: Option<Vpn>,
+    /// DNS firewall. Absent = module disabled.
+    #[serde(default)]
+    pub dns: Option<Dns>,
+}
+
+/// DNS firewall: a filtering, logging forwarder for LAN clients.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dns {
+    /// Addresses rp-dns listens on (UDP and TCP).
+    #[serde(default = "default_dns_listen")]
+    pub listen: Vec<std::net::SocketAddr>,
+    /// Upstream resolvers, tried in order.
+    pub upstreams: Vec<std::net::SocketAddr>,
+    /// Blocklist files (hosts format or one domain per line).
+    #[serde(default)]
+    pub blocklists: Vec<String>,
+    /// Domains blocked in addition to the list files (subdomains included).
+    #[serde(default)]
+    pub block: Vec<String>,
+    /// Domains never blocked (subdomains included). Wins over every blocklist.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub block_response: BlockResponse,
+    /// Also block queries whose suspicion score reaches the threshold.
+    #[serde(default)]
+    pub block_suspicious: bool,
+    /// Score (0-100) at which a query is logged as suspicious.
+    #[serde(default = "default_threshold")]
+    pub suspicious_threshold: u8,
+    #[serde(default = "default_events_db")]
+    pub events_db: String,
+    #[serde(default = "default_retention")]
+    pub events_retention_days: u32,
+    /// Per-client queries per second before replies are refused.
+    #[serde(default = "default_qps")]
+    pub rate_limit_qps: u32,
+    #[serde(default = "default_upstream_timeout")]
+    pub upstream_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockResponse {
+    /// NXDOMAIN — the name does not exist.
+    #[default]
+    Nxdomain,
+    /// 0.0.0.0 / :: answers.
+    Zero,
+}
+
+fn default_dns_listen() -> Vec<std::net::SocketAddr> {
+    vec!["0.0.0.0:53".parse().unwrap(), "[::]:53".parse().unwrap()]
+}
+fn default_threshold() -> u8 {
+    70
+}
+fn default_events_db() -> String {
+    "/var/lib/rp-dns/events.sqlite".into()
+}
+fn default_retention() -> u32 {
+    7
+}
+fn default_qps() -> u32 {
+    100
+}
+fn default_upstream_timeout() -> u64 {
+    1500
 }
 
 /// VPN exit node: remote clients reach the internet through this box, and are

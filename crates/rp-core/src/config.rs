@@ -86,6 +86,9 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
     if let Some(v) = &cfg.vpn {
         validate_vpn(cfg, v, &mut errs);
     }
+    if let Some(d) = &cfg.dns {
+        validate_dns(d, &mut errs);
+    }
 
     let t = cfg.base.confirm_timeout_secs;
     if !(30..=3600).contains(&t) {
@@ -210,6 +213,70 @@ fn validate_vpn(cfg: &Config, v: &rp_schema::Vpn, errs: &mut Vec<String>) {
                 }
             }
         }
+    }
+}
+
+/// A DNS name (optionally `*.`-prefixed) as used in allow/block lists.
+pub fn valid_domain(d: &str) -> bool {
+    let d = d.trim_end_matches('.');
+    let d = d.strip_prefix("*.").unwrap_or(d);
+    !d.is_empty()
+        && d.len() <= 253
+        && d.split('.').all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+}
+
+fn validate_dns(d: &rp_schema::Dns, errs: &mut Vec<String>) {
+    if d.upstreams.is_empty() {
+        errs.push("dns.upstreams must list at least one resolver".into());
+    }
+    if d.listen.is_empty() {
+        errs.push("dns.listen must list at least one address".into());
+    }
+    for l in &d.listen {
+        if l.port() == 0 {
+            errs.push(format!("dns.listen {l} needs a port"));
+        }
+    }
+    for u in &d.upstreams {
+        if u.port() == 0 || u.ip().is_unspecified() {
+            errs.push(format!("dns.upstreams entry {u} is not a usable resolver address"));
+        }
+        // Forwarding to ourselves would loop every query forever.
+        let loops = d.listen.iter().any(|l| {
+            l.port() == u.port()
+                && (l.ip() == u.ip() || (l.ip().is_unspecified() && u.ip().is_loopback()))
+        });
+        if loops {
+            errs.push(format!("dns.upstreams entry {u} points back at rp-dns itself"));
+        }
+    }
+    for (field, list) in [("dns.allow", &d.allow), ("dns.block", &d.block)] {
+        for name in list {
+            if !valid_domain(name) {
+                errs.push(format!("{field} entry '{name}' is not a valid domain"));
+            }
+        }
+    }
+    for p in d.blocklists.iter().chain(std::iter::once(&d.events_db)) {
+        if !p.starts_with('/') {
+            errs.push(format!("dns path '{p}' must be absolute"));
+        }
+    }
+    if d.suspicious_threshold > 100 {
+        errs.push("dns.suspicious_threshold must be 0-100".into());
+    }
+    if d.rate_limit_qps == 0 {
+        errs.push("dns.rate_limit_qps must be at least 1".into());
+    }
+    if !(100..=10_000).contains(&d.upstream_timeout_ms) {
+        errs.push("dns.upstream_timeout_ms must be 100-10000".into());
+    }
+    if d.events_retention_days == 0 || d.events_retention_days > 365 {
+        errs.push("dns.events_retention_days must be 1-365".into());
     }
 }
 
@@ -352,6 +419,41 @@ mod tests {
         assert_eq!(e.len(), 3, "{e:?}");
         assert!(valid_wg_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
         assert!(!valid_wg_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!="));
+    }
+
+    #[test]
+    fn dns_validation() {
+        let e = errors(
+            r#"
+            [device]
+            wan_if = "eth0"
+            lan_cidrs = ["192.0.2.0/24"]
+            [dns]
+            upstreams = ["127.0.0.1:53", "0.0.0.0:53"]
+            allow = ["bad domain"]
+            block = ["ok.example", "a..b"]
+            blocklists = ["relative.txt"]
+            suspicious_threshold = 101
+            rate_limit_qps = 0
+            upstream_timeout_ms = 5
+            "#,
+        );
+        for needle in [
+            "points back at rp-dns itself",
+            "not a usable resolver",
+            "dns.allow entry 'bad domain'",
+            "dns.block entry 'a..b'",
+            "must be absolute",
+            "0-100",
+            "at least 1",
+            "100-10000",
+        ] {
+            assert!(e.iter().any(|m| m.contains(needle)), "missing '{needle}' in {e:?}");
+        }
+        assert!(parse(
+            "[device]\nwan_if = \"eth0\"\nlan_cidrs = [\"192.0.2.0/24\"]\n[dns]\nupstreams = [\"1.1.1.1:53\", \"127.0.0.1:5353\"]\n"
+        )
+        .is_ok());
     }
 
     #[test]
