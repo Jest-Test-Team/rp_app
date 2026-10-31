@@ -37,19 +37,22 @@ impl Runner for SystemRunner {
 }
 
 /// Records commands instead of running them. Each command succeeds unless its
-/// joined argv starts with one of `fail_prefixes`.
+/// joined argv starts with one of `fail_prefixes`; `responses` supplies canned
+/// stdout for commands starting with a given prefix (first match wins).
 #[derive(Default)]
 pub struct RecordingRunner {
     pub calls: RefCell<Vec<String>>,
     pub fail_prefixes: Vec<String>,
+    pub responses: Vec<(String, String)>,
 }
 
 impl RecordingRunner {
     pub fn failing(prefixes: &[&str]) -> Self {
-        Self {
-            calls: RefCell::default(),
-            fail_prefixes: prefixes.iter().map(|s| s.to_string()).collect(),
-        }
+        Self { fail_prefixes: prefixes.iter().map(|s| s.to_string()).collect(), ..Self::default() }
+    }
+    pub fn with_response(mut self, prefix: &str, stdout: &str) -> Self {
+        self.responses.push((prefix.to_string(), stdout.to_string()));
+        self
     }
     pub fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
@@ -60,11 +63,35 @@ impl Runner for RecordingRunner {
     fn run(&self, argv: &[String]) -> std::io::Result<Output> {
         let line = argv.join(" ");
         let fail = self.fail_prefixes.iter().any(|p| line.starts_with(p));
+        let stdout = self
+            .responses
+            .iter()
+            .find(|(p, _)| line.starts_with(p.as_str()))
+            .map(|(_, out)| out.clone())
+            .unwrap_or_default();
         self.calls.borrow_mut().push(line);
         Ok(Output {
             status: if fail { 1 } else { 0 },
-            stdout: String::new(),
+            stdout,
             stderr: if fail { "simulated failure".into() } else { String::new() },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(s: &str) -> Vec<String> {
+        s.split(' ').map(String::from).collect()
+    }
+
+    #[test]
+    fn recording_runner_records_fails_and_responds() {
+        let r = RecordingRunner::failing(&["nft -c"]).with_response("id -u", "0\n");
+        assert_eq!(r.run(&argv("id -u")).unwrap().stdout, "0\n");
+        assert!(!r.run(&argv("nft -c -f x")).unwrap().ok());
+        assert!(r.run(&argv("nft -f x")).unwrap().ok());
+        assert_eq!(r.calls(), ["id -u", "nft -c -f x", "nft -f x"]);
     }
 }

@@ -69,6 +69,10 @@ fn apply_installs_backs_up_and_is_idempotent() {
 
     // Rollback restores the pre-existing file and removes new ones.
     let rb = rollback(&Base, &t2, None).unwrap();
+    let c2 = r2.calls();
+    let disable = c2.iter().position(|c| c == "systemctl disable rp-firewall.service").unwrap();
+    let reload = c2.iter().position(|c| c == "systemctl daemon-reload").unwrap();
+    assert!(disable < reload, "unit must be disabled before its file is removed");
     assert_eq!(rb.changes.len(), 5);
     assert_eq!(fs::read_to_string(&sshd).unwrap(), "original\n");
     assert!(!under_root(&root, NFT_PATH).exists());

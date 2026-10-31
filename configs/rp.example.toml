@@ -1,0 +1,25 @@
+# rp edge security gateway — example configuration.
+# Copy to /etc/rp/rp.toml and replace the documentation ranges below
+# (192.0.2.0/24, 2001:db8::/64) with your real home LAN.
+
+[device]
+# Interface facing the home router (WAN and management uplink).
+wan_if = "eth0"
+# Interface you SSH in through, if different from wan_if.
+# mgmt_if = "wlan0"
+# Home LAN networks: SSH allow-list default and VPN isolation targets.
+lan_cidrs = ["192.0.2.0/24"]
+
+[ssh]
+port = 22
+# Networks allowed to reach sshd. Empty = device.lan_cidrs.
+allow_from = []
+# Only set to false after you have confirmed a key-based login works.
+password_auth = true
+
+[base]
+# Keep mDNS open so <hostname>.local keeps resolving.
+allow_mdns = true
+unattended_upgrades = true
+# An unconfirmed firewall change is rolled back after this many seconds.
+confirm_timeout_secs = 120

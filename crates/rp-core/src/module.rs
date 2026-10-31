@@ -44,6 +44,11 @@ pub trait Module {
     fn post_apply(&self) -> Vec<Step> {
         Vec::new()
     }
+    /// Commands run before files are restored by rollback (e.g. disable units
+    /// whose unit files are about to disappear).
+    fn pre_rollback(&self) -> Vec<Step> {
+        Vec::new()
+    }
     /// Commands run after files are restored by rollback.
     fn post_rollback(&self) -> Vec<Step> {
         Vec::new()

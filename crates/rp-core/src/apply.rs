@@ -379,6 +379,9 @@ pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Rep
     })?;
 
     let mut report = Report { backup_id: Some(id.clone()), ..Report::default() };
+    for s in &module.pre_rollback() {
+        let _ = t.run(s, &mut report);
+    }
     for e in &manifest.files {
         let live = t.path(&e.path);
         if e.existed {

@@ -108,6 +108,10 @@ impl Module for Base {
         ]
     }
 
+    fn pre_rollback(&self) -> Vec<Step> {
+        vec![Step::best_effort(&["systemctl", "disable", "rp-firewall.service"])]
+    }
+
     fn post_rollback(&self) -> Vec<Step> {
         vec![
             Step::cmd(&["systemctl", "daemon-reload"]),
