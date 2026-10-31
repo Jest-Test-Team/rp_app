@@ -55,7 +55,7 @@ if ((diag)); then
   cat >>"$boot/user-data" <<'EOF'
 
 bootcmd:
-- [sh, -c, "nohup sh /boot/firmware/rp-diag.sh >/dev/null 2>&1 &"]
+- [sh, /boot/firmware/rp-diag.sh, early]
 EOF
   rm -f "$boot/rp-diag.txt"
 else

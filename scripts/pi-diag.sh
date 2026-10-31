@@ -1,15 +1,19 @@
 #!/bin/sh
 # Runs ON THE PI at boot (via cloud-init bootcmd, see 03-configure-boot.sh --diag).
+#   pi-diag.sh early  — write a marker, then schedule the full dump in 120 s
+#   pi-diag.sh        — full dump
 # Writes network diagnostics to the FAT boot partition so the Mac can read them
 # without a network. Secrets (Wi-Fi PSK) are never printed.
 OUT=/boot/firmware/rp-diag.txt
 
-{
-  echo "== early marker: cloud-init bootcmd ran at $(date -Is), uptime $(cut -d' ' -f1 /proc/uptime)s"
-} >"$OUT"
-sync
-
-sleep 120
+if [ "${1-}" = early ]; then
+  echo "== early marker: cloud-init bootcmd ran at $(date -Is), uptime $(cut -d' ' -f1 /proc/uptime)s" >"$OUT"
+  sync
+  # Run outside cloud-init's cgroup so it isn't killed when cloud-init finishes.
+  systemd-run --on-active=120 --unit=rp-diag sh /boot/firmware/rp-diag.sh >>"$OUT" 2>&1
+  sync
+  exit 0
+fi
 
 run() { echo; echo "== $*"; "$@" 2>&1 | sed -E 's/(psk|password)[=:].*/\1=<hidden>/I'; }
 
