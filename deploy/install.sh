@@ -218,8 +218,11 @@ do_uninstall() {
 }
 
 remote() { # remote CMD... over ssh; inputs are validated above, expansion is intentional
+  # -t when we have a terminal, so sudo on the device can ask for a password.
+  local tty=()
+  [[ -t 0 && -t 1 ]] && tty=(-t)
   # shellcheck disable=SC2029
-  if ((dry)); then printf 'would: ssh %s %s\n' "$host" "$*"; else ssh "$host" "$@"; fi
+  if ((dry)); then printf 'would: ssh %s %s\n' "$host" "$*"; else ssh "${tty[@]}" "$host" "$@"; fi
 }
 
 deploy_remote() {
