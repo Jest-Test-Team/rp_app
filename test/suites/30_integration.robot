@@ -14,10 +14,14 @@ ${CFG_DIR}        ${EMPTY}
 
 *** Test Cases ***
 Without A Firewall Everything Is Reachable (Control)
+    [Documentation]    Proves the isolation tests below are meaningful: with no rules the
+    ...                VPN client CAN reach the LAN, the router and the Pi.
     ${s}=    HTTP From    cli    203.0.113.10:8080
     Should Be Equal    ${s}    200
     ${l}=    HTTP From    cli    192.0.2.50:8080
     Should Be Equal    ${l}    200    msg=topology sanity check: LAN reachable without rules
+    ${ssh}=    TCP Connects From    cli    192.0.2.10    22
+    Should Be Equal    ${ssh}    open
 
 Base Firewall Blocks All Forwarding By Default
     ${dir}=    Render    base    vpn=${EMPTY}
@@ -44,10 +48,14 @@ VPN Client Reaches The Internet Through The Exit Node
 VPN Traffic Is Masqueraded Behind The Pi
     ${dir}=    Render    vpn    vpn=wireguard
     Load Firewall    ${dir}/etc/rp/.check/vpn.nft
-    HTTP From    cli    203.0.113.10:8080
+    ${before}=    Get File Size    ${TEMPDIR}/${NS}inet-http.log
+    ${s}=    HTTP From    cli    203.0.113.10:8080
+    Should Be Equal    ${s}    200
     ${log}=    Get File    ${TEMPDIR}/${NS}inet-http.log
-    Should Contain    ${log}    192.0.2.10
-    Should Not Contain    ${log}    198.51.100.2
+    # Only the lines written by this request (earlier tests share the server).
+    ${new}=    Evaluate    $log.encode()[int($before):].decode()
+    Should Contain    ${new}    192.0.2.10
+    Should Not Contain    ${new}    198.51.100.2
 
 VPN Client Cannot Reach The Home LAN Router Or The Pi's SSH
     ${dir}=    Render    vpn    vpn=wireguard

@@ -69,11 +69,17 @@ Create Topology
     Sh    ip    -n    ${NS}home    addr    add    203.0.113.1/24    dev    up0
     Sh    ip    -n    ${NS}inet    addr    add    203.0.113.10/24    dev    eth0
     Sh    ip    -n    ${NS}inet    route    add    192.0.2.0/24    via    203.0.113.1
+    # Return routes to the VPN subnet: without them isolation tests would pass
+    # even with no firewall (replies could never come back). With them, only the
+    # firewall stands between VPN clients and the LAN — the control test proves it.
+    Sh    ip    -n    ${NS}inet    route    add    198.51.100.0/24    via    203.0.113.1
+    Sh    ip    -n    ${NS}home    route    add    198.51.100.0/24    via    192.0.2.10
     Sh    ip    -n    ${NS}rp    addr    add    192.0.2.10/24    dev    eth0
     Sh    ip    -n    ${NS}rp    route    add    default    via    192.0.2.1
     Sh    ip    -n    ${NS}rp    addr    add    198.51.100.1/24    dev    wg0
     Sh    ip    -n    ${NS}lan    addr    add    192.0.2.50/24    dev    eth0
     Sh    ip    -n    ${NS}lan    route    add    default    via    192.0.2.1
+    Sh    ip    -n    ${NS}lan    route    add    198.51.100.0/24    via    192.0.2.10
     Sh    ip    -n    ${NS}cli    addr    add    198.51.100.2/24    dev    eth0
     Sh    ip    -n    ${NS}cli    route    add    default    via    198.51.100.1
     FOR    ${n}    IN    home    rp
