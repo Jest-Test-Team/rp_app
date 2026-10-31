@@ -30,18 +30,28 @@ impl Step {
 
 pub trait Module {
     fn name(&self) -> &'static str;
-    /// Files this module owns, fully rendered from config.
+    /// Files this module owns, fully rendered from config. Files with
+    /// `staging_only` set are written to staging for validation but never
+    /// installed.
     fn render(&self, cfg: &Config) -> Vec<ManagedFile>;
+    /// Error message when the module can't be applied with this config.
+    fn enabled(&self, _cfg: &Config) -> Result<(), String> {
+        Ok(())
+    }
+    /// Commands run before package installation (e.g. adding an apt repo key).
+    fn pre_install(&self, _cfg: &Config) -> Vec<Step> {
+        Vec::new()
+    }
     /// Debian packages required before apply.
     fn packages(&self, _cfg: &Config) -> Vec<&'static str> {
         Vec::new()
     }
     /// Checks run against staged files *before* anything is installed.
-    fn validate_steps(&self) -> Vec<Step> {
+    fn validate_steps(&self, _cfg: &Config) -> Vec<Step> {
         Vec::new()
     }
     /// Commands run after the files are installed.
-    fn post_apply(&self) -> Vec<Step> {
+    fn post_apply(&self, _cfg: &Config) -> Vec<Step> {
         Vec::new()
     }
     /// Commands run before files are restored by rollback (e.g. disable units
@@ -57,14 +67,23 @@ pub trait Module {
     fn arms_dead_man(&self) -> bool {
         false
     }
+    /// Modules that must be applied (and not rolled back) first.
+    fn requires(&self) -> &'static [&'static str] {
+        &[]
+    }
+    /// Shown after a successful (non-dry-run) apply.
+    fn next_steps(&self, _cfg: &Config) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// All modules known to this build, by name.
 pub fn lookup(name: &str) -> Option<Box<dyn Module>> {
     match name {
         "base" => Some(Box::new(crate::base::Base)),
+        "vpn" => Some(Box::new(crate::vpn::Vpn)),
         _ => None,
     }
 }
 
-pub const MODULES: &[&str] = &["base"];
+pub const MODULES: &[&str] = &["base", "vpn"];

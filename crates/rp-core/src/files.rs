@@ -9,12 +9,24 @@ pub struct ManagedFile {
     pub path: String,
     pub mode: u32,
     pub content: String,
+    /// Written to the staging area for validation only; never installed.
+    pub staging_only: bool,
+    /// Installed before packages (e.g. an apt source list the packages come from).
+    pub early: bool,
 }
 
 impl ManagedFile {
     pub fn new(path: &str, mode: u32, content: String) -> Self {
         assert!(path.starts_with('/'), "managed paths must be absolute: {path}");
-        Self { path: path.to_string(), mode, content }
+        Self { path: path.to_string(), mode, content, staging_only: false, early: false }
+    }
+    pub fn early(mut self) -> Self {
+        self.early = true;
+        self
+    }
+    /// A file used only to validate the combined result (e.g. a full nft ruleset).
+    pub fn check_only(path: &str, content: String) -> Self {
+        Self { staging_only: true, ..Self::new(path, 0o600, content) }
     }
 }
 

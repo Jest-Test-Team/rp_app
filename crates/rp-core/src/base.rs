@@ -93,11 +93,11 @@ impl Module for Base {
         p
     }
 
-    fn validate_steps(&self) -> Vec<Step> {
+    fn validate_steps(&self, _cfg: &Config) -> Vec<Step> {
         vec![Step::cmd(&["nft", "-c", "-f", "{staged:/etc/rp/nftables.nft}"])]
     }
 
-    fn post_apply(&self) -> Vec<Step> {
+    fn post_apply(&self, _cfg: &Config) -> Vec<Step> {
         vec![
             Step::cmd(&["sshd", "-t"]),
             Step::cmd(&["systemctl", "daemon-reload"]),

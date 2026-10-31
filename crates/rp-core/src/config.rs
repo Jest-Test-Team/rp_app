@@ -83,6 +83,10 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         }
     }
 
+    if let Some(v) = &cfg.vpn {
+        validate_vpn(cfg, v, &mut errs);
+    }
+
     let t = cfg.base.confirm_timeout_secs;
     if !(30..=3600).contains(&t) {
         errs.push(format!("base.confirm_timeout_secs {t} must be between 30 and 3600"));
@@ -93,6 +97,127 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
     } else {
         Err(ConfigError::Invalid(errs))
     }
+}
+
+fn safe_token(s: &str, max: usize) -> bool {
+    !s.is_empty()
+        && s.len() <= max
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+fn validate_vpn(cfg: &Config, v: &rp_schema::Vpn, errs: &mut Vec<String>) {
+    use rp_schema::VpnMode;
+    for n in &v.allow_lan {
+        if is_catch_all(n) {
+            errs.push(format!("vpn.allow_lan entry {n} would expose every network"));
+        }
+    }
+    match v.mode {
+        VpnMode::Tailscale => {
+            let t = &v.tailscale;
+            if let Some(p) = &t.auth_key_file {
+                if !p.starts_with('/') || p.chars().any(|c| c.is_whitespace() || c == '\'') {
+                    errs.push(
+                        "vpn.tailscale.auth_key_file must be an absolute path without spaces"
+                            .into(),
+                    );
+                }
+            }
+            if let Some(h) = &t.hostname {
+                if !safe_token(h, 63) || h.contains('_') {
+                    errs.push(format!(
+                        "vpn.tailscale.hostname '{h}' must be letters, digits and '-'"
+                    ));
+                }
+            }
+            if !(3..=20).contains(&t.debian_codename.len())
+                || !t.debian_codename.chars().all(|c| c.is_ascii_lowercase())
+            {
+                errs.push(format!(
+                    "vpn.tailscale.debian_codename '{}' is not valid",
+                    t.debian_codename
+                ));
+            }
+        }
+        VpnMode::Wireguard => {
+            let w = &v.wireguard;
+            if !valid_ifname(&w.interface) {
+                errs.push(format!(
+                    "vpn.wireguard.interface '{}' is not a valid interface name",
+                    w.interface
+                ));
+            }
+            if w.listen_port == 0 {
+                errs.push("vpn.wireguard.listen_port must be 1-65535".into());
+            }
+            if w.subnet.prefix_len() > 30 {
+                errs.push(format!(
+                    "vpn.wireguard.subnet {} is too small (use /30 or larger)",
+                    w.subnet
+                ));
+            }
+            if w.subnet.network() != w.subnet.addr() {
+                errs.push(format!("vpn.wireguard.subnet {} has host bits set", w.subnet));
+            }
+            let tunnel = IpNet::V4(w.subnet.trunc());
+            for lan in &cfg.device.lan_cidrs {
+                if lan.contains(&tunnel.network()) || tunnel.contains(&lan.network()) {
+                    errs.push(format!(
+                        "vpn.wireguard.subnet {} overlaps device.lan_cidrs {lan}",
+                        w.subnet
+                    ));
+                }
+            }
+            if let Some(e) = &w.endpoint {
+                let ok = e.rsplit_once(':').is_some_and(|(h, p)| {
+                    !h.is_empty()
+                        && h.chars().all(|c| {
+                            c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '[' | ']' | ':')
+                        })
+                        && p.parse::<u16>().is_ok_and(|p| p > 0)
+                });
+                if !ok {
+                    errs.push(format!("vpn.wireguard.endpoint '{e}' must be host:port"));
+                }
+            }
+            let max_host = (1u64 << (32 - w.subnet.prefix_len())) - 2;
+            let mut names = std::collections::BTreeSet::new();
+            let mut hosts = std::collections::BTreeSet::new();
+            for p in &w.peers {
+                if !safe_token(&p.name, 32) {
+                    errs.push(format!(
+                        "vpn.wireguard peer name '{}' must be letters, digits, '-' or '_'",
+                        p.name
+                    ));
+                }
+                if !names.insert(p.name.clone()) {
+                    errs.push(format!("vpn.wireguard peer name '{}' is duplicated", p.name));
+                }
+                if !hosts.insert(p.host) {
+                    errs.push(format!("vpn.wireguard peer host {} is used twice", p.host));
+                }
+                if p.host < 2 || u64::from(p.host) > max_host {
+                    errs.push(format!(
+                        "vpn.wireguard peer '{}' host {} must be 2..={max_host} (1 is the server)",
+                        p.name, p.host
+                    ));
+                }
+                if !valid_wg_key(&p.public_key) {
+                    errs.push(format!(
+                        "vpn.wireguard peer '{}' public_key is not a WireGuard key",
+                        p.name
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// A WireGuard key is 32 bytes, base64 encoded: 43 chars + '='.
+pub fn valid_wg_key(k: &str) -> bool {
+    k.len() == 44
+        && k.ends_with('=')
+        && k[..43].chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/')
 }
 
 /// Networks allowed to reach sshd after defaults are applied.
@@ -169,6 +294,64 @@ mod tests {
             "#,
         );
         assert_eq!(e.len(), 4, "{e:?}");
+    }
+
+    #[test]
+    fn vpn_wireguard_validation() {
+        let e = errors(
+            r#"
+            [device]
+            wan_if = "eth0"
+            lan_cidrs = ["10.88.0.0/16"]
+            [vpn]
+            mode = "wireguard"
+            allow_lan = ["0.0.0.0/0"]
+            [vpn.wireguard]
+            interface = "wg0;id"
+            endpoint = "example.org"
+            [[vpn.wireguard.peers]]
+            name = "a b"
+            public_key = "short"
+            host = 1
+            [[vpn.wireguard.peers]]
+            name = "a b"
+            public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+            host = 1
+            "#,
+        );
+        for needle in [
+            "would expose every network",
+            "not a valid interface name",
+            "overlaps device.lan_cidrs",
+            "must be host:port",
+            "must be letters",
+            "is duplicated",
+            "used twice",
+            "1 is the server",
+            "not a WireGuard key",
+        ] {
+            assert!(e.iter().any(|m| m.contains(needle)), "missing '{needle}' in {e:?}");
+        }
+    }
+
+    #[test]
+    fn vpn_tailscale_validation() {
+        let e = errors(
+            r#"
+            [device]
+            wan_if = "eth0"
+            lan_cidrs = ["192.0.2.0/24"]
+            [vpn]
+            mode = "tailscale"
+            [vpn.tailscale]
+            auth_key_file = "relative/key"
+            hostname = "bad host"
+            debian_codename = "Trixie;x"
+            "#,
+        );
+        assert_eq!(e.len(), 3, "{e:?}");
+        assert!(valid_wg_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
+        assert!(!valid_wg_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!="));
     }
 
     #[test]

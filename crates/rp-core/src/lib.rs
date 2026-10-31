@@ -9,6 +9,7 @@ pub mod module;
 pub mod nft;
 pub mod preflight;
 pub mod runner;
+pub mod vpn;
 
 #[cfg(test)]
 mod apply_tests;

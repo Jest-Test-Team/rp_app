@@ -121,3 +121,64 @@ fn rollback_without_backup_errors() {
     let t = Target { root, runner: &r };
     assert!(matches!(rollback(&Base, &t, None), Err(ApplyError::NoBackup(_))));
 }
+
+fn vpn_cfg(mode: &str) -> rp_schema::Config {
+    parse(&format!(
+        "[device]\nwan_if = \"eth0\"\nlan_cidrs = [\"192.0.2.0/24\"]\n[vpn]\nmode = \"{mode}\"\n"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn vpn_requires_base_and_config_section() {
+    use crate::vpn::Vpn;
+    let root = tmp_root("vpn-req");
+    let r = RecordingRunner::default();
+    let t = Target { root, runner: &r };
+    let err = apply(&Vpn, &vpn_cfg("wireguard"), &t, &opts()).unwrap_err();
+    assert!(matches!(err, ApplyError::Requires(..)), "{err}");
+    let err = apply(&Vpn, &cfg(), &t, &opts()).unwrap_err();
+    assert!(matches!(err, ApplyError::Disabled(..)), "{err}");
+}
+
+#[test]
+fn vpn_tailscale_installs_repo_before_packages_and_never_installs_check_file() {
+    use crate::vpn::{Vpn, CHECK_PATH, TS_LIST_PATH};
+    let root = tmp_root("vpn-ts");
+    let r = RecordingRunner::default();
+    let t = Target { root: root.clone(), runner: &r };
+    apply(&Base, &cfg(), &t, &opts()).unwrap();
+    let r2 = RecordingRunner::default(); // dpkg-query returns nothing => packages missing
+    let t2 = Target { root: root.clone(), runner: &r2 };
+    let o = ApplyOptions { install_packages: true, ..opts() };
+    apply(&Vpn, &vpn_cfg("tailscale"), &t2, &o).unwrap();
+    let calls = r2.calls();
+    let key = calls.iter().position(|c| c.starts_with("curl -fsSL --proto =https")).unwrap();
+    let update = calls.iter().position(|c| c.ends_with("apt-get update")).unwrap();
+    let install = calls
+        .iter()
+        .position(|c| c.contains("apt-get install") && c.ends_with("tailscale"))
+        .unwrap();
+    assert!(key < update && update < install);
+    assert!(under_root(&root, TS_LIST_PATH).exists());
+    assert!(!under_root(&root, CHECK_PATH).exists(), "check-only file must not be installed");
+    // Second apply: the check-only file must not count as a pending change.
+    let r3 = RecordingRunner::default();
+    let t3 = Target { root, runner: &r3 };
+    assert!(apply(&Vpn, &vpn_cfg("tailscale"), &t3, &opts()).unwrap().changes.is_empty());
+}
+
+#[test]
+fn vpn_failure_after_early_files_restores_them() {
+    use crate::vpn::{Vpn, TS_LIST_PATH};
+    let root = tmp_root("vpn-fail");
+    let r = RecordingRunner::default();
+    let t = Target { root: root.clone(), runner: &r };
+    apply(&Base, &cfg(), &t, &opts()).unwrap();
+    let r2 = RecordingRunner::failing(&["env DEBIAN_FRONTEND=noninteractive apt-get install"]);
+    let t2 = Target { root: root.clone(), runner: &r2 };
+    let o = ApplyOptions { install_packages: true, ..opts() };
+    let err = apply(&Vpn, &vpn_cfg("tailscale"), &t2, &o).unwrap_err();
+    assert!(matches!(err, ApplyError::Command { .. }), "{err}");
+    assert!(!under_root(&root, TS_LIST_PATH).exists(), "apt source must be removed again");
+}

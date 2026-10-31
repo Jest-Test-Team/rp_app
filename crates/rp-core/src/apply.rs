@@ -34,6 +34,10 @@ pub enum ApplyError {
     Validation { cmd: String, stderr: String },
     #[error("post-apply step failed ({cmd}); changes were rolled back\n{stderr}")]
     RolledBack { cmd: String, stderr: String },
+    #[error("module '{0}' is not configured: {1}")]
+    Disabled(String, String),
+    #[error("module '{0}' needs '{1}' applied first (sudo rpctl apply {1})")]
+    Requires(String, String),
     #[error("no backup found for module '{0}'")]
     NoBackup(String),
     #[error("corrupt manifest {path}: {msg}")]
@@ -178,6 +182,7 @@ pub fn plan(module: &dyn Module, cfg: &Config, t: &Target) -> Vec<FileChange> {
     module
         .render(cfg)
         .into_iter()
+        .filter(|f| !f.staging_only)
         .filter_map(|f| {
             let current = fs::read_to_string(t.path(&f.path)).ok();
             if current.as_deref() == Some(f.content.as_str()) {
@@ -227,6 +232,15 @@ pub fn apply(
     t: &Target,
     opts: &ApplyOptions,
 ) -> Result<Report, ApplyError> {
+    module.enabled(cfg).map_err(|msg| ApplyError::Disabled(module.name().into(), msg))?;
+    let state = t.load_state();
+    for dep in module.requires() {
+        let ok = state.modules.get(*dep).map(|m| !m.rolled_back).unwrap_or(false);
+        if !ok && !opts.dry_run {
+            return Err(ApplyError::Requires(module.name().into(), dep.to_string()));
+        }
+    }
+
     let mut report = Report { changes: plan(module, cfg, t), ..Report::default() };
     if report.changes.is_empty() {
         return Ok(report);
@@ -234,9 +248,18 @@ pub fn apply(
     let files: Vec<ManagedFile> = module.render(cfg);
     let staging = t.staging_dir(module.name());
 
+    let pre: Vec<Step> = module.pre_install(cfg);
     let missing = if opts.install_packages { missing_packages(module, cfg, t) } else { vec![] };
     let mut install = vec![];
     if !missing.is_empty() {
+        if files.iter().any(|f| f.early) {
+            install.push(Step::cmd(&[
+                "env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "apt-get",
+                "update",
+            ]));
+        }
         let mut argv = vec![
             "env",
             "DEBIAN_FRONTEND=noninteractive",
@@ -249,38 +272,31 @@ pub fn apply(
         install.push(Step::cmd(&argv));
     }
     let validate: Vec<Step> =
-        module.validate_steps().iter().map(|s| substitute_staged(s, &staging)).collect();
+        module.validate_steps(cfg).iter().map(|s| substitute_staged(s, &staging)).collect();
+    let post = module.post_apply(cfg);
     let dead_man = opts
         .dead_man_secs
         .filter(|_| module.arms_dead_man())
         .map(|secs| dead_man_step(module.name(), secs, &opts.rpctl_argv));
 
     if opts.dry_run {
-        let post = module.post_apply();
-        let all = install.iter().chain(&validate).chain(&post).chain(&dead_man);
+        let all = pre.iter().chain(&install).chain(&validate).chain(&post).chain(&dead_man);
         report.steps = all.map(Step::display).collect();
         report.needs_confirm = dead_man.is_some();
         return Ok(report);
     }
 
-    for s in &install {
-        t.run(s, &mut report).map_err(|(cmd, stderr)| ApplyError::Command { cmd, stderr })?;
-    }
-
-    // Stage and validate before touching anything live.
+    // 1. Stage every rendered file.
     let _ = fs::remove_dir_all(&staging);
     for f in &files {
         write_atomic(&under_root(&staging, &f.path), &f.content, f.mode)?;
     }
-    for s in &validate {
-        t.run(s, &mut report).map_err(|(cmd, stderr)| ApplyError::Validation { cmd, stderr })?;
-    }
 
-    // Back up.
+    // 2. Back up every live file this module is about to own.
     let id = new_backup_id();
     let bdir = t.backup_dir(module.name(), &id);
     let mut entries = Vec::new();
-    for f in &files {
+    for f in files.iter().filter(|f| !f.staging_only) {
         let live = t.path(&f.path);
         let existed = live.exists();
         if existed {
@@ -299,9 +315,33 @@ pub fn apply(
         0o600,
     )?;
 
-    // Install.
-    for f in &files {
-        write_atomic(&t.path(&f.path), &f.content, f.mode)?;
+    // Any failure from here on restores the backup.
+    let fail = |e: ApplyError| -> ApplyError {
+        let _ = rollback_files(module, t, &id);
+        let _ = fs::remove_dir_all(&staging);
+        e
+    };
+
+    // 3. Repository keys, early files (apt sources), packages.
+    for s in &pre {
+        t.run(s, &mut report).map_err(|(cmd, stderr)| fail(ApplyError::Command { cmd, stderr }))?;
+    }
+    for f in files.iter().filter(|f| f.early && !f.staging_only) {
+        write_atomic(&t.path(&f.path), &f.content, f.mode).map_err(fail)?;
+    }
+    for s in &install {
+        t.run(s, &mut report).map_err(|(cmd, stderr)| fail(ApplyError::Command { cmd, stderr }))?;
+    }
+
+    // 4. Validate the staged files (nothing else is live yet).
+    for s in &validate {
+        t.run(s, &mut report)
+            .map_err(|(cmd, stderr)| fail(ApplyError::Validation { cmd, stderr }))?;
+    }
+
+    // 5. Install.
+    for f in files.iter().filter(|f| !f.early && !f.staging_only) {
+        write_atomic(&t.path(&f.path), &f.content, f.mode).map_err(fail)?;
     }
     let _ = fs::remove_dir_all(&staging);
 
@@ -312,7 +352,8 @@ pub fn apply(
     );
     t.save_state(&state)?;
 
-    for s in &module.post_apply() {
+    // 6. Activate.
+    for s in &post {
         if let Err((cmd, stderr)) = t.run(s, &mut report) {
             let _ = rollback(module, t, Some(&id));
             return Err(ApplyError::RolledBack { cmd, stderr });
@@ -358,18 +399,14 @@ pub fn confirm(t: &Target) -> Result<Vec<String>, ApplyError> {
     Ok(done)
 }
 
-/// Restore the files saved by an apply (latest one when `id` is None).
-pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Report, ApplyError> {
-    let state = t.load_state();
-    let id = match id {
-        Some(i) => i.to_string(),
-        None => state
-            .modules
-            .get(module.name())
-            .map(|m| m.backup_id.clone())
-            .ok_or_else(|| ApplyError::NoBackup(module.name().into()))?,
-    };
-    let bdir = t.backup_dir(module.name(), &id);
+/// Restore only the files recorded in backup `id` (no service steps). Used
+/// when an apply fails before anything was activated.
+fn rollback_files(
+    module: &dyn Module,
+    t: &Target,
+    id: &str,
+) -> Result<Vec<FileChange>, ApplyError> {
+    let bdir = t.backup_dir(module.name(), id);
     let mpath = bdir.join("manifest.json");
     let text =
         fs::read_to_string(&mpath).map_err(|_| ApplyError::NoBackup(module.name().into()))?;
@@ -377,11 +414,7 @@ pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Rep
         path: mpath.display().to_string(),
         msg: e.to_string(),
     })?;
-
-    let mut report = Report { backup_id: Some(id.clone()), ..Report::default() };
-    for s in &module.pre_rollback() {
-        let _ = t.run(s, &mut report);
-    }
+    let mut changes = Vec::new();
     for e in &manifest.files {
         let live = t.path(&e.path);
         if e.existed {
@@ -392,12 +425,34 @@ pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Rep
         } else if live.exists() {
             fs::remove_file(&live).map_err(io(&live))?;
         }
-        report.changes.push(FileChange {
-            path: e.path.clone(),
-            existed: e.existed,
-            diff: String::new(),
-        });
+        changes.push(FileChange { path: e.path.clone(), existed: e.existed, diff: String::new() });
     }
+    Ok(changes)
+}
+
+/// Restore the files saved by an apply (latest one when `id` is None) and run
+/// the module's rollback steps.
+pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Report, ApplyError> {
+    let state = t.load_state();
+    let id = match id {
+        Some(i) => i.to_string(),
+        None => state
+            .modules
+            .get(module.name())
+            .map(|m| m.backup_id.clone())
+            .ok_or_else(|| ApplyError::NoBackup(module.name().into()))?,
+    };
+    // Fail early (before stopping services) if the backup is unusable.
+    let mpath = t.backup_dir(module.name(), &id).join("manifest.json");
+    if !mpath.exists() {
+        return Err(ApplyError::NoBackup(module.name().into()));
+    }
+
+    let mut report = Report { backup_id: Some(id.clone()), ..Report::default() };
+    for s in &module.pre_rollback() {
+        let _ = t.run(s, &mut report);
+    }
+    report.changes = rollback_files(module, t, &id)?;
     for s in &module.post_rollback() {
         let _ = t.run(s, &mut report);
     }

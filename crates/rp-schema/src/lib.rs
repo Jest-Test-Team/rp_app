@@ -15,6 +15,111 @@ pub struct Config {
     pub ssh: Ssh,
     #[serde(default)]
     pub base: Base,
+    /// VPN exit node. Absent = module disabled.
+    #[serde(default)]
+    pub vpn: Option<Vpn>,
+}
+
+/// VPN exit node: remote clients reach the internet through this box, and are
+/// blocked from the home LAN and every private range unless explicitly allowed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Vpn {
+    pub mode: VpnMode,
+    /// Destinations VPN clients MAY reach despite isolation (default: none).
+    #[serde(default)]
+    pub allow_lan: Vec<IpNet>,
+    #[serde(default)]
+    pub tailscale: Tailscale,
+    #[serde(default)]
+    pub wireguard: WireGuard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VpnMode {
+    Tailscale,
+    Wireguard,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tailscale {
+    /// Root-only file holding a Tailscale auth key. Never put the key itself in rp.toml.
+    #[serde(default)]
+    pub auth_key_file: Option<String>,
+    /// Name shown in the tailnet.
+    #[serde(default)]
+    pub hostname: Option<String>,
+    /// Debian release used for the Tailscale apt repository.
+    #[serde(default = "default_codename")]
+    pub debian_codename: String,
+}
+
+impl Default for Tailscale {
+    fn default() -> Self {
+        Self { auth_key_file: None, hostname: None, debian_codename: default_codename() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireGuard {
+    #[serde(default = "default_wg_if")]
+    pub interface: String,
+    #[serde(default = "default_wg_port")]
+    pub listen_port: u16,
+    /// Tunnel network; the server takes the first host address.
+    #[serde(default = "default_wg_subnet")]
+    pub subnet: ipnet::Ipv4Net,
+    /// `host:port` clients dial (public IP or DDNS name). Needed for client configs.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// DNS server pushed to clients.
+    #[serde(default = "default_wg_dns")]
+    pub client_dns: std::net::IpAddr,
+    #[serde(default)]
+    pub peers: Vec<WgPeer>,
+}
+
+impl Default for WireGuard {
+    fn default() -> Self {
+        Self {
+            interface: default_wg_if(),
+            listen_port: default_wg_port(),
+            subnet: default_wg_subnet(),
+            endpoint: None,
+            client_dns: default_wg_dns(),
+            peers: Vec::new(),
+        }
+    }
+}
+
+/// A WireGuard client. Only its public key is stored; the private key is shown
+/// once by `rpctl vpn add-peer` and never written anywhere on the server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WgPeer {
+    pub name: String,
+    pub public_key: String,
+    /// Host number inside `subnet` (2 = second address).
+    pub host: u32,
+}
+
+fn default_codename() -> String {
+    "trixie".into()
+}
+fn default_wg_if() -> String {
+    "wg0".into()
+}
+fn default_wg_port() -> u16 {
+    51820
+}
+fn default_wg_subnet() -> ipnet::Ipv4Net {
+    "10.88.0.0/24".parse().unwrap()
+}
+fn default_wg_dns() -> std::net::IpAddr {
+    std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1))
 }
 
 /// Physical facts about the box.
