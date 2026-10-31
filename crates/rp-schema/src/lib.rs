@@ -74,7 +74,7 @@ fn default_dns_listen() -> Vec<std::net::SocketAddr> {
     vec!["0.0.0.0:53".parse().unwrap(), "[::]:53".parse().unwrap()]
 }
 fn default_threshold() -> u8 {
-    70
+    60
 }
 fn default_events_db() -> String {
     "/var/lib/rp-dns/events.sqlite".into()

@@ -43,6 +43,13 @@ fn scored_labels(name: &str) -> Vec<&str> {
     }
 }
 
+fn is_encoded_charset(label: &str) -> bool {
+    let hex = label.chars().all(|c| c.is_ascii_hexdigit());
+    let b32 = label.chars().all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c));
+    let b64url = label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    hex || b32 || b64url
+}
+
 pub fn score(name: &str) -> Score {
     let mut value: u32 = 0;
     let mut reasons = Vec::new();
@@ -83,6 +90,24 @@ pub fn score(name: &str) -> Score {
     if longest.len() >= 12 && vowels * 10 < longest.len() {
         value += 15;
         reasons.push("few-vowels");
+    }
+    // Encoded payloads (hex, base32, base64url) in long labels: DNS tunnelling.
+    if longest.len() >= 32 && h >= 4.0 && is_encoded_charset(longest) {
+        let mixed = longest.chars().any(|c| c.is_ascii_digit())
+            && longest.chars().any(|c| c.is_ascii_alphabetic());
+        value += if mixed { 30 } else { 20 };
+        reasons.push("encoded-label");
+    }
+    // DGA: the registered name itself is a long random string ("x7k2...q.com").
+    let all: Vec<&str> = name.split('.').collect();
+    if all.len() >= 2 {
+        let reg = all[all.len() - 2];
+        let reg_digits = reg.chars().filter(|c| c.is_ascii_digit()).count();
+        let reg_vowels = reg.chars().filter(|c| "aeiou".contains(*c)).count();
+        if reg.len() >= 12 && entropy(reg) >= 3.4 && (reg_digits >= 2 || reg_vowels * 5 < reg.len()) {
+            value += 40;
+            reasons.push("random-registered-name");
+        }
     }
     Score { value: value.min(100) as u8, reasons }
 }

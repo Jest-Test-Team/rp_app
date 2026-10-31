@@ -26,8 +26,15 @@ enum Cmd {
     Run,
     /// Validate the [dns] config and load the lists.
     Check,
-    /// Show how a name would score.
-    Score { name: String },
+    /// Show how a name would score; with --file, score every line and summarise as JSON.
+    Score {
+        name: Option<String>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Threshold for the summary (default: from config, else 60).
+        #[arg(long)]
+        threshold: Option<u8>,
+    },
     /// Print recent security events from the database.
     Events {
         /// Only events from the last N minutes.
@@ -156,7 +163,35 @@ fn main() -> ExitCode {
                 );
                 Ok(())
             }
-            Cmd::Score { name } => {
+            Cmd::Score { name, file, threshold } => {
+                let threshold = threshold
+                    .or_else(|| dns_config(&cli.config).ok().map(|d| d.suspicious_threshold))
+                    .unwrap_or(60);
+                if let Some(f) = file {
+                    let text = std::fs::read_to_string(&f)?;
+                    let names: Vec<String> = text
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                        .filter_map(rp_dns::lists::normalize)
+                        .collect();
+                    let flagged: Vec<&String> =
+                        names.iter().filter(|n| score::score(n).value >= threshold).collect();
+                    let rate = if names.is_empty() {
+                        0.0
+                    } else {
+                        flagged.len() as f64 / names.len() as f64
+                    };
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "names": names.len(), "flagged": flagged.len(), "rate": rate,
+                            "threshold": threshold, "examples": flagged.iter().take(10).collect::<Vec<_>>(),
+                        })
+                    );
+                    return Ok(());
+                }
+                let name = name.context("give a NAME or --file")?;
                 let n = rp_dns::lists::normalize(&name).context("not a valid DNS name")?;
                 let s = score::score(&n);
                 println!("{n}: score {} {:?}", s.value, s.reasons);
