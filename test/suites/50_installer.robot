@@ -45,6 +45,16 @@ Remote Dry Run Uses A Pinned Tag And Never Connects
     Should Contain    ${out}    releases/download/v0.1.0/rp-armv7-unknown-linux-gnueabihf.tar.gz
     Should Contain    ${out}    would: ssh pi@example.invalid sudo bash /tmp/install.sh --archive
 
+Packaged Archive Does Not Leak The Builder Account
+    ${owners}=    Evaluate
+    ...    sorted({(m.uname, m.gname, m.uid, m.gid) for m in tarfile.open($MIRROR + '/latest/' + $ASSET).getmembers()})
+    ...    modules=tarfile
+    Should Be Equal    ${owners}    ${{ [('root', 'root', 0, 0)] }}
+    ${xattrs}=    Evaluate
+    ...    sum(1 for m in tarfile.open($MIRROR + '/latest/' + $ASSET).getmembers() if any('xattr' in k for k in m.pax_headers))
+    ...    modules=tarfile
+    Should Be Equal As Integers    ${xattrs}    0
+
 Release Install Verifies Checksum And Lays Out Files
     ${root}=    New Temp Dir
     ${out}=    Run Ok    bash    ${INSTALL_SH}    --base-url    file://${MIRROR}    --target    ${TRIPLE}

@@ -146,7 +146,11 @@ build_archive() {
   for b in "${BINS[@]}"; do install -m 0755 "$bin_dir/$b" "$stage/$name/bin/$b"; done
   install -m 0644 "$SRC_DIR/configs/rp.example.toml" "$stage/$name/configs/"
   install -m 0755 "$SRC_DIR/deploy/install.sh" "$stage/$name/"
-  tar -C "$stage" -czf "$outdir/$(asset_name "$triple")" "$name"
+  # Owner is recorded as root (never the builder's account), and no macOS
+  # xattrs / AppleDouble files (GNU tar on the device warns about them).
+  local owner=(--uid 0 --gid 0 --uname root --gname root)
+  tar --version 2>/dev/null | grep -q GNU && owner=(--owner=0 --group=0 --numeric-owner)
+  COPYFILE_DISABLE=1 tar --no-xattrs "${owner[@]}" -C "$stage" -czf "$outdir/$(asset_name "$triple")" "$name"
   rm -rf "$stage"
   echo "$outdir/$(asset_name "$triple")"
 }
