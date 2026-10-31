@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod secrets;
+mod tput;
 
 #[derive(Parser)]
 #[command(name = "rp-probe", version, about = "Audit and test helper for rp")]
@@ -18,6 +19,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Accept one TCP connection and report received throughput as JSON.
+    TputServer {
+        #[arg(long)]
+        bind: std::net::SocketAddr,
+    },
+    /// Send data for --seconds and report throughput as JSON.
+    TputClient {
+        #[arg(long)]
+        connect: std::net::SocketAddr,
+        #[arg(long, default_value_t = 5.0)]
+        seconds: f64,
+    },
     /// Scan files/directories for leaked secrets and real network identifiers.
     SecretScan {
         /// Env file whose sensitive values must never appear (e.g. local.env).
@@ -34,6 +47,26 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::TputServer { bind } => match tput::serve_once(bind) {
+            Ok(r) => {
+                println!("{}", r.json("server"));
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::TputClient { connect, seconds } => match tput::send(connect, seconds) {
+            Ok(r) => {
+                println!("{}", r.json("client"));
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::SecretScan { env_file, json, paths } => {
             let values = env_file
                 .and_then(|p| std::fs::read_to_string(p).ok())
