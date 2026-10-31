@@ -1,0 +1,14 @@
+[package]
+name = "rp-probe"
+description = "Test and audit helper for the rp edge gateway (secret scan, protocol probes)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+regex.workspace = true
+serde_json.workspace = true
