@@ -51,13 +51,35 @@ jobs:
       - name: Install nftables and iproute2
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nftables iproute2
       - name: Robot integration suites (root, isolated network namespaces)
-        env:
-          RP_ALLOW_ROOT: "1"
-        run: bash test/run.sh integration
+        # Root inside isolated namespaces; tests skip themselves when not root.
+        run: sudo -E env "PATH=$PATH" RP_ALLOW_ROOT=1 bash test/run.sh integration
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: robot-integration
+          path: test/results/
+          retention-days: 14
+
+  hwsim:
+    name: robot (real AP on mac80211_hwsim virtual radios)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install hostapd, wpa_supplicant, dnsmasq, iw and the hwsim module
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hostapd wpasupplicant dnsmasq-base iw isc-dhcp-client "linux-modules-extra-$(uname -r)" || true
+      - name: Robot hwsim suite (skips if the module is unavailable)
+        run: sudo -E env "PATH=$PATH" RP_ALLOW_ROOT=1 bash test/run.sh hwsim
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-hwsim
           path: test/results/
           retention-days: 14
 

@@ -84,7 +84,79 @@ Removing The VPN Snippet Restores Default Deny
     ${after}=    HTTP From    cli    203.0.113.10:8080
     Should Be Equal    ${after}    0
 
+IoT Client Reaches The Internet Masqueraded Behind The Pi
+    [Tags]    integration    requires-root    ap
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${before}=    Get File Size    ${TEMPDIR}/${NS}inet-http.log
+    ${s}=    HTTP From    iot    203.0.113.10:8080
+    Should Be Equal    ${s}    200
+    ${log}=    Get File    ${TEMPDIR}/${NS}inet-http.log
+    ${new}=    Evaluate    $log.encode()[int($before):].decode()
+    Should Contain    ${new}    192.0.2.10
+
+IoT Client Cannot Reach The LAN Router Or The Pi
+    [Tags]    integration    requires-root    ap
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${lan}=    HTTP From    iot    192.0.2.50:8080
+    Should Be Equal    ${lan}    0
+    ${router}=    TCP Connects From    iot    192.0.2.1    80
+    Should Be Equal    ${router}    closed
+    ${ssh}=    TCP Connects From    iot    198.51.100.129    22
+    Should Be Equal    ${ssh}    closed
+    ${ssh2}=    TCP Connects From    iot    192.0.2.10    22
+    Should Be Equal    ${ssh2}    closed
+
+IoT Client Cannot Reach VPN Clients
+    [Tags]    integration    requires-root    ap
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${r}=    TCP Connects From    iot    198.51.100.2    22
+    Should Be Equal    ${r}    closed
+
+LAN Can Manage IoT Devices Unless Disabled
+    [Tags]    integration    requires-root    ap
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${ok}=    HTTP From    lan    198.51.100.130:8080
+    Should Be Equal    ${ok}    200
+    ${off}=    Render AP    extra=lan_can_reach_clients = false
+    Load Firewall    ${off}/etc/rp/.check/ap.nft
+    ${blocked}=    HTTP From    lan    198.51.100.130:8080
+    Should Be Equal    ${blocked}    0
+
+IoT Gets DNS From The Pi Only When The DNS Module Is Configured
+    [Tags]    integration    requires-root    ap    dns
+    ${plain}=    Render AP
+    Load Firewall    ${plain}/etc/rp/.check/ap.nft
+    ${closed}=    TCP Connects From    iot    198.51.100.129    53
+    Should Be Equal    ${closed}    closed
+    ${with_dns}=    Render AP    dns=${True}
+    Load Firewall    ${with_dns}/etc/rp/.check/ap.nft
+    ${open}=    TCP Connects From    iot    198.51.100.129    53
+    Should Be Equal    ${open}    open
+
 *** Keywords ***
+Render AP
+    [Arguments]    ${extra}=${EMPTY}    ${dns}=${False}
+    ${dir}=    New Temp Dir
+    ${toml}=    Catenate    SEPARATOR=\n
+    ...    [device]
+    ...    wan_if = "eth0"
+    ...    lan_cidrs = ["192.0.2.0/24"]
+    ...    [ap]
+    ...    ssid = "rp-netns-test"
+    ...    country = "TW"
+    ...    subnet = "198.51.100.128/25"
+    ...    ${extra}
+    IF    ${dns}
+        ${toml}=    Catenate    SEPARATOR=\n    ${toml}    [dns]    upstreams = ["203.0.113.10:53"]
+    END
+    Create File    ${dir}/rp.toml    ${toml}\n
+    Run Ok    ${RPCTL}    --config    ${dir}/rp.toml    render    ap    --out    ${dir}
+    RETURN    ${dir}
+
 Render
     [Documentation]    Write a config for the topology and render ${module} (plus base) into a temp dir.
     [Arguments]    ${module}    ${vpn}=wireguard    ${allow_lan}=[]
@@ -99,7 +171,7 @@ Render
         ...    mode = "${vpn}"
         ...    allow_lan = ${allow_lan}
         ...    [vpn.wireguard]
-        ...    subnet = "198.51.100.0/24"
+        ...    subnet = "198.51.100.0/25"
     END
     Create File    ${dir}/rp.toml    ${toml}\n
     Run Ok    ${RPCTL}    --config    ${dir}/rp.toml    render    base    --out    ${dir}

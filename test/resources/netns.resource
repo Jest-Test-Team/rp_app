@@ -3,7 +3,8 @@ Documentation     Linux network-namespace topology for integration tests (root o
 ...
 ...               lan (192.0.2.50) ─┐
 ...               rp eth0 (192.0.2.10) ─ br0 home (192.0.2.1 | 203.0.113.1) ── inet (203.0.113.10)
-...               cli (198.51.100.2) ── rp "wg0" (198.51.100.1)
+...               cli (198.51.100.2/25) ── rp "wg0" (198.51.100.1/25)
+...               iot (198.51.100.130/25) ── rp "wlan0" (198.51.100.129/25)
 ...
 ...               "wg0" is a veth standing in for the VPN interface, so the real
 ...               rendered nftables rules are exercised without needing a VPN.
@@ -53,7 +54,7 @@ Create Topology
     Require Root On Linux
     ${prefix}=    Evaluate    'rpt' + __import__('secrets').token_hex(3) + '-'
     Set Suite Variable    ${NS}    ${prefix}
-    FOR    ${n}    IN    home    rp    lan    inet    cli
+    FOR    ${n}    IN    home    rp    lan    inet    cli    iot
         Sh    ip    netns    add    ${NS}${n}
         Sh    ip    -n    ${NS}${n}    link    set    lo    up
     END
@@ -66,6 +67,7 @@ Create Topology
     Sh    ip    -n    ${NS}home    link    set    p-lan    master    br0
     Veth Into    inet    eth0    home    up0
     Veth Into    cli    eth0    rp    wg0
+    Veth Into    iot    eth0    rp    wlan0
     Sh    ip    -n    ${NS}home    addr    add    203.0.113.1/24    dev    up0
     Sh    ip    -n    ${NS}inet    addr    add    203.0.113.10/24    dev    eth0
     Sh    ip    -n    ${NS}inet    route    add    192.0.2.0/24    via    203.0.113.1
@@ -76,12 +78,15 @@ Create Topology
     Sh    ip    -n    ${NS}home    route    add    198.51.100.0/24    via    192.0.2.10
     Sh    ip    -n    ${NS}rp    addr    add    192.0.2.10/24    dev    eth0
     Sh    ip    -n    ${NS}rp    route    add    default    via    192.0.2.1
-    Sh    ip    -n    ${NS}rp    addr    add    198.51.100.1/24    dev    wg0
+    Sh    ip    -n    ${NS}rp    addr    add    198.51.100.1/25    dev    wg0
+    Sh    ip    -n    ${NS}rp    addr    add    198.51.100.129/25    dev    wlan0
     Sh    ip    -n    ${NS}lan    addr    add    192.0.2.50/24    dev    eth0
     Sh    ip    -n    ${NS}lan    route    add    default    via    192.0.2.1
     Sh    ip    -n    ${NS}lan    route    add    198.51.100.0/24    via    192.0.2.10
-    Sh    ip    -n    ${NS}cli    addr    add    198.51.100.2/24    dev    eth0
+    Sh    ip    -n    ${NS}cli    addr    add    198.51.100.2/25    dev    eth0
     Sh    ip    -n    ${NS}cli    route    add    default    via    198.51.100.1
+    Sh    ip    -n    ${NS}iot    addr    add    198.51.100.130/25    dev    eth0
+    Sh    ip    -n    ${NS}iot    route    add    default    via    198.51.100.129
     FOR    ${n}    IN    home    rp
         Sh    ip    netns    exec    ${NS}${n}    sysctl    -qw    net.ipv4.ip_forward\=1
     END
@@ -92,12 +97,17 @@ Create Topology
     ...    --bind    192.0.2.50    alias=lan-http
     Start Process    ip    netns    exec    ${NS}rp    python3    -m    http.server    22
     ...    --bind    0.0.0.0    alias=rp-ssh
+    # Stand-ins: the Pi's DNS port (TCP 53) and a web UI on an IoT device.
+    Start Process    ip    netns    exec    ${NS}rp    python3    -m    http.server    53
+    ...    --bind    0.0.0.0    alias=rp-dns53
+    Start Process    ip    netns    exec    ${NS}iot    python3    -m    http.server    8080
+    ...    --bind    198.51.100.130    alias=iot-http
     Sleep    1s
 
 Destroy Topology
     IF    '${NS}' == ''    RETURN
     Terminate All Processes    kill=True
-    FOR    ${n}    IN    home    rp    lan    inet    cli
+    FOR    ${n}    IN    home    rp    lan    inet    cli    iot
         Run Process    ip    netns    del    ${NS}${n}
     END
 
