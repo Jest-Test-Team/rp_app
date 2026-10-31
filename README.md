@@ -1,0 +1,86 @@
+# rp_app — Raspberry Pi 2 B 無線開機設定
+
+用腳本把 SD 卡重灌成 **Raspberry Pi OS Lite (32-bit, Trixie)**，第一次開機就透過 Edimax USB Wi-Fi 連上網、開好 SSH，不需要網路線或螢幕。
+
+> ⚠️ 燒錄會**清空整張 SD 卡**。
+
+## 0. 準備 `local.env`
+
+```bash
+cp local.env.example local.env   # 已在 .gitignore，不會被 commit
+```
+
+| 變數 | 說明 |
+|---|---|
+| `PI_HOSTNAME` | 主機名稱，SSH 用 `<名稱>.local`，預設 `raspberrypi` |
+| `PI_USER` / `PI_PASSWORD` | 登入帳密（新系統沒有 `pi / raspberry` 預設帳號） |
+| `WIFI_SSID` / `WIFI_PASSWORD` | **2.4 GHz** 的 Wi-Fi，WPA2 |
+| `WIFI_COUNTRY` | `TW` |
+| `SD_DISK` | SD 卡的磁碟代號，例如 `disk5`（見步驟 1） |
+
+## 1. 找出 SD 卡
+
+```bash
+./scripts/00-preflight.sh
+```
+
+會列出所有外接磁碟。**注意大小一樣的不一定是 SD 卡**：這台 Mac 上 `HYPERDISPLY`（USB 螢幕轉接器）也是 15.7 GB，腳本會標示並拒絕它。把 SD 卡的代號填進 `SD_DISK`。
+
+## 2. 下載映像檔
+
+```bash
+./scripts/01-download-image.sh
+```
+
+下載最新的 Pi OS Lite armhf 到 `.cache/`，並核對 SHA-256。已下載過就會跳過。
+
+## 3. 燒錄
+
+```bash
+./scripts/02-flash-sd.sh disk5 --dry-run   # 先看會做什麼
+./scripts/02-flash-sd.sh disk5             # 真的寫入，需要 sudo，要再輸入一次 disk5 確認
+```
+
+安全檢查：必須等於 `SD_DISK`、是外接且可移除的整顆磁碟、不是 Mac 開機碟、小於 64 GB、不是 HYPERDISPLY。
+
+## 4. 寫入首次開機設定
+
+```bash
+./scripts/03-configure-boot.sh
+```
+
+在 `/Volumes/bootfs` 寫入 cloud-init 的 `user-data`（帳號、密碼雜湊、SSH）、`network-config`（Wi-Fi、國家 TW）和 `ssh` 檔，印出遮罩過的內容後自動退出 SD 卡。
+
+- 登入密碼只以 SHA-512 雜湊寫入卡片。
+- **Wi-Fi 密碼會以明文存在 SD 卡的 boot 分割區**（cloud-init 的限制），卡片別借人。
+
+## 5. 開機並連線
+
+1. SD 卡插回 Pi，**Edimax 網卡保持插著**，接上電源。
+2. Pi 2 第一次開機很慢（擴充分割區、cloud-init），等 3～5 分鐘。
+
+```bash
+./scripts/04-find-pi.sh      # 最多等 8 分鐘，找到後印出 IP
+./scripts/ssh-pi.sh          # = ssh $PI_USER@$PI_HOSTNAME.local（會清掉舊系統的 host key）
+```
+
+連上後確認：
+
+```bash
+hostname; iw dev wlan0 link; ip -4 addr show wlan0
+```
+
+## 連不上時
+
+- Edimax 小網卡**只支援 2.4 GHz**；路由器只開 5 GHz 或只開 WPA3 都會連不上。
+- 也可以先用手機熱點（開「最大相容性」/ 2.4 GHz），Mac 連同一個熱點。
+- `04-find-pi.sh` 找不到 `.local` 時會掃 ARP 表，列出 Raspberry Pi / Edimax 的 MAC 和 IP。
+- 改了 Wi-Fi 設定想重來：重跑步驟 3、4（cloud-init 只在第一次開機套用）。
+
+## 備案：Raspberry Pi Imager 圖形介面
+
+不想跑腳本也可以用 Imager（`brew install --cask raspberry-pi-imager`）：
+
+1. SD 卡插 Mac，打開 Imager：裝置選 **Raspberry Pi 2**，作業系統選 **Raspberry Pi OS Lite (32-bit)**，儲存裝置選 SD 卡（看清楚，別選到 HYPERDISPLY）。
+2. 下一步 →「編輯設定」：主機名稱 `raspberrypi`、自訂帳密、Wi-Fi SSID/密碼、國家 TW；「服務」分頁勾選啟用 SSH（密碼登入）。
+3. 寫入後照上面第 5 步開機、`./scripts/04-find-pi.sh`、`./scripts/ssh-pi.sh`。
