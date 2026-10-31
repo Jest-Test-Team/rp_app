@@ -1,0 +1,12 @@
+[package]
+name = "rp-http"
+description = "Minimal HTTP/1.1 JSON server and client used by rp-agent and rp-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde_json.workspace = true
