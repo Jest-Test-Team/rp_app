@@ -28,15 +28,15 @@
 
 | 項目 | 最近一次讀數 |
 |---|---|
-| 狀態 | **critical** |
-| 警報 | **電壓不足**（firmware `rpi_volt` 警報）：電源太弱 |
-| 溫度 | 約 42 °C |
+| 狀態 | **ok**（之前為 critical：電壓不足） |
+| 警報 | 無；接上 Ethernet 後的兩次開機都沒有 Undervoltage 紀錄，soak 每 5 分鐘也記錄電壓警報（目前皆 0） |
+| 溫度 | 約 50 °C（AP + VPN 運作中） |
 | 時鐘 | NTP 已同步 |
 | 磁碟 | 20% |
 
 > ⚠️ 裝置由電源供應器直接供電，但 kernel 記錄到間歇性的「Undervoltage detected」（負載時電壓低於約 4.63 V）。常見原因：micro-USB 線太細／太長造成壓降，或供應器實際電流不足。建議改用官方 5.1 V／2.5 A 供應器與短而粗的線。電壓不足可能造成降頻、SD 卡損毀與 USB 網卡斷線。
 >
-> 重開機驗證：rp-firewall、rp-dns、rp-agent、rp-mcp 全部自動啟動，防火牆與 DNS 封鎖照常生效。
+> 重開機驗證（五個模組都套用後，2026-11-01）：約 36 秒恢復 SSH；rp-firewall、rp-dns、rp-agent、rp-mcp、AP（hostapd／dnsmasq）、tailscaled 全部自動啟動；forwarding、DoT reject、VPN／AP 到 LAN 的阻擋、input `policy drop` 都還在；Tailscale exit node 仍為已核准。
 
 ## SSH 管理存取
 

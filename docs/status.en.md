@@ -28,15 +28,15 @@
 
 | Item | Latest reading |
 |---|---|
-| Status | **critical** |
-| Alert | **Under-voltage** (firmware `rpi_volt` alarm): the power supply is too weak |
-| Temperature | about 42 °C |
+| Status | **ok** (previously critical: under-voltage) |
+| Alert | none; no Undervoltage entries in either boot since Ethernet was connected, and the soak records the alarm every 5 minutes (all 0 so far) |
+| Temperature | about 50 °C (AP + VPN running) |
 | Clock | NTP synchronized |
 | Disk | 20% |
 
 > ⚠️ The device runs from a dedicated power supply, yet the kernel logs intermittent "Undervoltage detected" (below about 4.63 V under load). Common causes: a thin or long micro-USB cable dropping voltage, or a supply that cannot deliver its rated current. Use the official 5.1 V / 2.5 A supply with a short, thick cable. Under-voltage can cause throttling, SD card corruption and USB adapter drop-outs.
 >
-> Reboot check: rp-firewall, rp-dns, rp-agent and rp-mcp all start automatically; the firewall and DNS blocking keep working.
+> Reboot check (with all five modules applied, 2026-11-01): SSH back in about 36 seconds; rp-firewall, rp-dns, rp-agent, rp-mcp, the AP (hostapd / dnsmasq) and tailscaled all start automatically; forwarding, DoT rejection, VPN / AP-to-LAN blocking and the input `policy drop` are all in place; the Tailscale exit node is still approved.
 
 ## SSH admin access
 
