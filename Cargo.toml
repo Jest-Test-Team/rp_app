@@ -31,6 +31,8 @@ socket2 = "0.5"
 rpassword = "7"
 sha2 = "0.10"
 hex = "0.4"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+hmac = "0.12"
 
 [profile.release]
 lto = "thin"
