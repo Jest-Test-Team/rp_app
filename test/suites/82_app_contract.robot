@@ -26,6 +26,7 @@ The Contract Left An Intact Audit Chain On The Device
 
 *** Keywords ***
 Start Contract API
+    Require Flutter
     ${s}=    Evaluate    secrets.token_hex(32)    modules=secrets
     Set Suite Variable    ${CONTRACT_SECRET}    ${s}
     Start Fake API    secret=${s}

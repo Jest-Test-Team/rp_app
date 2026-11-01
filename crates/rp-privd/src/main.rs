@@ -177,6 +177,21 @@ async fn reply(s: &mut UnixStream, r: &Response) {
     if write_frame(&mut out, r).is_ok() {
         let _ = s.write_all(&out).await;
     }
+    // Closing a Linux unix socket with unread input resets the connection and
+    // the peer loses this reply (e.g. a refused or oversized request). Finish
+    // our side, then discard what is left (bounded) before closing.
+    let _ = s.shutdown().await;
+    let mut sink = [0u8; 8192];
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut left = 4 * 1024 * 1024usize;
+        while left > 0 {
+            match s.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => left = left.saturating_sub(n),
+            }
+        }
+    })
+    .await;
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]

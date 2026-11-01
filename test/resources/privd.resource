@@ -27,6 +27,7 @@ Start Privd
     ...    --fake-output    id -u\=0    --fake-output    dpkg-query\=install ok installed
     ...    --fake-output    uname -m\=armv7l
     ...    alias=${alias}    stdout=${root}/privd.out    stderr=STDOUT
+    ...    env:SSH_CONNECTION=${EMPTY}    # like systemd: no SSH session to check for lockout
     Wait Until Created    ${sock}    timeout=10s
     Set Suite Variable    ${ROOT}    ${root}
     Set Suite Variable    ${CFG}    ${root}/rp.toml
