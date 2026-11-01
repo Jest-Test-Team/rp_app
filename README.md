@@ -1,5 +1,7 @@
 # rp_app — Raspberry Pi Edge Security Gateway
 
+**繁體中文** | [English](README.en.md)
+
 兩部分：
 
 1. **無線開機設定**（本頁）：用腳本把 SD 卡重灌成 Raspberry Pi OS Lite (32-bit, Trixie)，第一次開機就透過 USB Wi-Fi 連上網、開好 SSH。

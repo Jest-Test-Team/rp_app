@@ -1,5 +1,7 @@
 # Edge Security Gateway：安裝與操作
 
+**繁體中文** | [English](gateway.en.md)
+
 > 本文所有網路值都是佔位符或文件專用網段（192.0.2.0/24、198.51.100.0/24、203.0.113.0/24），請換成自己的值。
 
 ## 1. 安裝
@@ -187,5 +189,7 @@ RP_ALLOW_ROOT=1 sudo -E test/run.sh integration # Linux：含 network namespace 
 RP_E2E_HOST=<USER>@<PI_HOST> test/run.sh e2e    # 真實裝置（非破壞性）
 RP_E2E_APPLY=1 RP_E2E_HOST=… test/run.sh e2e    # 含實際 apply／rollback（需有線管理連線）
 ```
+
+已上線的裝置（`/etc/rp/rp.toml` 已存在）上 e2e 預設跳過；`RP_E2E_ALLOW_IN_USE=1` 只跑唯讀檢查。
 
 測試層級與 tag：`static`、`unit`、`cli`、`integration`、`security`、`installer`、`e2e`、`perf`、`hwsim`、`requires-root`、`requires-pi`。

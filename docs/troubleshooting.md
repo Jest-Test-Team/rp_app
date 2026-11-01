@@ -1,5 +1,7 @@
 # 疑難排解
 
+**繁體中文** | [English](troubleshooting.en.md)
+
 ## 快速檢查
 
 | 症狀 | 先檢查 |

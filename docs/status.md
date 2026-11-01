@@ -1,5 +1,7 @@
 # 部署狀態與待辦
 
+**繁體中文** | [English](status.en.md)
+
 > 這份文件記錄**這台裝置**目前套用了什麼、還差什麼。網路值一律以佔位符表示。
 
 ## 裝置現況
@@ -62,6 +64,7 @@
 | `ssh.password_auth = false`：新金鑰連線成功、純密碼連線被拒（`Permission denied (publickey)`）、`sshd -T` 確認 | ✅ |
 | mac80211_hwsim AP 測試（Pi kernel） | 5／5 |
 | CI（Linux、Windows ps1、hwsim、root netns、armv7／aarch64 cross build） | ✅ 全綠 |
+| GHA release dry-run（3 個 target、SHA256SUMS、SBOM） | ✅ 全綠 |
 
 ## 待辦（需要使用者）
 

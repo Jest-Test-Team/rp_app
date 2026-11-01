@@ -1,5 +1,7 @@
 # 架構
 
+**繁體中文** | [English](architecture.en.md)
+
 ## 元件
 
 | Binary | 執行位置 | 角色 | 權限 |
@@ -43,7 +45,7 @@
 
 | 模組 | 管理的檔案 | 依賴 | Dead-man 計時器 |
 |---|---|---|---|
-| `base` | nftables 基線、`rp-firewall.service`、sysctl 強化、sshd drop-in、unattended-upgrades | — | 有 |
+| `base` | nftables 基線、`rp-firewall.service`、sysctl 強化、sshd drop-in、unattended-upgrades、journald 上限 | — | 有 |
 | `vpn` | `nft.d/50-vpn.nft`、forwarding sysctl、WireGuard 設定或 Tailscale apt 來源 | base | 有 |
 | `dns` | `rp-dns.service`、`nft.d/40-dns.nft` | base | 有 |
 | `ap` | hostapd／dnsmasq 設定與 unit、NetworkManager 交接、`nft.d/60-ap.nft` | base | 有 |
@@ -65,7 +67,7 @@
 1. render → diff（無差異即結束，冪等）
 2. preflight：root、OS、必要工具、管理介面 carrier、**目前 SSH 來源在允許清單內**、key-only SSH 需已有金鑰、AP 不得在管理介面上
 3. 暫存所有檔案、**備份**所有將被取代的檔案（manifest）
-4. 套件前步驟、early 檔案（例如 apt 來源）、`apt-get install`
+4. 套件前步驟、early 檔案（例如 apt 來源）、`apt-get install`（最多等 dpkg 鎖 120 秒）
 5. 對暫存檔驗證（`nft -c`、`dnsmasq --test`、`rp-dns check` …）——此時線上系統尚未改變
 6. 原子安裝檔案（tmp + rename、明確權限）
 7. 啟用步驟；任何失敗自動還原備份
@@ -89,5 +91,6 @@ model ─ tools/call block_device {ip, ttl} ─▶ rp-mcp：能力檢查 → 限
 | Tailscale auth key | `vpn.tailscale.auth_key_file` 指向的檔案 | 由管理者設定 | 否 |
 | AP 密碼 | `rpctl ap set-passphrase` 寫入 `/etc/rp/ap.psk` | 0600（建立即是） | 否（hostapd 用 `wpa_psk_file`） |
 | agent token | 裝置上產生於 `/etc/rp/agent.token` | 0640 `root:rp-mcp-clients` | 否（systemd 的 rp-mcp 以 credential 取得；群組成員可用 stdio） |
+| 管理用 SSH 金鑰 | 使用者電腦 `~/.ssh/rp_admin_ed25519` | 0600，passphrase 存在 macOS 鑰匙圈 | 否 |
 | MCP 專用 SSH 金鑰 | 使用者電腦 `~/.ssh/rp_mcp_ed25519` | 0600，無 passphrase | 否；裝置端以 forced command 限制為只能執行 `rp-mcp --stdio` |
 | MCP client token | 只輸出一次；儲存 SHA-256 | 0600 | 否 |
