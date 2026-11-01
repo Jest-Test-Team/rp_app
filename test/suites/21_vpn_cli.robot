@@ -74,8 +74,8 @@ Tailscale Adds Its Repository Before Installing And Uses The Key File
     ${r}=    Run Expecting    0    ${RPCTL}    --config    ${TS}    --root    ${root}
     ...    --record-commands    ${root}/cmds.log    --fake-output    id -u\=0    apply    vpn
     ${key}=    Index Of Command    ${root}    curl -fsSL --proto =https
-    ${update}=    Index Of Command    ${root}    env DEBIAN_FRONTEND=noninteractive apt-get update
-    ${install}=    Index Of Command    ${root}    env DEBIAN_FRONTEND=noninteractive apt-get install
+    ${update}=    Index Of Command    ${root}    env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 update
+    ${install}=    Index Of Command    ${root}    env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install
     Should Be True    ${key} < ${update} < ${install}
     Index Of Command    ${root}    tailscale up --auth-key=file:/etc/rp/tailscale.key --hostname=rp-exit
     File Should Exist    ${root}/etc/apt/sources.list.d/tailscale.list
