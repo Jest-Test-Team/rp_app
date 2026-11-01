@@ -38,8 +38,8 @@ jobs:
       - run: rustup show active-toolchain || rustup toolchain install
       - name: Install zig and cargo-zigbuild
         run: |
-          pip install ziglang==0.13.0
-          cargo install cargo-zigbuild --locked --version 0.19.8
+          pip install ziglang==0.17.0
+          cargo install cargo-zigbuild --locked --version 0.24.0
       - name: Test before packaging
         run: cargo test --workspace --locked
       - name: Package with the same script users install with

@@ -8,6 +8,9 @@ use crate::module::{Module, Step};
 
 pub const AGENT_UNIT: &str = "/etc/systemd/system/rp-agent.service";
 pub const MCP_UNIT: &str = "/etc/systemd/system/rp-mcp.service";
+/// Group allowed to read the agent token. Must differ from the unit name:
+/// `DynamicUser=` in rp-mcp.service allocates a user *and group* named rp-mcp.
+pub const TOKEN_GROUP: &str = "rp-mcp-clients";
 
 pub struct Agent;
 
@@ -153,6 +156,12 @@ impl Module for Agent {
                 ],
                 best_effort: false,
             },
+            // Members of rp-mcp-clients (e.g. an admin using `ssh device rp-mcp
+            // --stdio`) may read the token; the systemd rp-mcp gets it via
+            // LoadCredential. Not "rp-mcp": DynamicUser= claims that name.
+            Step::cmd(&["groupadd", "-f", "--system", TOKEN_GROUP]),
+            Step::cmd(&["chgrp", TOKEN_GROUP, &token]),
+            Step::cmd(&["chmod", "0640", &token]),
             Step::cmd(&["install", "-d", "-m", "0700", &a.state_dir]),
             Step::cmd(&["systemctl", "daemon-reload"]),
             Step::cmd(&["systemctl", "enable", "rp-agent.service"]),
@@ -196,10 +205,12 @@ impl Module for Agent {
         let mut n = vec!["Check: sudo rp-agent snapshot health".into()];
         if let Some(m) = &cfg.mcp {
             n.push("Create an MCP client: sudo rpctl mcp add-client <name> --cap read".into());
-            n.push(format!(
-                "MCP endpoint: http://{}/mcp  (or: ssh <device> rp-mcp --stdio)",
-                m.listen
-            ));
+            n.push(format!("MCP endpoint: http://{}/mcp (local only by default)", m.listen));
+            n.push(
+                "Remote use over SSH: sudo usermod -aG rp-mcp-clients <user>, log in again, then: \
+                 ssh <user>@<device> rp-mcp --stdio"
+                    .into(),
+            );
             n.push("Privileged requests appear in: sudo rpctl actions   approve with: sudo rpctl approve <id>".into());
         }
         n
@@ -244,6 +255,9 @@ mod tests {
     fn token_is_generated_on_device_once() {
         let steps: Vec<String> = Agent.post_apply(&cfg(true)).iter().map(|s| s.display()).collect();
         assert!(steps[0].contains("[ -s '/etc/rp/agent.token' ] ||"));
+        assert!(steps.iter().any(|s| s == "chmod 0640 /etc/rp/agent.token"));
+        assert!(steps.iter().any(|s| s == "chgrp rp-mcp-clients /etc/rp/agent.token"));
+        assert_ne!(TOKEN_GROUP, "rp-mcp", "would collide with DynamicUser=");
         assert!(steps.iter().any(|s| s.contains("restart rp-mcp.service")));
     }
 }

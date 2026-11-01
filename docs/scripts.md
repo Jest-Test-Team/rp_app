@@ -2,6 +2,8 @@
 
 所有腳本位於 `rp_app/scripts/`，以 bash 撰寫（`pi-diag.sh` 為 POSIX sh，在 Pi 上執行），並通過 `shellcheck`。
 
+這些是**燒錄與首次開機**用的腳本。Gateway 的工具以 Rust 撰寫（`rpctl`、`rp-dns`、`rp-agent`、`rp-mcp`），安裝程式是 `deploy/install.sh`／`deploy/install.ps1`，說明見 [gateway.md](gateway.md)。
+
 ## lib.sh
 
 共用函式，由其他腳本 `source`，不可直接執行。
@@ -102,3 +104,10 @@ wifi-ssid.sh [SSID | --list]
 |---|---|---|
 | `early` | cloud-init `bootcmd`（開機早期，每次開機） | 型號、kernel、`lsusb`、`ip link`、Wi-Fi 驅動 dmesg |
 | `full` | cloud-init `runcmd`（開機後期，每個 instance 一次） | 等 60 秒後輸出 cloud-init 狀態、rfkill、IP、NetworkManager 裝置與連線、掃描到的 Wi-Fi、驅動 dmesg、NetworkManager 日誌、cloud-init 錯誤 |
+
+
+sudo rpctl dns block ads.example tracker.example   # 加入，子網域一起封鎖
+sudo rpctl dns unblock tracker.example             # 移除
+sudo rpctl dns list                                # 列出
+sudo rpctl dns import ./hosts.txt                  # 合併 hosts 格式或一行一個網域的清單
+sudo rpctl dns import --url https://<清單網址>      # 只接受 https，有大小上限

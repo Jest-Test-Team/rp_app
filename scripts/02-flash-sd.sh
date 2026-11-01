@@ -67,7 +67,7 @@ info "Waiting for /Volumes/bootfs to mount..."
 for _ in $(seq 1 30); do
   [[ -d /Volumes/bootfs ]] && break
   sleep 1
-  ((_ == 10)) && diskutil mountDisk "/dev/$target" >/dev/null 2>&1 || true
+  if ((_ == 10)); then diskutil mountDisk "/dev/$target" >/dev/null 2>&1 || true; fi
 done
 [[ -d /Volumes/bootfs ]] || die "bootfs did not mount — re-insert the card, then run 03-configure-boot.sh."
 ok "/Volumes/bootfs mounted — next: ./scripts/03-configure-boot.sh"

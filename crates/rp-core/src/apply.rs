@@ -24,6 +24,10 @@ use crate::runner::Runner;
 
 pub const STATE_DIR: &str = "/var/lib/rp";
 
+/// Wait for the dpkg lock (e.g. a running apt-daily / unattended-upgrades job)
+/// instead of failing the apply immediately.
+pub const APT_LOCK_WAIT: &str = "DPkg::Lock::Timeout=120";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ApplyError {
     #[error("io error on {path}: {source}")]
@@ -257,6 +261,8 @@ pub fn apply(
                 "env",
                 "DEBIAN_FRONTEND=noninteractive",
                 "apt-get",
+                "-o",
+                APT_LOCK_WAIT,
                 "update",
             ]));
         }
@@ -264,6 +270,8 @@ pub fn apply(
             "env",
             "DEBIAN_FRONTEND=noninteractive",
             "apt-get",
+            "-o",
+            APT_LOCK_WAIT,
             "install",
             "-y",
             "--no-install-recommends",

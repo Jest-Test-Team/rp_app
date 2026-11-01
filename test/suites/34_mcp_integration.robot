@@ -44,6 +44,8 @@ Every Read Tool Works For A Read-Only Client
 Health And Flows Reflect The Device
     ${h}=    Call Tool    RP_TEST_VIEWER    get_system_health
     Should Be Equal As Numbers    ${h['structuredContent']['temperature_c']}    46.0
+    Should Be Equal    ${h['structuredContent']['status']}    ok
+    Should Be Empty    ${h['structuredContent']['alerts']}
     ${f}=    Call Tool    RP_TEST_VIEWER    get_flows
     Should Be Equal As Integers    ${f['structuredContent']['flows'][0]['dport']}    443
 

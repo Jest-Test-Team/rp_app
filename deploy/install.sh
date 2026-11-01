@@ -153,7 +153,7 @@ build_archive() {
   # Owner is recorded as root (never the builder's account), and no macOS
   # xattrs / AppleDouble files (GNU tar on the device warns about them).
   local owner=(--uid 0 --gid 0 --uname root --gname root)
-  tar --version 2>/dev/null | grep -q GNU && owner=(--owner=0 --group=0 --numeric-owner)
+  tar --version 2>/dev/null | grep -q GNU && owner=(--owner=root:0 --group=root:0)
   COPYFILE_DISABLE=1 tar --no-xattrs "${owner[@]}" -C "$stage" -czf "$outdir/$(asset_name "$triple")" "$name"
   rm -rf "$stage"
   echo "$outdir/$(asset_name "$triple")"
@@ -218,8 +218,11 @@ do_uninstall() {
 }
 
 remote() { # remote CMD... over ssh; inputs are validated above, expansion is intentional
+  # -t when we have a terminal, so sudo on the device can ask for a password.
+  local tty=()
+  [[ -t 0 && -t 1 ]] && tty=(-t)
   # shellcheck disable=SC2029
-  if ((dry)); then printf 'would: ssh %s %s\n' "$host" "$*"; else ssh "$host" "$@"; fi
+  if ((dry)); then printf 'would: ssh %s %s\n' "$host" "$*"; else ssh "${tty[@]}" "$host" "$@"; fi
 }
 
 deploy_remote() {

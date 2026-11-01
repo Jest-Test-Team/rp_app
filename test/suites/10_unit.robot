@@ -12,7 +12,7 @@ rp-probe              rp-probe      7
 rp-dns                rp-dns        13
 rp-http               rp-http       2
 rp-policy             rp-policy     14
-rp-agent              rp-agent      6
+rp-agent              rp-agent      8
 rp-mcp                rp-mcp        3
 
 *** Keywords ***

@@ -5,13 +5,42 @@
 1. **無線開機設定**（本頁）：用腳本把 SD 卡重灌成 Raspberry Pi OS Lite (32-bit, Trixie)，第一次開機就透過 USB Wi-Fi 連上網、開好 SSH。
 2. **Edge Security Gateway**（Rust）：VPN exit node（Tailscale／WireGuard，親友無法進入 LAN）、DNS 防火牆、隔離的 IoT AP、唯讀觀測 agent，以及受 policy 管控、特權動作需人工核准的 MCP server。→ [docs/gateway.md](docs/gateway.md)
 
+### 目前狀態
+
+這台 Pi 2B 已套用 `base`（防火牆基線、SSH 只接受金鑰）、`dns`（DNS 防火牆，含 StevenBlack 清單）、`agent`（agent + MCP），Claude Code 可經 SSH 以唯讀工具查詢。VPN 與 IoT AP 尚待使用者條件（Tailscale key／Ethernet）。詳見 [docs/status.md](docs/status.md)。
+
+### Gateway 快速開始
+
 ```bash
-# Gateway 快速開始（在 Pi 上）
-bash install.sh                       # 下載 release 並核對 SHA256（或 --from-source）
-sudo rpctl preflight base && sudo rpctl apply base && sudo rpctl confirm
+# 從 Mac／Linux 部署到 Pi（GitHub Release 發佈前請用 --from-source，需要 zig + cargo-zigbuild）
+deploy/install.sh --host <USER>@<PI_HOST> --from-source
+
+# 在 Pi 上：每個模組都先 preflight、dry-run，再 apply；防火牆類變更要在時限內 confirm
+sudo rpctl preflight base && sudo rpctl apply base --dry-run
+sudo rpctl apply base && sudo rpctl confirm
 ```
 
-完整文件：[docs/](docs/README.md)　架構：[docs/architecture.md](docs/architecture.md)　威脅模型：[docs/threat-model.md](docs/threat-model.md)　實測：[docs/benchmarks.md](docs/benchmarks.md)
+常用操作：
+
+| 做什麼 | 指令 |
+|---|---|
+| 封鎖／解除網域 | `sudo rpctl dns block <domain>`／`sudo rpctl dns unblock <domain>` |
+| 匯入公開封鎖清單 | `sudo rpctl dns import --url https://<LIST_URL>` |
+| 查看封鎖事件 | `rp-dns events --action blocked` |
+| 模組狀態／復原 | `sudo rpctl status`／`sudo rpctl rollback <module>` |
+| 接到 Claude Code | 見 [docs/gateway.md](docs/gateway.md#接到-claude-code建議受限制的專用金鑰) |
+| 核准特權請求 | `sudo rpctl actions`、`sudo rpctl approve <id>` |
+| 驗證稽核紀錄 | `sudo rpctl audit verify` |
+
+### 開發與測試
+
+```bash
+cargo test --workspace            # Rust 單元測試
+test/run.sh                       # Robot：static unit cli installer security
+test/run.sh integration           # DNS／MCP 整合（Linux root 下另含 network namespace）
+```
+
+文件：[docs/](docs/README.md)　狀態：[status](docs/status.md)　架構：[architecture](docs/architecture.md)　威脅模型：[threat-model](docs/threat-model.md)　實測：[benchmarks](docs/benchmarks.md)　疑難排解：[troubleshooting](docs/troubleshooting.md)
 
 ---
 

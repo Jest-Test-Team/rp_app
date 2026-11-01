@@ -54,7 +54,19 @@ async fn run(cli: Cli) -> Result<()> {
         .with_context(|| format!("cannot read agent token {}", token_path.display()))?
         .trim()
         .to_string();
-    let audit = Audit::open(&at(&m.audit_log))
+    // The service writes the configured log; an admin running --stdio usually
+    // can't, so fall back to a per-user log rather than running unaudited.
+    let mut audit_path = at(&m.audit_log);
+    let writable = |p: &std::path::Path| {
+        p.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+            && std::fs::OpenOptions::new().create(true).append(true).open(p).is_ok()
+    };
+    if cli.stdio && !writable(&audit_path) {
+        if let Some(home) = std::env::var_os("HOME") {
+            audit_path = PathBuf::from(home).join(".local/state/rp-mcp/audit.jsonl");
+        }
+    }
+    let audit = Audit::open(&audit_path)
         .map_err(|e| eprintln!("rp-mcp: warning: audit log disabled: {e}"))
         .ok();
     let d = Arc::new(Dispatcher {

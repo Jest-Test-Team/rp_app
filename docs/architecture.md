@@ -12,6 +12,15 @@
 
 函式庫：`rp-schema`（設定型別）、`rp-core`（驗證、渲染、apply 引擎、各模組）、`rp-policy`（授權、驗證、核准、稽核）、`rp-http`（精簡 HTTP/1.1）。
 
+## MCP 的連線方式
+
+| 方式 | 身分 | 能力 | 稽核 |
+|---|---|---|---|
+| SSH stdio（`ssh <host> rp-mcp --stdio`） | SSH 使用者；需在 `rp-mcp-clients` 群組或使用 forced-command 金鑰 | `mcp.stdio_capabilities`（預設 `read`） | 系統 log 不可寫時寫到 `~/.local/state/rp-mcp/` |
+| Streamable HTTP（`POST /mcp`） | 每個 client 一組 bearer token（`rpctl mcp add-client`） | 依 client 設定 | `/var/lib/rp-mcp/audit.jsonl` |
+
+`rp-mcp-clients` 群組名稱刻意不叫 `rp-mcp`：`rp-mcp.service` 的 `DynamicUser=` 會配置同名的使用者與群組。
+
 ## 資料平面 vs 控制平面
 
 ```
@@ -79,5 +88,6 @@ model ─ tools/call block_device {ip, ttl} ─▶ rp-mcp：能力檢查 → 限
 | WireGuard client 私鑰 | 只在 `rpctl vpn add-peer` 輸出一次 | — | 否 |
 | Tailscale auth key | `vpn.tailscale.auth_key_file` 指向的檔案 | 由管理者設定 | 否 |
 | AP 密碼 | `rpctl ap set-passphrase` 寫入 `/etc/rp/ap.psk` | 0600（建立即是） | 否（hostapd 用 `wpa_psk_file`） |
-| agent token | 裝置上產生於 `/etc/rp/agent.token` | 0600 | 否（rp-mcp 以 credential 取得） |
+| agent token | 裝置上產生於 `/etc/rp/agent.token` | 0640 `root:rp-mcp-clients` | 否（systemd 的 rp-mcp 以 credential 取得；群組成員可用 stdio） |
+| MCP 專用 SSH 金鑰 | 使用者電腦 `~/.ssh/rp_mcp_ed25519` | 0600，無 passphrase | 否；裝置端以 forced command 限制為只能執行 `rp-mcp --stdio` |
 | MCP client token | 只輸出一次；儲存 SHA-256 | 0600 | 否 |

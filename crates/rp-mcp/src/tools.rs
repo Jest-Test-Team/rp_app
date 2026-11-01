@@ -34,7 +34,7 @@ fn no_args() -> Value {
 
 pub const TOOLS: &[Tool] = &[
     Tool { name: "get_system_health", capability: Capability::Read,
-        description: "Load, memory, temperature, uptime and which rp modules are applied.", schema: no_args },
+        description: "Load, memory, temperature, under-voltage, clock sync, disk use, applied rp modules, and an overall status with alerts (ok / warning / critical).", schema: no_args },
     Tool { name: "get_device_inventory", capability: Capability::Read,
         description: "Devices currently seen on the LAN and access point, with DHCP names and first-seen time; flags devices new in the last 24h.", schema: no_args },
     Tool { name: "inspect_arp_table", capability: Capability::Read,

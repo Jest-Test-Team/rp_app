@@ -1,9 +1,15 @@
 # rp-app 文件
 
-讓 Raspberry Pi 2 Model B 不接網路線、不接螢幕，第一次開機就透過 USB Wi-Fi 網卡連上網路並開啟 SSH，全程用 Mac 上的腳本完成。
+兩部分：
+
+1. **無線開機**：讓 Raspberry Pi 2 Model B 不接網路線、不接螢幕，第一次開機就透過 USB Wi-Fi 網卡連上網路並開啟 SSH，全程用 Mac 上的腳本完成。
+2. **Edge Security Gateway**（Rust）：防火牆基線、VPN exit node、DNS 防火牆、IoT AP、觀測 agent 與受 policy 管控的 MCP server。
+
+目前這台裝置的部署狀態與待辦：[status.md](status.md)。
 
 | 文件 | 內容 |
 |---|---|
+| [status.md](status.md) | **這台裝置目前套用了什麼、還差什麼** |
 | [setup.md](setup.md) | 燒錄 SD 卡、Wi-Fi／SSH 首次開機設定、登入 |
 | [scripts.md](scripts.md) | 燒錄相關腳本的用途與安全檢查 |
 | [troubleshooting.md](troubleshooting.md) | 已知問題、根本原因與診斷方法 |

@@ -4,6 +4,8 @@
 
 ## 1. 安裝
 
+> GitHub Release 發佈（推 tag）之前，預設的 release 下載會 404；請先用 `--from-source`。
+
 ### 在 Pi 上直接安裝
 
 ```bash
@@ -29,6 +31,9 @@ deploy/install.sh --host <USER>@<PI_HOST> --from-source   # 本機 cargo-zigbuil
 
 安裝程式只放 binary（`rpctl`、`rp-dns`、`rp-agent`、`rp-mcp`）與 `/etc/rp/rp.toml` 範例；不會改動網路。解除安裝：`--uninstall`（保留設定）或 `--uninstall --purge`。
 
+- `--host` 部署時，若在終端機執行，遠端 sudo 會用 `ssh -t` 詢問密碼
+- Mac 上直接執行（沒有 `--host`）會被拒絕：本機安裝只支援 Linux
+
 ## 2. 設定與套用
 
 編輯 `/etc/rp/rp.toml`（範例：`configs/rp.example.toml`）。每個模組都照同樣流程：
@@ -45,11 +50,28 @@ sudo rpctl rollback <module>
 
 建議順序：`base` → `dns` → `vpn` → （接好 Ethernet 後）`ap` → `agent`。
 
+只有 Wi-Fi、尚未接 Ethernet 時：設 `device.wan_if = "wlan0"`，`base`、`dns`、`agent` 都能用；`vpn` 可用但頻寬有限（同一個 2.4 GHz 無線電收送）；`ap` 會被拒絕。
+
+套件安裝會等待 dpkg 鎖最多 120 秒（例如 apt 每日更新正在跑）。
+
 ## 3. base
 
 - 預設丟棄所有 inbound；SSH 只允許 `ssh.allow_from`（預設為 `device.lan_cidrs`）；允許 mDNS 以保留 `<hostname>.local`
 - sysctl 強化、sshd 強化（drop-in 名為 `10-rp.conf`，優先於 cloud-init 的設定）、unattended-upgrades
 - 確認可用金鑰登入後，再設 `ssh.password_auth = false`；沒有 `authorized_keys` 時 preflight 會拒絕
+- journald 上限（降低 SD 卡磨損）：`base.journal_max_mb`（預設 64；設 0 不管理）
+
+### 裝置健康
+
+`rp-agent snapshot health`（或 MCP `get_system_health`）回報溫度、電壓不足、CPU 頻率、NTP、磁碟與記憶體，並給出 `status`（ok／warning／critical）與 `alerts`：
+
+| 警報 | 門檻 |
+|---|---|
+| under_voltage | firmware 警報為 1（critical） |
+| temperature | ≥ 70 °C warning、≥ 80 °C critical |
+| disk | ≥ 90% warning、≥ 95% critical |
+| memory | 可用 < 10% warning |
+| clock | NTP 未同步 warning |
 
 ## 4. VPN exit node
 
@@ -84,7 +106,15 @@ block_suspicious = false     # 可疑名稱先只記錄
 
 - 在路由器的 DHCP 把 DNS 設成這台裝置，**並保留一組公共 DNS 作為第二順位**（fail-open）
 - 查看事件：`rp-dns events --action blocked`；測試評分：`rp-dns score <name>`
-- 改名單後重新載入：`sudo systemctl reload rp-dns`
+- 管理封鎖清單（`dns.blocklists` 的第一個檔案；會驗證、去重、保留註解，改完自動 reload）：
+
+```bash
+sudo rpctl dns block ads.example tracker.example   # 加入（含子網域）
+sudo rpctl dns unblock tracker.example             # 移除
+sudo rpctl dns list                                # 列出
+sudo rpctl dns import ./hosts.txt                  # 合併 hosts 或一行一個網域的清單
+sudo rpctl dns import --url https://<LIST_URL>     # 只接受 https
+```
 
 ## 6. IoT／訪客 AP
 
@@ -121,8 +151,23 @@ sudo systemctl restart rp-mcp
 
 連線方式：
 
-- Streamable HTTP：`http://<MCP_LISTEN>/mcp`，Header `Authorization: Bearer <TOKEN>`
-- stdio：`ssh <USER>@<PI_HOST> rp-mcp --stdio`（預設只有 read 能力）
+- Streamable HTTP：`http://<MCP_LISTEN>/mcp`，Header `Authorization: Bearer <TOKEN>`（預設只聽 127.0.0.1；base 防火牆也不會對外開放 9851）
+- stdio：先 `sudo usermod -aG rp-mcp-clients <USER>` 並重新登入，再用 `ssh <USER>@<PI_HOST> rp-mcp --stdio`（預設只有 read 能力；稽核寫到 `~/.local/state/rp-mcp/`）
+
+### 接到 Claude Code（建議：受限制的專用金鑰）
+
+MCP client 在背景啟動、無法輸入密碼，所以用一把沒有 passphrase、但**只能執行 rp-mcp** 的專用金鑰：
+
+```bash
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/rp_mcp_ed25519 -C 'rp-mcp'
+# 在裝置的 ~/.ssh/authorized_keys 加一行（restrict = 無 shell、無 pty、無 forwarding）：
+#   restrict,command="/usr/local/bin/rp-mcp --stdio" ssh-ed25519 AAAA... rp-mcp
+claude mcp add --scope user rp-gateway -- \
+  ssh -i ~/.ssh/rp_mcp_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes <USER>@<PI_HOST> rp-mcp --stdio
+claude mcp list        # rp-gateway: ✔ Connected
+```
+
+金鑰外洩時，對方也只能用 MCP 的唯讀工具；撤銷就是刪掉 authorized_keys 裡那一行。
 
 特權動作：
 

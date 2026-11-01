@@ -53,6 +53,9 @@ jobs:
       - name: Robot integration suites (root, isolated network namespaces)
         # Root inside isolated namespaces; tests skip themselves when not root.
         run: sudo -E env "PATH=$PATH" RP_ALLOW_ROOT=1 bash test/run.sh integration
+      - name: Hand results back to the runner user (they were written as root)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" test target || true
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -70,12 +73,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install hostapd, wpa_supplicant, dnsmasq, iw and the hwsim module
+      - name: Install hostapd, wpa_supplicant, dnsmasq, iw
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hostapd wpasupplicant dnsmasq-base iw isc-dhcp-client "linux-modules-extra-$(uname -r)" || true
+          sudo apt-get install -y --no-install-recommends hostapd wpasupplicant dnsmasq-base iw udhcpc
+      - name: Load mac80211_hwsim if this runner kernel ships it
+        # Optional: hosted runner kernels may not package the module. The suite
+        # then skips itself; real-radio runs happen on the device.
+        run: |
+          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" || echo "no linux-modules-extra for $(uname -r)"
+          if sudo modprobe mac80211_hwsim radios=0; then echo "hwsim available"; sudo modprobe -r mac80211_hwsim; else echo "::notice::mac80211_hwsim unavailable on $(uname -r); hwsim suite will skip"; fi
       - name: Robot hwsim suite (skips if the module is unavailable)
         run: sudo -E env "PATH=$PATH" RP_ALLOW_ROOT=1 bash test/run.sh hwsim
+      - name: Hand results back to the runner user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" test target || true
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -97,9 +109,10 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Install zig and cargo-zigbuild
+        # zig 0.13 / zigbuild 0.19 reject rustc's --fix-cortex-a53-843419 for aarch64.
         run: |
-          pip install ziglang==0.13.0
-          cargo install cargo-zigbuild --locked --version 0.19.8
+          pip install ziglang==0.17.0
+          cargo install cargo-zigbuild --locked --version 0.24.0
       - name: Package
         run: bash deploy/install.sh --package-only dist --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4

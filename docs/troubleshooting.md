@@ -122,6 +122,22 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 | 稽核 `audit verify` 顯示 chain 斷掉 | rp-agent 與 `rpctl approve` 兩個 process 寫同一個檔，agent 快取了舊的鏈頭 | 每次寫入都加檔案鎖並重新讀取鏈頭 |
 | `get_flows` 永遠是空的 | 新版 kernel 沒有 `/proc/net/nf_conntrack` | agent 改用 `conntrack -L -o extended`（agent 模組會安裝 `conntrack`） |
 | 防火牆重載後 quarantine 消失 | 重載會重建 table，timeout 元素跟著消失 | `rp-firewall` 啟動／重載後執行 `rpctl quarantine-restore` 補回剩餘時間 |
+| `get_system_health` 回報 critical：under_voltage | 供電不足：micro-USB 線太細／太長的壓降，或供應器電流不夠（負載時低於約 4.63 V） | 換 5 V／2.5 A 電源；agent 讀 firmware 的 `rpi_volt` 警報（沙箱看不到 `vcgencmd`） |
+| `apply` 在 `apt-get install` 失敗 | apt 每日更新／unattended-upgrades 正持有 dpkg 鎖 | apt 以 `-o DPkg::Lock::Timeout=120` 執行；失敗時尚未安裝任何檔案 |
+| `rp-mcp.service` 啟動失敗（`217/USER`） | 另建的 `rp-mcp` 群組與 `DynamicUser=` 自動配置的同名使用者衝突 | token 群組改名為 `rp-mcp-clients`；舊的 `rp-mcp` 群組需 `groupdel` |
+| `ssh <host> rp-mcp --stdio` 讀不到 agent token | token 原本只有 root 可讀 | token 改為 `0640 root:rp-mcp-clients`；`usermod -aG rp-mcp-clients <user>` 後重新登入 |
+| SSH 顯示 `Permission denied (publickey)` | 已設 `ssh.password_auth = false`，這台電腦沒有被授權的金鑰 | 用有授權的金鑰（`ssh -i <KEY>`）；或接螢幕鍵盤在本機把 `password_auth` 改回 `true` 後 `rpctl apply base` |
+| `install.sh --host` 卡在 sudo | 遠端沒有 TTY，sudo 無法詢問密碼 | 互動執行時改用 `ssh -t` |
+| 純文字清單的 `not valid!` 被當成網域 `not` | 一行多個字時只取第一個字 | 非 hosts 格式且有多個字的行視為無效（rp-dns 與 `rpctl dns import` 都已修正） |
+
+## MCP（Claude Code）連不上
+
+```bash
+claude mcp list                                    # rp-gateway 是否 ✔ Connected
+ssh -i ~/.ssh/rp_mcp_ed25519 -o BatchMode=yes <USER>@<PI_HOST> </dev/null; echo $?   # 金鑰能否登入
+sudo systemctl status rp-agent                     # 裝置上 agent 是否在跑
+id <USER> | grep rp-mcp-clients                    # 一般 SSH stdio 需要這個群組
+```
 
 ## Gateway 快速診斷
 

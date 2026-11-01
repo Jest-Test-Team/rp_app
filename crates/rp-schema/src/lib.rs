@@ -399,6 +399,13 @@ pub struct Base {
     /// Seconds before an unconfirmed firewall change is rolled back automatically.
     #[serde(default = "default_confirm_timeout")]
     pub confirm_timeout_secs: u32,
+    /// Cap on persistent journal size in MB, to limit SD-card wear. 0 = leave journald alone.
+    #[serde(default = "default_journal_mb")]
+    pub journal_max_mb: u32,
+}
+
+fn default_journal_mb() -> u32 {
+    64
 }
 
 impl Default for Base {
@@ -407,6 +414,7 @@ impl Default for Base {
             allow_mdns: true,
             unattended_upgrades: true,
             confirm_timeout_secs: default_confirm_timeout(),
+            journal_max_mb: default_journal_mb(),
         }
     }
 }

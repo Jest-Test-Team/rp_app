@@ -34,7 +34,7 @@ fn dry_run_changes_nothing() {
     let r = RecordingRunner::default();
     let t = Target { root: root.clone(), runner: &r };
     let rep = apply(&Base, &cfg(), &t, &ApplyOptions { dry_run: true, ..opts() }).unwrap();
-    assert_eq!(rep.changes.len(), 5);
+    assert_eq!(rep.changes.len(), 6);
     assert!(rep.needs_confirm);
     assert!(rep.steps.iter().any(|s| s.starts_with("systemd-run --unit=rp-confirm-base")));
     assert!(r.calls().is_empty(), "dry run must not execute anything");
@@ -73,7 +73,7 @@ fn apply_installs_backs_up_and_is_idempotent() {
     let disable = c2.iter().position(|c| c == "systemctl disable rp-firewall.service").unwrap();
     let reload = c2.iter().position(|c| c == "systemctl daemon-reload").unwrap();
     assert!(disable < reload, "unit must be disabled before its file is removed");
-    assert_eq!(rb.changes.len(), 5);
+    assert_eq!(rb.changes.len(), 6);
     assert_eq!(fs::read_to_string(&sshd).unwrap(), "original\n");
     assert!(!under_root(&root, NFT_PATH).exists());
     assert!(t2.load_state().modules["base"].rolled_back);
@@ -154,10 +154,15 @@ fn vpn_tailscale_installs_repo_before_packages_and_never_installs_check_file() {
     apply(&Vpn, &vpn_cfg("tailscale"), &t2, &o).unwrap();
     let calls = r2.calls();
     let key = calls.iter().position(|c| c.starts_with("curl -fsSL --proto =https")).unwrap();
-    let update = calls.iter().position(|c| c.ends_with("apt-get update")).unwrap();
+    let update = calls
+        .iter()
+        .position(|c| c.ends_with("apt-get -o DPkg::Lock::Timeout=120 update"))
+        .unwrap();
     let install = calls
         .iter()
-        .position(|c| c.contains("apt-get install") && c.ends_with("tailscale"))
+        .position(|c| {
+            c.contains("apt-get -o DPkg::Lock::Timeout=120 install") && c.ends_with("tailscale")
+        })
         .unwrap();
     assert!(key < update && update < install);
     assert!(under_root(&root, TS_LIST_PATH).exists());
@@ -175,7 +180,9 @@ fn vpn_failure_after_early_files_restores_them() {
     let r = RecordingRunner::default();
     let t = Target { root: root.clone(), runner: &r };
     apply(&Base, &cfg(), &t, &opts()).unwrap();
-    let r2 = RecordingRunner::failing(&["env DEBIAN_FRONTEND=noninteractive apt-get install"]);
+    let r2 = RecordingRunner::failing(&[
+        "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install",
+    ]);
     let t2 = Target { root: root.clone(), runner: &r2 };
     let o = ApplyOptions { install_packages: true, ..opts() };
     let err = apply(&Vpn, &vpn_cfg("tailscale"), &t2, &o).unwrap_err();
