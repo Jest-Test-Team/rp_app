@@ -53,6 +53,16 @@ Dry Run Changes Nothing On The Device
     Should Be Equal    ${before}    ${after}
     IF    not ${IN_USE}    As Root On Device    test ! -e /etc/rp/nftables.nft
 
+Installed Daemons Accept The Live Config
+    [Documentation]    Catches version drift: a config option added in a newer release
+    ...    (e.g. ap.block_dot) that an older, still-running daemon would reject on its
+    ...    next restart. Deploy all binaries together (install.sh does).
+    Skip If    not ${IN_USE}    fresh device: no live config yet
+    ${dns}=    As Root On Device    rp-dns --config ${CFG} check
+    Should Contain    ${dns}    dns config OK
+    As Root On Device    rp-agent --config ${CFG} snapshot health >/dev/null
+    As Root On Device    rpctl --config ${CFG} check
+
 Applied Modules Are Running (Device In Use)
     [Documentation]    Only meaningful against a configured device (RP_E2E_ALLOW_IN_USE=1).
     Skip If    not ${IN_USE}    fresh device: nothing applied yet
