@@ -75,6 +75,25 @@ A Change Is Preflighted On The Device Without Applying
     Should Contain    ${names}    api_lockout
     Should Contain    ${names}    capability
 
+Every Module's Change Preflights On The Real Hardware
+    [Documentation]    Nothing is applied: AP, firewall, VPN and DNS changes run their preflight
+    ...                (hardware capability, lockout, required modules) on this device.
+    ${tok}=    Session
+    FOR    ${module}    ${patch}    IN
+    ...    ap          {"ap.block_dot": true}
+    ...    firewall    {"firewall.rules": [{"name": "e2e no telnet", "from": "iot", "to": "wan", "proto": "tcp", "ports": [23], "action": "reject"}]}
+    ...    vpn         {"vpn.allow_lan": []}
+    ...    dns         {"dns.block_suspicious": false}
+        ${st}=    HTTPS    GET    /v1/status    token=${tok}
+        ${env}=    Envelope    {"op": "create_changeset", "module": "${module}", "expected_revision": ${st['body']['revision']}, "patch": ${patch}}
+        ${cs}=    HTTPS    POST    /v1/changesets    ${env}
+        Should Be Equal As Integers    ${cs['status']}    200    msg=${module}: ${cs}
+        ${env}=    Envelope    {"op": "preflight", "id": "${cs['body']['id']}"}
+        ${pf}=    HTTPS    POST    /v1/changesets/${cs['body']['id']}/preflight    ${env}
+        Should Be Equal As Integers    ${pf['status']}    200    msg=${module} preflight: ${pf}
+        Should Be Equal    ${pf['body']['status']}    preflighted
+    END
+
 An Unconfirmed Change Is Rolled Back By The Real Timer
     [Tags]    destructive
     Skip If    '${APPLY}' != '1'    set RP_E2E_APPLY=1 to apply on the device

@@ -701,6 +701,10 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 "v": 1, "host": host, "port": port, "device": dev, "secret": secret, "cert": cert,
             })
             .to_string();
+            if cli.json {
+                println!("{payload}");
+                return Ok(ExitCode::SUCCESS);
+            }
             if !no_qr {
                 let code = qrcode::QrCode::new(payload.as_bytes())?;
                 println!(

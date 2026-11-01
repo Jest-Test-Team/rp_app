@@ -263,7 +263,7 @@ pub fn live_tag(t: &Target) -> Option<String> {
 }
 
 /// Move plain-file binaries (installed by install.sh) into a release dir.
-fn adopt_plain_install(t: &Target) -> Result<Option<String>, UpdateError> {
+fn adopt_plain_install(t: &Target, installing: &str) -> Result<Option<String>, UpdateError> {
     let rpctl = p(t, &format!("{BIN_DIR}/rpctl"));
     let meta = match fs::symlink_metadata(&rpctl) {
         Ok(m) => m,
@@ -277,6 +277,8 @@ fn adopt_plain_install(t: &Target) -> Result<Option<String>, UpdateError> {
         .and_then(|o| o.split_whitespace().nth(1).map(|v| format!("v{v}")))
         .filter(|v| valid_tag(v))
         .unwrap_or_else(|| "v0.0.0-adopted".into());
+    // Never overwrite the release being installed with the old binaries.
+    let version = if version == installing { format!("{version}-previous") } else { version };
     let dir = p(t, &format!("{RELEASES}/{version}/bin"));
     fs::create_dir_all(&dir)?;
     for b in BINS {
@@ -357,7 +359,7 @@ pub fn install(t: &Target, o: &Options) -> Result<Report, UpdateError> {
     run(t, &[new_rpctl, "--config".into(), o.config.display().to_string(), "check".into()])
         .map_err(|e| UpdateError::SmokeTest(format!("rejects the current config: {e}")))?;
 
-    let previous = adopt_plain_install(t)?;
+    let previous = adopt_plain_install(t, &o.tag)?;
     rep.previous = previous.clone();
     let was_active: Vec<String> =
         SERVICES.iter().filter(|u| active(t, u)).map(|u| u.to_string()).collect();
@@ -684,6 +686,29 @@ mod tests {
         assert!(
             matches!(unpack(&path, &dir.join("out3")), Err(UpdateError::Archive(m)) if m.contains("links"))
         );
+    }
+
+    #[test]
+    fn reinstalling_the_running_version_keeps_new_and_old_binaries_apart() {
+        let rel = release("v0.1.0", true, BINS);
+        let root = device("same", &rel.pubkey);
+        let r = RecordingRunner {
+            responses: vec![(
+                format!("{}/usr/local/bin/rpctl --version", root.display()),
+                "rpctl 0.1.0\n".into(),
+            )],
+            ..RecordingRunner::default()
+        };
+        let t = Target { root: root.clone(), runner: &r };
+        let rep = install(&t, &opts(&rel, &root, "v0.1.0")).unwrap();
+        assert_eq!(rep.previous.as_deref(), Some("v0.1.0-previous"));
+        let new =
+            fs::read_to_string(under_root(&root, "/opt/rp/releases/v0.1.0/bin/rpctl")).unwrap();
+        assert!(new.contains("echo rpctl"), "the release's binary, not the old one");
+        let old =
+            fs::read_to_string(under_root(&root, "/opt/rp/releases/v0.1.0-previous/bin/rpctl"))
+                .unwrap();
+        assert_eq!(old, "old binary");
     }
 
     #[test]

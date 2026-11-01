@@ -146,6 +146,17 @@ Setup Stops At A Failed Preflight And Changes Nothing Else
     File Should Not Exist    ${root}/etc/rp/nftables.nft
     File Should Not Exist    ${root}/etc/rp/pairing.toml
 
+Pairing New Prints Machine Readable JSON With --json
+    ${root}=    Create Fake Root
+    Create File    ${root}/var/lib/rp-api/tls/cert.der    cert
+    ${out}=    Run Ok    ${RPCTL}    --json    --root    ${root}    --config    ${root}/none.toml
+    ...    pairing    new    --minutes    2    --host    rp-test.local
+    ${p}=    Evaluate    json.loads($out)    modules=json
+    Should Be Equal    ${p['host']}    rp-test.local
+    Length Should Be    ${p['secret']}    64
+    Length Should Be    ${p['device']}    32
+    Should Not Contain    ${out}    █
+
 *** Keywords ***
 Setup
     [Arguments]    ${root}    ${cfg}    ${rc}
