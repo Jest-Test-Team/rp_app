@@ -10,7 +10,7 @@
 |---|---|
 | 硬體 | Raspberry Pi 2 Model B Rev 1.1、Edimax EW-7811Un（2.4 GHz） |
 | 系統 | Raspberry Pi OS Lite 32-bit（trixie），以 SD 卡腳本燒錄、cloud-init 首次開機 |
-| 對外連線 | **eth0（100 Mbps）**：uplink 與管理介面；wlan0 仍連著原本的 Wi-Fi，預計改成 IoT AP |
+| 對外連線 | **eth0（100 Mbps）**：uplink 與管理介面；wlan0 是 IoT AP |
 | 已安裝 | `rpctl`、`rp-dns`、`rp-agent`、`rp-mcp`（以 `deploy/install.sh --from-source --host` 部署） |
 | 設定 | `/etc/rp/rp.toml`：`device.wan_if = "eth0"`、`lan_cidrs = ["<LAN_CIDR>"]` |
 
@@ -22,7 +22,7 @@
 | `dns` | ✅ 已套用並確認 | 上游 1.1.1.1／9.9.9.9／8.8.8.8；封鎖清單匯入 StevenBlack（76,744 網域，RSS 8.5 MB） |
 | `agent` | ✅ 已套用 | rp-agent、rp-mcp 只聽 127.0.0.1；agent token `0640 root:rp-mcp-clients` |
 | `vpn` | ⏸ 未套用 | 需要 Tailscale auth key，或 WireGuard 的公開 endpoint 與路由器轉 UDP |
-| `ap` | ⏸ 待套用 | Ethernet 已接上；preflight 只差 AP 密碼（`rpctl ap set-passphrase`），另需決定 IoT SSID |
+| `ap` | ✅ 已套用並確認 | wlan0 為 AP（2.4 GHz、channel 6、WPA2）；IoT 網段 10.77.0.0/24；hostapd `AP-ENABLED`；密碼 `/etc/rp/ap.psk`（0600） |
 
 ## 裝置健康（`get_system_health`）
 
@@ -67,11 +67,13 @@
 | GHA release dry-run（3 個 target、SHA256SUMS、SBOM） | ✅ 全綠 |
 | 切換到 eth0：`mgmt_if` carrier、base／dns／agent 無變更 | ✅ |
 | 經 sudo 的 SSH 防鎖死檢查（`ssh_lockout`）：允許清單內 PASS、清單外 FAIL | ✅ |
+| `apply ap`：新開 eth0 SSH、wlan0 為 AP、hostapd／dnsmasq active、裝置仍可上網、`rpctl confirm` | ✅ |
+| IoT client 實際連線、隔離（連不到 LAN）、吞吐 | ⏳ 需要一台 IoT 裝置連上 |
 
 ## 待辦（需要使用者）
 
 1. **改善供電**：換官方 5.1 V／2.5 A 供應器或更短更粗的 micro-USB 線（目前間歇性電壓不足）
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
-3. **IoT AP**：決定 SSID、設定密碼（`sudo rpctl ap set-passphrase`）→ `apply ap`；並在路由器為 eth0 設 DHCP 保留位址
+3. **IoT AP 實測**：用一台裝置連上 IoT SSID，確認能上網、連不到 LAN；並在路由器為 eth0 設 DHCP 保留位址
 4. **VPN**：提供 Tailscale auth key（或決定用 WireGuard）
 5. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）

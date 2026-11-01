@@ -131,6 +131,7 @@ Reading the physical card (`/dev/diskNs2`) needs sudo. Delete the decompressed i
 | After connecting Ethernet `ssh <PI_HOST>.local` sometimes times out | mDNS advertises both the eth0 and wlan0 addresses, and replies to the wlan0 address leave via eth0 | Connect to the eth0 address; once wlan0 becomes the AP only eth0 remains |
 | SSH says `Permission denied (publickey)` | `ssh.password_auth = false` is set and this computer has no authorized key | Use an authorized key (`ssh -i <KEY>`), or log in locally with a screen and keyboard, set `password_auth` back to `true`, and `rpctl apply base` |
 | preflight says `ssh_lockout … not running over SSH` while you are on SSH | sudo resets the environment and drops `SSH_CONNECTION` | rpctl now reads `SSH_CONNECTION` from its ancestor processes |
+| `apply ap` fails validation: `dnsmasq: cannot read {staged:…}` | Only arguments that were entirely a `{staged:…}` token were replaced, not `--conf-file={staged:…}` | Tokens are now replaced anywhere in an argument (fixed; nothing was changed when it failed) |
 | `install.sh --host` hangs at sudo | The remote has no TTY so sudo cannot prompt | Interactive runs use `ssh -t` |
 | `not valid!` in a plain list was taken as the domain `not` | Only the first word of a multi-word line was used | Non-hosts-format lines with several words are invalid (fixed in both rp-dns and `rpctl dns import`) |
 

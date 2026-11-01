@@ -131,6 +131,7 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 | 接上 Ethernet 後 `ssh <PI_HOST>.local` 偶爾逾時 | mDNS 同時回報 eth0 與 wlan0 兩個位址，連往 wlan0 位址的回應從 eth0 送出 | 改連 eth0 位址；wlan0 改成 AP 後就只剩 eth0 |
 | SSH 顯示 `Permission denied (publickey)` | 已設 `ssh.password_auth = false`，這台電腦沒有被授權的金鑰 | 用有授權的金鑰（`ssh -i <KEY>`）；或接螢幕鍵盤在本機把 `password_auth` 改回 `true` 後 `rpctl apply base` |
 | preflight 顯示 `ssh_lockout … not running over SSH`，但其實在 SSH 上 | sudo 重設環境變數，`SSH_CONNECTION` 不見了 | rpctl 改從上層 process 讀取 `SSH_CONNECTION` |
+| `apply ap` 驗證失敗：`dnsmasq: cannot read {staged:…}` | 只有「整個參數」是 `{staged:…}` 才會被替換，`--conf-file={staged:…}` 沒被替換 | 參數中的 token 一律替換（已修正；失敗時沒有任何變更） |
 | `install.sh --host` 卡在 sudo | 遠端沒有 TTY，sudo 無法詢問密碼 | 互動執行時改用 `ssh -t` |
 | 純文字清單的 `not valid!` 被當成網域 `not` | 一行多個字時只取第一個字 | 非 hosts 格式且有多個字的行視為無效（rp-dns 與 `rpctl dns import` 都已修正） |
 
