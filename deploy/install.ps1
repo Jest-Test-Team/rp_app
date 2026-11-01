@@ -15,6 +15,9 @@
     ./install.ps1 -Target pi@raspberrypi.local -Uninstall -Purge
     ./install.ps1 -Target pi@raspberrypi.local -Triple armv7-unknown-linux-gnueabihf -DryRun
 #>
+# Script-level parameters are read inside the helper functions below, which
+# PSScriptAnalyzer cannot follow, so it would report them as unused.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Used by functions in script scope')]
 [CmdletBinding()]
 param(
     # SSH destination, USER@HOST.
@@ -113,7 +116,7 @@ function Get-ReleaseArchive([string] $TargetTriple, [string] $WorkDir) {
     return $dest
 }
 
-function New-SourceArchive([string] $TargetTriple, [string] $WorkDir) {
+function Build-SourceArchive([string] $TargetTriple, [string] $WorkDir) {
     $src = Split-Path -Parent $PSScriptRoot
     foreach ($tool in 'cargo', 'cargo-zigbuild', 'zig', 'tar') {
         if (-not $DryRun -and -not (Get-Command $tool -ErrorAction SilentlyContinue)) {
@@ -179,7 +182,7 @@ try {
         if (-not (Test-Path -LiteralPath $Archive)) { throw "archive not found: $Archive" }
         (Resolve-Path -LiteralPath $Archive).Path
     } elseif ($FromSource) {
-        New-SourceArchive $Triple $work
+        Build-SourceArchive $Triple $work
     } else {
         Get-ReleaseArchive $Triple $work
     }
@@ -191,7 +194,7 @@ try {
     Invoke-Step "ssh $Target sudo bash /tmp/install.sh --archive $remotePkg --prefix $Prefix" {
         ssh -t $Target "sudo bash /tmp/install.sh --archive '$remotePkg' --prefix '$Prefix' && rm -f '$remotePkg' /tmp/install.sh"
     }
-    Write-Step 'done — next: ssh to the device and run: sudo rpctl preflight base'
+    Write-Step 'done - next: ssh to the device and run: sudo rpctl preflight base'
 }
 finally {
     Remove-Item -Recurse -Force -LiteralPath $work -ErrorAction SilentlyContinue
