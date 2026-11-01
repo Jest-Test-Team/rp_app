@@ -115,3 +115,7 @@ cloud-init status
 1. 裝置選 **Raspberry Pi 2**，作業系統選 **Raspberry Pi OS Lite (32-bit)**，儲存裝置選 SD 卡。
 2. 「編輯設定」：主機名稱、帳號密碼、Wi-Fi SSID／密碼、國家 `TW`；「服務」分頁勾選啟用 SSH（密碼登入）。
 3. 寫入後依步驟 6、7 開機與驗證。
+
+## 下一步：Edge Security Gateway
+
+能 SSH 登入後，把 gateway 部署到 Pi：見 [gateway.md](gateway.md)；目前進度見 [status.md](status.md)。

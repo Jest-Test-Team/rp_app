@@ -2,6 +2,8 @@
 
 所有腳本位於 `rp_app/scripts/`，以 bash 撰寫（`pi-diag.sh` 為 POSIX sh，在 Pi 上執行），並通過 `shellcheck`。
 
+這些是**燒錄與首次開機**用的腳本。Gateway 的工具以 Rust 撰寫（`rpctl`、`rp-dns`、`rp-agent`、`rp-mcp`），安裝程式是 `deploy/install.sh`／`deploy/install.ps1`，說明見 [gateway.md](gateway.md)。
+
 ## lib.sh
 
 共用函式，由其他腳本 `source`，不可直接執行。

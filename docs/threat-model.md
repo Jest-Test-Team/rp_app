@@ -20,6 +20,7 @@
 | 惡意 IoT 裝置 | 被隔離後換 IP 或沿用既有連線 | quarantine 依 IP 與 MAC；在 conntrack 接受既有連線之前（`mod_prefilter`）就丟棄 | `30_integration` quarantine 案例 |
 | 惡意 IoT 裝置 | 用 DoH／DoT 繞過 DNS 防火牆 | 記錄 853 埠連線（DoT／DoQ）；DoH 無法只靠 DNS 防護完全阻擋（已知限制） | `23_ap_cli` |
 | VPN 使用者（親友） | 進入家用 LAN／Homelab | forward 鏈阻擋 LAN、RFC1918、CGNAT、link-local、ULA、多播；僅 `allow_lan` 明確例外 | `30_integration` VPN 案例 |
+| 偷到 MCP 專用 SSH 金鑰的人 | 取得 shell、隧道進內網 | 金鑰在 `authorized_keys` 以 `restrict,command="rp-mcp --stdio"` 限制：其他指令不執行、無 pty、forwarding 被拒；stdio 預設只有 read | 實機驗證（[status.md](status.md)） |
 | 區網上的其他程式或瀏覽器 | 呼叫本機 MCP | 每個 client 一組 bearer token；拒絕任何帶 `Origin` 的請求（DNS rebinding） | `40_security` |
 | 區網上的其他程式 | 直接呼叫 agent | agent token 與 MCP token 是不同的；agent 只信任 rp-mcp | `40_security` |
 | 網路上的攻擊者 | HTTP 請求走私、超大請求 | 拒絕 chunked、限制 header 與 body 大小、逾時、限制連線數 | `40_security`、`rp-http` 單元測試 |

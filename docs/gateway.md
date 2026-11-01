@@ -4,6 +4,8 @@
 
 ## 1. 安裝
 
+> GitHub Release 發佈（推 tag）之前，預設的 release 下載會 404；請先用 `--from-source`。
+
 ### 在 Pi 上直接安裝
 
 ```bash
@@ -29,6 +31,9 @@ deploy/install.sh --host <USER>@<PI_HOST> --from-source   # 本機 cargo-zigbuil
 
 安裝程式只放 binary（`rpctl`、`rp-dns`、`rp-agent`、`rp-mcp`）與 `/etc/rp/rp.toml` 範例；不會改動網路。解除安裝：`--uninstall`（保留設定）或 `--uninstall --purge`。
 
+- `--host` 部署時，若在終端機執行，遠端 sudo 會用 `ssh -t` 詢問密碼
+- Mac 上直接執行（沒有 `--host`）會被拒絕：本機安裝只支援 Linux
+
 ## 2. 設定與套用
 
 編輯 `/etc/rp/rp.toml`（範例：`configs/rp.example.toml`）。每個模組都照同樣流程：
@@ -44,6 +49,10 @@ sudo rpctl rollback <module>
 ```
 
 建議順序：`base` → `dns` → `vpn` → （接好 Ethernet 後）`ap` → `agent`。
+
+只有 Wi-Fi、尚未接 Ethernet 時：設 `device.wan_if = "wlan0"`，`base`、`dns`、`agent` 都能用；`vpn` 可用但頻寬有限（同一個 2.4 GHz 無線電收送）；`ap` 會被拒絕。
+
+套件安裝會等待 dpkg 鎖最多 120 秒（例如 apt 每日更新正在跑）。
 
 ## 3. base
 
@@ -129,7 +138,7 @@ sudo systemctl restart rp-mcp
 
 連線方式：
 
-- Streamable HTTP：`http://<MCP_LISTEN>/mcp`，Header `Authorization: Bearer <TOKEN>`
+- Streamable HTTP：`http://<MCP_LISTEN>/mcp`，Header `Authorization: Bearer <TOKEN>`（預設只聽 127.0.0.1；base 防火牆也不會對外開放 9851）
 - stdio：先 `sudo usermod -aG rp-mcp-clients <USER>` 並重新登入，再用 `ssh <USER>@<PI_HOST> rp-mcp --stdio`（預設只有 read 能力；稽核寫到 `~/.local/state/rp-mcp/`）
 
 ### 接到 Claude Code（建議：受限制的專用金鑰）
