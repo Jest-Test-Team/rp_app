@@ -85,8 +85,9 @@ pub fn lookup(name: &str) -> Option<Box<dyn Module>> {
         "dns" => Some(Box::new(crate::dns::Dns)),
         "ap" => Some(Box::new(crate::ap::Ap)),
         "agent" => Some(Box::new(crate::agent::Agent)),
+        "api" => Some(Box::new(crate::api::Api)),
         _ => None,
     }
 }
 
-pub const MODULES: &[&str] = &["base", "vpn", "dns", "ap", "agent"];
+pub const MODULES: &[&str] = &["base", "vpn", "dns", "ap", "agent", "api"];

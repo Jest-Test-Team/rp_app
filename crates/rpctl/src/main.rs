@@ -124,6 +124,38 @@ enum Cmd {
     /// Store a named secret (ap_passphrase, tailscale_auth_key) root-only, from stdin.
     #[command(subcommand)]
     Secret(SecretCmd),
+    /// Pair the console app: open a one-time pairing code (QR).
+    #[command(subcommand)]
+    Pairing(PairingCmd),
+    /// Console admins (paired app installations).
+    #[command(subcommand)]
+    Admins(AdminsCmd),
+}
+
+#[derive(Subcommand)]
+enum PairingCmd {
+    /// Create a one-time pairing secret and show it as a QR code for the app.
+    New {
+        /// Minutes the code stays valid.
+        #[arg(long, default_value_t = 15)]
+        minutes: u32,
+        /// Host name or address the app should connect to (default: <hostname>.local).
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        no_qr: bool,
+    },
+    /// Close an open pairing code.
+    Close,
+}
+
+#[derive(Subcommand)]
+enum AdminsCmd {
+    List,
+    /// Revoke an admin (e.g. a lost phone).
+    Revoke {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -547,6 +579,67 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 println!("{n:<20} {}", if set { "set" } else { "not set" });
             }
         }
+        Cmd::Pairing(PairingCmd::New { minutes, host, no_qr }) => {
+            anyhow::ensure!((1..=1440).contains(minutes), "--minutes must be 1-1440");
+            let dev = rp_privd::device_id(&cli.root)?;
+            let cert = rp_privd::cert_sha256(&cli.root)
+                .context("rp-api has no TLS certificate yet: apply the api module first (sudo rpctl apply api)")?;
+            let secret = rp_policy::pairing::open(
+                &under_root(&cli.root, rp_privd::PAIRING),
+                rp_core::changeset::now(),
+                Some(i64::from(*minutes) * 60),
+            )?;
+            let cfg = rp_core::config::load(&cli.config).ok();
+            let port = cfg.and_then(|c| c.api).map(|a| a.listen.port()).unwrap_or(8443);
+            let host = host.clone().unwrap_or_else(|| {
+                let h = std::fs::read_to_string(under_root(&cli.root, "/etc/hostname"))
+                    .unwrap_or_default();
+                format!("{}.local", h.trim())
+            });
+            let payload = serde_json::json!({
+                "v": 1, "host": host, "port": port, "device": dev, "secret": secret, "cert": cert,
+            })
+            .to_string();
+            if !no_qr {
+                let code = qrcode::QrCode::new(payload.as_bytes())?;
+                println!(
+                    "{}",
+                    code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build()
+                );
+            }
+            println!("Scan with the RP Security app (Add device > Pair with code), or enter:");
+            println!("  host   {host}:{port}");
+            println!("  code   {secret}");
+            println!("  device {dev}");
+            println!(
+                "Valid for {minutes} minute(s), one use. Close early: sudo rpctl pairing close"
+            );
+        }
+        Cmd::Pairing(PairingCmd::Close) => {
+            let p = under_root(&cli.root, rp_privd::PAIRING);
+            if p.exists() {
+                std::fs::remove_file(&p)?;
+                println!("pairing closed");
+            } else {
+                println!("pairing was not open");
+            }
+        }
+        Cmd::Admins(c) => {
+            let p = under_root(&cli.root, rp_privd::ADMINS);
+            let mut admins = rp_policy::admin::Admins::load(&p).map_err(anyhow::Error::msg)?;
+            match c {
+                AdminsCmd::List => {
+                    for a in admins.active() {
+                        println!("{}  {:<24} added {}", a.id, a.name, a.added_at);
+                    }
+                }
+                AdminsCmd::Revoke { id } => {
+                    anyhow::ensure!(admins.revoke(id), "no active admin '{id}'");
+                    admins.save(&p)?;
+                    println!("revoked {id}");
+                }
+            }
+        }
         Cmd::Mcp(c) => return mcp_cmd(cli, c),
         Cmd::Dns(c) => return dns_cmd(cli, c, runner),
         Cmd::Actions => {
@@ -617,6 +710,7 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             if let Some(m) = &cfg.mcp {
                 logs.push(under_root(&cli.root, &m.audit_log));
             }
+            logs.push(under_root(&cli.root, rp_privd::AUDIT));
             let mut bad = false;
             for l in logs {
                 if !l.exists() {

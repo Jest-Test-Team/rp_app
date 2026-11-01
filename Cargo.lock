@@ -895,14 +895,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "rp-privd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ed25519-dalek",
+ "hex",
+ "rp-agent",
+ "rp-core",
+ "rp-policy",
+ "rp-schema",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "rp-probe"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ed25519-dalek",
+ "hex",
  "hickory-proto",
  "regex",
  "rp-http",
+ "rp-policy",
+ "rp-privd",
  "serde_json",
  "tokio",
 ]
@@ -938,6 +960,7 @@ dependencies = [
  "rp-core",
  "rp-dns",
  "rp-policy",
+ "rp-privd",
  "rp-schema",
  "rpassword",
  "serde",

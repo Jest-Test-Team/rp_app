@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod ap;
+pub mod api;
 pub mod apply;
 pub mod base;
 pub mod capabilities;

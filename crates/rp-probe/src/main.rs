@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+mod console;
 mod dnsprobe;
 mod secrets;
 mod tput;
@@ -23,6 +24,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Console API helpers (signing, pairing proofs, rp-privd requests).
+    #[command(subcommand)]
+    Console(console::ConsoleCmd),
     /// Send one DNS query and print {rcode, answers, ms} as JSON.
     DnsQuery {
         #[arg(long)]
@@ -112,6 +116,13 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Console(c) => match console::run(c) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Mcp { addr, path, token_env, method, params, notify, header, raw } => {
             let token = token_env.and_then(|v| std::env::var(v).ok());
             let params: serde_json::Value = match serde_json::from_str(&params) {
