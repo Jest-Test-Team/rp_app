@@ -61,6 +61,7 @@
 | Restricted key: no other commands, no pty, forwarding refused | ✅ |
 | Network namespace integration tests (Pi kernel) | 16 / 16 |
 | e2e (non-destructive) | 6 / 6 |
+| e2e (device in use, `RP_E2E_ALLOW_IN_USE=1`, all five modules applied) | 7 passed, 3 destructive cases skipped by design (real apply / re-apply / rollback verified separately with ap) |
 | `ssh.password_auth = false`: new key session works, password-only login refused (`Permission denied (publickey)`), confirmed with `sshd -T` | ✅ |
 | mac80211_hwsim AP tests (Pi kernel) | 5 / 5 |
 | CI (Linux, Windows ps1, hwsim, root netns, armv7 / aarch64 cross build) | ✅ all green |

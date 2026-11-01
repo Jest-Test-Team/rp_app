@@ -61,6 +61,7 @@
 | 受限金鑰：不能執行其他指令、無 pty、forwarding 被拒 | ✅ |
 | network namespace 整合測試（Pi kernel） | 16／16 |
 | e2e（非破壞性） | 6／6 |
+| e2e（已上線裝置，`RP_E2E_ALLOW_IN_USE=1`，五個模組都已套用） | 7 過、3 個破壞性案例依設計跳過（實機 apply／re-apply／rollback 已另以 ap 驗證） |
 | `ssh.password_auth = false`：新金鑰連線成功、純密碼連線被拒（`Permission denied (publickey)`）、`sshd -T` 確認 | ✅ |
 | mac80211_hwsim AP 測試（Pi kernel） | 5／5 |
 | CI（Linux、Windows ps1、hwsim、root netns、armv7／aarch64 cross build） | ✅ 全綠 |
