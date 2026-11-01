@@ -30,6 +30,16 @@ pub const SYSCTL_PATH: &str = "/etc/sysctl.d/91-rp-ap.conf";
 
 pub struct Ap;
 
+/// Rollback helper: reconnect each Wi-Fi device to its saved network, reloading
+/// the device's driver module once if the first attempt fails.
+pub const WIFI_RECONNECT: &str = r#"for d in $(nmcli -g DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1}'); do
+  nmcli --wait 40 device connect "$d" >/dev/null 2>&1 && continue
+  m=$(basename "$(readlink -f "/sys/class/net/$d/device/driver/module")" 2>/dev/null)
+  [ -n "$m" ] && [ "$m" != module ] || continue
+  modprobe -r "$m" && sleep 2 && modprobe "$m" && sleep 10
+  nmcli --wait 40 device connect "$d" >/dev/null 2>&1 || true
+done"#;
+
 fn ap(cfg: &Config) -> &rp_schema::Ap {
     cfg.ap.as_ref().expect("ap config")
 }
@@ -324,6 +334,9 @@ impl Module for Ap {
             // Give the interface back; NM reconnects to the saved network.
             Step::cmd(&["nmcli", "general", "reload", "conf"]),
             Step::best_effort(&["sh", "-c", "for d in $(nmcli -g DEVICE,TYPE device | awk -F: '$2==\"wifi\"{print $1}'); do nmcli device set \"$d\" managed yes; done"]),
+            // Some USB adapters (seen with rtl8192cu) cannot associate again after AP
+            // mode until their driver is reloaded: try once, reset the driver, retry.
+            Step::best_effort(&["sh", "-c", WIFI_RECONNECT]),
         ]
     }
 
@@ -456,6 +469,10 @@ mod tests {
         let off = undo.iter().position(|s| s == "sysctl -w net.ipv4.ip_forward=0").unwrap();
         let reread = undo.iter().position(|s| s == "sysctl --system").unwrap();
         assert!(off < reread, "re-read sysctl.d after resetting so a vpn module keeps forwarding");
+        let reconnect = Ap.post_rollback();
+        let last = reconnect.last().unwrap();
+        assert!(last.best_effort && last.argv[2] == WIFI_RECONNECT);
+        assert!(WIFI_RECONNECT.contains("modprobe -r \"$m\" && sleep 2 && modprobe \"$m\""));
         assert_eq!(f.iter().filter(|x| x.staging_only).count(), 1);
         assert!(
             f.iter().all(|x| !x.content.contains("00:00:00:00:00:00")),
