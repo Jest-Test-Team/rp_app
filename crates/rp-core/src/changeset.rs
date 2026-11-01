@@ -571,6 +571,19 @@ pub fn preflight(
             Check::new("capability", Status::Fail, format!("not supported here: {}", r.join(", ")))
         });
     }
+    let state = t.load_state();
+    for dep in m.requires() {
+        let ok = state.modules.get(*dep).is_some_and(|s| !s.rolled_back);
+        checks.push(if ok {
+            Check::new(&format!("requires:{dep}"), Status::Pass, format!("{dep} is applied"))
+        } else {
+            Check::new(
+                &format!("requires:{dep}"),
+                Status::Fail,
+                format!("apply the {dep} module first"),
+            )
+        });
+    }
     if let Some(p) = peer {
         let ok = mgmt_networks(&cfg).iter().any(|n| n.contains(&p));
         checks.push(if ok {

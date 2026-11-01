@@ -361,6 +361,10 @@ fn mcp_clients_get_a_token_once() {
     );
     assert!(r.ok, "{r:?}");
     let token = r.result["token"].as_str().unwrap().to_string();
+    let list = d.call(Request::McpClients {});
+    assert_eq!(list.result["clients"][0]["name"], "claude");
+    assert_eq!(list.result["clients"][0]["capabilities"], json!(["read"]));
+    assert!(!list.result.to_string().contains("sha256"), "hashes stay on the device");
     let file = fs::read_to_string(under_root(&d.root, "/etc/rp/mcp-clients.toml")).unwrap();
     assert!(!file.contains(&token), "only the hash is stored");
     assert!(!d.audit_text().contains(&token));

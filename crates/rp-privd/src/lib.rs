@@ -48,6 +48,8 @@ pub enum Request {
         id: String,
     },
     ListAdmins {},
+    /// MCP client names and capabilities (never token hashes).
+    McpClients {},
     Pair {
         name: String,
         public_key: String,
@@ -323,6 +325,24 @@ pub fn handle(ctx: &Ctx, req: Request) -> Response {
                 .map(|a| json!({"id": a.id, "name": a.name, "added_at": a.added_at}))
                 .collect();
             Response::ok(Value::Array(v))
+        }
+        Request::McpClients {} => {
+            let Ok(c) = rp_core::config::load(&ctx.config) else {
+                return Response::err("invalid", "config does not load");
+            };
+            if c.mcp.is_none() {
+                return Response::ok(json!({"configured": false, "clients": []}));
+            }
+            match rp_agent::admin_ops::load_clients(&c, &ctx.root) {
+                Ok(cl) => Response::ok(json!({
+                    "configured": true,
+                    "clients": cl.clients.iter().map(|x| json!({
+                        "name": x.name,
+                        "capabilities": x.capabilities.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
+                })),
+                Err(e) => Response::err("internal", e),
+            }
         }
         Request::Pair { name, public_key, client_nonce, proof } => {
             pair(ctx, &dev, &name, &public_key, &client_nonce, &proof)

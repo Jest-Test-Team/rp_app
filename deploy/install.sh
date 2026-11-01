@@ -26,7 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BINS=(rpctl rp-dns rp-agent rp-mcp rp-privd)
+BINS=(rpctl rp-dns rp-agent rp-mcp rp-privd rp-api)
 
 mode=release tag=latest host="" prefix=/usr/local root="" archive="" target=""
 repo="${RP_REPO:-Jest-Test-Team/rp_app}" base_url="${RP_BASE_URL:-}"

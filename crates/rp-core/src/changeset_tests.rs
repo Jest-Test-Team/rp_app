@@ -294,3 +294,19 @@ fn expiry_waits_for_the_lock_instead_of_giving_up() {
     assert_eq!(h.join().unwrap().unwrap(), CsStatus::RolledBack);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn missing_prerequisite_module_fails_preflight_cleanly() {
+    let (root, config) = fake_root("requires");
+    fs::write(&config, format!("{CFG}[dns]\nupstreams = [\"198.51.100.53:53\"]\n")).unwrap();
+    let r = runner();
+    let t = Target { root: root.clone(), runner: &r };
+    let rev = revision(&t, &config).unwrap();
+    let cs =
+        create(&t, &config, "dns", rev, patch(json!({"dns.block": ["ads.example"]})), "a").unwrap();
+    let cs = preflight(&t, &config, &cs.id, None).unwrap();
+    assert_eq!(cs.status, CsStatus::Created);
+    let c = cs.checks.iter().find(|c| c.name == "requires:base").unwrap();
+    assert_eq!(c.status, Status::Fail);
+    let _ = fs::remove_dir_all(&root);
+}

@@ -121,7 +121,12 @@ pub fn gather(cfg: &Config, t: &Target) -> Facts {
             .is_some_and(|p| crate::ap::valid_passphrase(&p));
         f.ap_capable =
             run_stdout(t, &["nmcli", "-g", "WIFI-PROPERTIES.AP", "device", "show", &a.interface])
-                .map(|o| o.trim() == "yes");
+                .map(|o| o.trim() == "yes")
+                // No NetworkManager: ask the driver (same logic as capabilities).
+                .or_else(|| {
+                    let hw = crate::capabilities::gather(t, Some(cfg), None);
+                    hw.ifaces.into_iter().find(|i| i.name == a.interface).and_then(|i| i.ap_mode)
+                });
     }
     f.authorized_keys = key_files.iter().any(|p| {
         fs::read_to_string(p)

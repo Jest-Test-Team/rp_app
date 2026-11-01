@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 
 mod console;
 mod dnsprobe;
+mod https;
 mod secrets;
 mod tput;
 
@@ -27,6 +28,30 @@ enum Cmd {
     /// Console API helpers (signing, pairing proofs, rp-privd requests).
     #[command(subcommand)]
     Console(console::ConsoleCmd),
+    /// One HTTPS request with optional certificate pinning; prints
+    /// {"status", "headers", "body", "cert_sha256"} (or "tls_error").
+    Https {
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        #[arg(long)]
+        path: String,
+        /// Expected SHA-256 of the server certificate (hex).
+        #[arg(long)]
+        pin: Option<String>,
+        /// Environment variable holding a bearer token.
+        #[arg(long)]
+        token_env: Option<String>,
+        #[arg(long)]
+        body: Option<String>,
+        /// Read the body from this file instead.
+        #[arg(long)]
+        body_file: Option<PathBuf>,
+        /// Extra raw header line (repeatable).
+        #[arg(long)]
+        header: Vec<String>,
+    },
     /// Send one DNS query and print {rcode, answers, ms} as JSON.
     DnsQuery {
         #[arg(long)]
@@ -116,6 +141,24 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Https { addr, method, path, pin, token_env, body, body_file, header } => {
+            let body = match body_file {
+                Some(f) => std::fs::read_to_string(f).ok(),
+                None => body,
+            };
+            let token = token_env.and_then(|v| std::env::var(v).ok());
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            match rt.block_on(https::request(&addr, &method, &path, pin, token, body, &header)) {
+                Ok(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Cmd::Console(c) => match console::run(c) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
