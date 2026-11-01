@@ -16,6 +16,8 @@ Test Tags         e2e    requires-pi
 ${TRIPLE}         armv7-unknown-linux-gnueabihf
 ${REMOTE}         /tmp/rp-e2e
 ${APPLY}          %{RP_E2E_APPLY=0}
+${ALLOW_IN_USE}   %{RP_E2E_ALLOW_IN_USE=0}
+${IN_USE}         ${False}
 ${CFG}            /etc/rp/rp.toml
 
 *** Test Cases ***
@@ -44,10 +46,21 @@ Preflight Passes For Base Over The Current Session
 Dry Run Changes Nothing On The Device
     ${before}=    As Root On Device    nft list ruleset | sha256sum
     ${out}=    As Root On Device    rpctl --config ${CFG} apply base --dry-run
-    Should Contain    ${out}    dry run:
+    Should Match Regexp    ${out}    dry run:|already up to date
     ${after}=    As Root On Device    nft list ruleset | sha256sum
     Should Be Equal    ${before}    ${after}
-    As Root On Device    test ! -e /etc/rp/nftables.nft
+    IF    not ${IN_USE}    As Root On Device    test ! -e /etc/rp/nftables.nft
+
+Applied Modules Are Running (Device In Use)
+    [Documentation]    Only meaningful against a configured device (RP_E2E_ALLOW_IN_USE=1).
+    Skip If    not ${IN_USE}    fresh device: nothing applied yet
+    ${s}=    As Root On Device    rpctl --config ${CFG} status
+    FOR    ${line}    IN    @{{ [l for l in $s.splitlines() if 'applied=true' in l] }}
+        Should Contain    ${line}    confirmed=true
+    END
+    As Root On Device    systemctl is-active --quiet rp-firewall
+    As Root On Device    nft list chain inet rp input | grep -q 'policy drop'
+    As Root On Device    rpctl audit verify
 
 Apply Confirm And Rollback Base Keeps SSH Working
     [Tags]    destructive
@@ -104,9 +117,18 @@ WireGuard Exit Node Applies Forwards And Rolls Back Cleanly
 *** Keywords ***
 Require Apply
     Skip If    '${APPLY}' != '1'    set RP_E2E_APPLY=1 to run state-changing tests
+    Skip If    ${IN_USE}    refusing state-changing tests on a device that is in use
 
 Prepare Device
     Open Device Connection
+    # Never install over / tear down a configured device: teardown purges /etc/rp.
+    ${rc}=    Execute Command    test -e /etc/rp/rp.toml    return_stdout=False    return_rc=True
+    IF    ${rc} == 0
+        Skip If    '${ALLOW_IN_USE}' != '1'
+        ...    device already has /etc/rp/rp.toml (in use); set RP_E2E_ALLOW_IN_USE=1 for read-only checks
+        Set Suite Variable    ${IN_USE}    ${True}
+        RETURN
+    END
     ${pkg}=    New Temp Dir
     Run Ok    bash    ${INSTALL_SH}    --package-only    ${pkg}    --target    ${TRIPLE}
     On Device    rm -rf ${REMOTE} && mkdir -p ${REMOTE}
@@ -126,6 +148,10 @@ Prepare Device
     Set Suite Variable    ${E2E_IFACE}    ${iface}
 
 Clean Up Device
+    IF    ${IN_USE}
+        Close All Connections
+        RETURN
+    END
     Run Keyword And Ignore Error    As Root On Device    rpctl --config ${CFG} rollback vpn
     Run Keyword And Ignore Error    As Root On Device    rpctl --config ${CFG} rollback base
     Run Keyword And Ignore Error    As Root On Device    bash ${REMOTE}/install.sh --uninstall --purge
