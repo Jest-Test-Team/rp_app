@@ -22,7 +22,7 @@
 | `dns` | ✅ Applied and confirmed | Upstreams 1.1.1.1 / 9.9.9.9 / 8.8.8.8; StevenBlack blocklist imported (76,744 domains, RSS 8.5 MB) |
 | `agent` | ✅ Applied | rp-agent and rp-mcp listen on 127.0.0.1 only; agent token `0640 root:rp-mcp-clients` |
 | `vpn` | ⏸ Not applied | Needs a Tailscale auth key, or a public WireGuard endpoint with UDP forwarded on the router |
-| `ap` | ✅ Applied and confirmed | wlan0 is the AP (2.4 GHz, channel 6, WPA2); IoT subnet 10.77.0.0/24; hostapd `AP-ENABLED`; passphrase in `/etc/rp/ap.psk` (0600) |
+| `ap` | ✅ Applied and confirmed | wlan0 is the AP (2.4 GHz, channel 6, WPA2); IoT subnet 10.77.0.0/24; `block_dot = true` (DoT / DoQ rejected); passphrase in `/etc/rp/ap.psk` (0600) |
 
 ## Device health (`get_system_health`)
 
@@ -73,13 +73,15 @@
 | netns integration tests after the fix (Pi kernel) | 16 / 16 (with the old rpctl 4 / 8 AP tests fail, proving the tests now catch it) |
 | IoT client internet access (after the fix) | ✅ websites load; conntrack: 51 flows to the internet, 3 to the gateway |
 | IoT client isolation: router admin page | ✅ fails (dropped); 0 conntrack flows to any private / LAN address |
-| IoT client DoT (853) | ⚠️ the phone's "Private DNS" uses DoT and bypasses rp-dns; logged only (`rp-ap-dot`), not blocked |
+| IoT client DoT (853) | ✅ `block_dot = true`: TCP / UDP 853 rejected (netns test: reachable by default, refused when enabled, web unaffected) |
+| `rpctl rollback ap` (apply → re-apply with a change → rollback) | ✅ every AP file, firewall rule and forwarding removed; wlan0 rejoins the original Wi-Fi by itself (reloading the driver if needed) |
+| 24-hour AP stability | 🔄 recording: one sample every 5 minutes in `/var/lib/rp/ap/soak.log` (stops after 288 samples; a reboot ends it) |
 | AP throughput | ⏳ not measured |
 
 ## To-dos (need the user)
 
 1. **Fix the power supply**: use the official 5.1 V / 2.5 A supply or a shorter, thicker micro-USB cable (intermittent under-voltage now)
 2. **Point the router's DHCP DNS at this device**, keeping a public DNS server as the second entry (fail-open)
-3. **Test the IoT AP**: join a device to the IoT SSID and check it gets internet but cannot reach the LAN; also add a DHCP reservation for eth0 on the router
+3. **IoT AP**: keep at least 3 devices joined (24-hour stability test) and run a speed test on one of them (throughput); also add a DHCP reservation for eth0 on the router
 4. **VPN**: provide a Tailscale auth key (or decide on WireGuard)
 5. **Push tag `v0.1.0`** → an official GitHub Release (after which `install.sh`'s default release download works)

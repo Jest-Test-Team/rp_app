@@ -22,7 +22,7 @@
 | `dns` | ✅ 已套用並確認 | 上游 1.1.1.1／9.9.9.9／8.8.8.8；封鎖清單匯入 StevenBlack（76,744 網域，RSS 8.5 MB） |
 | `agent` | ✅ 已套用 | rp-agent、rp-mcp 只聽 127.0.0.1；agent token `0640 root:rp-mcp-clients` |
 | `vpn` | ⏸ 未套用 | 需要 Tailscale auth key，或 WireGuard 的公開 endpoint 與路由器轉 UDP |
-| `ap` | ✅ 已套用並確認 | wlan0 為 AP（2.4 GHz、channel 6、WPA2）；IoT 網段 10.77.0.0/24；hostapd `AP-ENABLED`；密碼 `/etc/rp/ap.psk`（0600） |
+| `ap` | ✅ 已套用並確認 | wlan0 為 AP（2.4 GHz、channel 6、WPA2）；IoT 網段 10.77.0.0/24；`block_dot = true`（拒絕 DoT／DoQ）；密碼 `/etc/rp/ap.psk`（0600） |
 
 ## 裝置健康（`get_system_health`）
 
@@ -73,13 +73,15 @@
 | 修正後 netns 整合測試（Pi kernel） | 16／16（舊版 rpctl：AP 測試 4／8 失敗，證明測試能抓到此問題） |
 | IoT client 上網（修正後） | ✅ 網站可開；conntrack：51 條連線到公網、3 條到 gateway |
 | IoT client 隔離：連路由器管理頁 | ✅ 失敗（被丟棄）；conntrack 中 0 條連到私有／LAN 位址 |
-| IoT client 的 DoT（853） | ⚠️ 手機的「私人 DNS」走 DoT 繞過 rp-dns，只有記錄（`rp-ap-dot`），未阻擋 |
+| IoT client 的 DoT（853） | ✅ `block_dot = true`：TCP／UDP 853 被 reject（netns 測試：預設可連、開啟後拒絕、網頁不受影響） |
+| `rpctl rollback ap`（套用 → 修改後重新套用 → rollback） | ✅ 所有 AP 檔案、防火牆規則、forwarding 都移除；wlan0 自動重新連回原本的 Wi-Fi（必要時自動重載驅動） |
+| 24 小時 AP 穩定性 | 🔄 記錄中：每 5 分鐘一筆，寫到 `/var/lib/rp/ap/soak.log`（自動在 288 筆後停止；重開機會中止） |
 | AP 吞吐 | ⏳ 未量測 |
 
 ## 待辦（需要使用者）
 
 1. **改善供電**：換官方 5.1 V／2.5 A 供應器或更短更粗的 micro-USB 線（目前間歇性電壓不足）
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
-3. **IoT AP 實測**：用一台裝置連上 IoT SSID，確認能上網、連不到 LAN；並在路由器為 eth0 設 DHCP 保留位址
+3. **IoT AP**：讓至少 3 台裝置連上（24 小時穩定性測試）、用其中一台跑測速（吞吐量測）；並在路由器為 eth0 設 DHCP 保留位址
 4. **VPN**：提供 Tailscale auth key（或決定用 WireGuard）
 5. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）

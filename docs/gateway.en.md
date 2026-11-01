@@ -47,7 +47,7 @@ sudo rpctl apply <module> --dry-run   # show the diff and the commands that woul
 sudo rpctl apply <module>
 sudo rpctl confirm                    # firewall-type changes: confirm in time or they roll back automatically
 sudo rpctl status
-sudo rpctl rollback <module>
+sudo rpctl rollback <module>          # remove the module: back to before its first apply (the dead-man timer undoes only the latest apply)
 ```
 
 Suggested order: `base` → `dns` → `vpn` → (after Ethernet is connected) `ap` → `agent`.
@@ -136,7 +136,7 @@ block_dot = false            # true: reject DNS-over-TLS / QUIC (853) from IoT c
 ```bash
 sudo rpctl ap set-passphrase     # no echo; stored 0600; never appears in configs or backups
 sudo rpctl apply ap
-sudo rpctl rollback ap           # hand wlan0 back to NetworkManager and rejoin the original Wi-Fi
+sudo rpctl rollback ap           # remove the AP (back to before its first apply), hand wlan0 to NetworkManager, rejoin the original Wi-Fi
 ```
 
 ## 7. Agent and MCP

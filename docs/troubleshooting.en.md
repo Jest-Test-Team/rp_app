@@ -133,6 +133,8 @@ Reading the physical card (`/dev/diskNs2`) needs sudo. Delete the decompressed i
 | preflight says `ssh_lockout … not running over SSH` while you are on SSH | sudo resets the environment and drops `SSH_CONNECTION` | rpctl now reads `SSH_CONNECTION` from its ancestor processes |
 | `apply ap` fails validation: `dnsmasq: cannot read {staged:…}` | Only arguments that were entirely a `{staged:…}` token were replaced, not `--conf-file={staged:…}` | Tokens are now replaced anywhere in an argument (fixed; nothing was changed when it failed) |
 | IoT clients get an address and DNS but no internet at all | The ap module did not enable IPv4 forwarding (the netns tests enabled it themselves, so they missed it) | ap now writes `/etc/sysctl.d/91-rp-ap.conf`; check that `cat /proc/sys/net/ipv4/ip_forward` is 1 |
+| After `rpctl rollback ap` the AP files remain and wlan0 stays unmanaged | Rollback restored only the latest apply's backup, so a re-applied module went back to its previous version instead of being removed | Each module keeps a pre-module base backup; manual rollback always restores it, while the dead-man timer undoes only the latest apply |
+| After an AP rollback wlan0 will not rejoin Wi-Fi (`association took too long`) | rtl8192cu needs its driver reloaded after leaving AP mode | Rollback asks NM to connect first and reloads that adapter's driver only if it fails, then retries |
 | `install.sh --host` hangs at sudo | The remote has no TTY so sudo cannot prompt | Interactive runs use `ssh -t` |
 | `not valid!` in a plain list was taken as the domain `not` | Only the first word of a multi-word line was used | Non-hosts-format lines with several words are invalid (fixed in both rp-dns and `rpctl dns import`) |
 

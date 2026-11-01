@@ -47,7 +47,7 @@ sudo rpctl apply <module> --dry-run   # 顯示 diff 與將執行的指令
 sudo rpctl apply <module>
 sudo rpctl confirm                    # 防火牆類變更：在時限內確認，否則自動 rollback
 sudo rpctl status
-sudo rpctl rollback <module>
+sudo rpctl rollback <module>          # 移除模組：還原到第一次套用前（dead-man 計時器只撤銷最後一次套用）
 ```
 
 建議順序：`base` → `dns` → `vpn` → （接好 Ethernet 後）`ap` → `agent`。
@@ -136,7 +136,7 @@ block_dot = false            # true：拒絕 IoT client 的 DNS-over-TLS／QUIC�
 ```bash
 sudo rpctl ap set-passphrase     # 不回顯；存成 0600，從不出現在設定或備份中
 sudo rpctl apply ap
-sudo rpctl rollback ap           # 交還 wlan0 給 NetworkManager，重新連回原本的 Wi-Fi
+sudo rpctl rollback ap           # 移除 AP（還原到第一次套用前），交還 wlan0 給 NetworkManager 並重新連回原本的 Wi-Fi
 ```
 
 ## 7. Agent 與 MCP
