@@ -214,15 +214,25 @@ fn missing_packages(module: &dyn Module, cfg: &Config, t: &Target) -> Vec<&'stat
 }
 
 fn substitute_staged(step: &Step, staging: &Path) -> Step {
-    let argv = step
-        .argv
-        .iter()
-        .map(|a| match a.strip_prefix("{staged:").and_then(|r| r.strip_suffix('}')) {
-            Some(p) => under_root(staging, p).display().to_string(),
-            None => a.clone(),
-        })
-        .collect();
+    let argv = step.argv.iter().map(|a| substitute_staged_arg(a, staging)).collect();
     Step { argv, best_effort: step.best_effort }
+}
+
+/// Replace every `{staged:/abs/path}` token in one argument, including tokens
+/// embedded in a larger argument such as `--conf-file={staged:/etc/x.conf}`.
+fn substitute_staged_arg(arg: &str, staging: &Path) -> String {
+    const OPEN: &str = "{staged:";
+    let mut out = String::new();
+    let mut rest = arg;
+    while let Some(i) = rest.find(OPEN) {
+        let after = &rest[i + OPEN.len()..];
+        let Some(j) = after.find('}') else { break };
+        out.push_str(&rest[..i]);
+        out.push_str(&under_root(staging, &after[..j]).display().to_string());
+        rest = &after[j + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn new_backup_id() -> String {
@@ -484,4 +494,24 @@ fn file_mode(p: &Path) -> Option<u32> {
 #[cfg(not(unix))]
 fn file_mode(_p: &Path) -> Option<u32> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staged_tokens_are_replaced_whole_or_embedded() {
+        let st = Path::new("/var/lib/rp/staging/ap");
+        assert_eq!(
+            substitute_staged_arg("{staged:/etc/rp/x.nft}", st),
+            "/var/lib/rp/staging/ap/etc/rp/x.nft"
+        );
+        assert_eq!(
+            substitute_staged_arg("--conf-file={staged:/etc/rp/ap/dnsmasq.conf}", st),
+            "--conf-file=/var/lib/rp/staging/ap/etc/rp/ap/dnsmasq.conf"
+        );
+        assert_eq!(substitute_staged_arg("plain", st), "plain");
+        assert_eq!(substitute_staged_arg("{staged:unterminated", st), "{staged:unterminated");
+    }
 }
