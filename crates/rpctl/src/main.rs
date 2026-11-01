@@ -130,6 +130,77 @@ enum Cmd {
     /// Console admins (paired app installations).
     #[command(subcommand)]
     Admins(AdminsCmd),
+    /// Write a first config for the network this device is on.
+    Init {
+        /// Detect the uplink and LAN (required: say you mean it).
+        #[arg(long)]
+        auto: bool,
+        /// Replace an existing config (a backup is kept).
+        #[arg(long)]
+        force: bool,
+        /// Print instead of writing.
+        #[arg(long)]
+        print: bool,
+    },
+    /// Prepare a freshly flashed SD card (boot partition).
+    #[command(subcommand)]
+    Bootfs(BootfsCmd),
+    /// Get this device ready for the console app (idempotent): write a config
+    /// if there is none, enable [agent] and [api], apply base, agent and api,
+    /// and open pairing when no app is paired yet.
+    Setup {
+        /// Minutes the pairing code stays valid.
+        #[arg(long, default_value_t = 30)]
+        pairing_minutes: u32,
+        /// Do not open pairing (a secret was placed on the SD card).
+        #[arg(long)]
+        no_pairing: bool,
+        /// Do not apt-get install missing packages.
+        #[arg(long)]
+        no_packages: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // parsed once per process
+enum BootfsCmd {
+    /// Print the files for a provisioning spec (JSON) as {"name": "content"} —
+    /// deterministic, for golden tests shared with the app.
+    #[command(hide = true)]
+    Render {
+        #[arg(long)]
+        spec: PathBuf,
+    },
+    /// Write first-boot files: the device installs rp and waits to be paired.
+    Write {
+        /// Mounted boot partition (contains cmdline.txt and meta-data).
+        #[arg(long)]
+        dir: PathBuf,
+        /// Release to install, e.g. v0.2.0.
+        #[arg(long)]
+        tag: String,
+        /// SHA-256 of that release's install.sh (see its SHA256SUMS).
+        #[arg(long)]
+        install_sha256: String,
+        #[arg(long, default_value = "rp-security")]
+        hostname: String,
+        #[arg(long, default_value = rp_core::provision::DEFAULT_REPO)]
+        repo: String,
+        /// Create this admin user (key login only).
+        #[arg(long, requires = "ssh_key_file")]
+        admin_user: Option<String>,
+        #[arg(long, requires = "admin_user")]
+        ssh_key_file: Option<PathBuf>,
+        /// Join this Wi-Fi network (password read from stdin).
+        #[arg(long, requires = "wifi_country")]
+        wifi_ssid: Option<String>,
+        #[arg(long)]
+        wifi_country: Option<String>,
+        #[arg(long)]
+        timezone: Option<String>,
+        #[arg(long)]
+        no_qr: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -615,6 +686,118 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 "Valid for {minutes} minute(s), one use. Close early: sudo rpctl pairing close"
             );
         }
+        Cmd::Init { auto, force, print } => {
+            anyhow::ensure!(*auto, "pass --auto to detect the network and write a config");
+            let path = &cli.config;
+            if path.exists() && !force && !print {
+                println!("{} exists; nothing to do (use --force to replace it)", path.display());
+                return Ok(ExitCode::SUCCESS);
+            }
+            let d = rp_core::init::detect(&target).map_err(anyhow::Error::msg)?;
+            let text = rp_core::init::render(&d);
+            rp_core::config::parse(&text)?;
+            if *print {
+                print!("{text}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            if path.exists() {
+                std::fs::copy(path, path.with_extension("toml.bak-init"))?;
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(path, &text)?;
+            println!(
+                "wrote {} (uplink {}, LAN {})",
+                path.display(),
+                d.wan_if,
+                d.lan_cidrs.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        Cmd::Bootfs(BootfsCmd::Render { spec }) => {
+            let s: rp_core::provision::Spec =
+                serde_json::from_str(&std::fs::read_to_string(spec)?)?;
+            let files =
+                rp_core::provision::files(&s).map_err(|e| anyhow::anyhow!("{}", e.join("; ")))?;
+            let m: serde_json::Map<String, serde_json::Value> =
+                files.into_iter().map(|(k, v)| (k, serde_json::Value::String(v))).collect();
+            println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Bootfs(BootfsCmd::Write {
+            dir,
+            tag,
+            install_sha256,
+            hostname,
+            repo,
+            admin_user,
+            ssh_key_file,
+            wifi_ssid,
+            wifi_country,
+            timezone,
+            no_qr,
+        }) => {
+            use rp_core::provision as pv;
+            anyhow::ensure!(
+                dir.join("cmdline.txt").exists() && dir.join("meta-data").exists(),
+                "{} is not a freshly flashed Raspberry Pi OS boot partition (no cmdline.txt / meta-data)",
+                dir.display()
+            );
+            let admin = match (admin_user, ssh_key_file) {
+                (Some(u), Some(f)) => {
+                    Some((u.clone(), std::fs::read_to_string(f)?.trim().to_string()))
+                }
+                _ => None,
+            };
+            let wifi = match wifi_ssid {
+                Some(ssid) => {
+                    let mut pw = String::new();
+                    std::io::stdin().read_line(&mut pw)?;
+                    Some(pv::Wifi {
+                        ssid: ssid.clone(),
+                        password: pw.trim_end_matches(['\r', '\n']).to_string(),
+                        country: wifi_country.clone().unwrap_or_default(),
+                    })
+                }
+                None => None,
+            };
+            let spec = pv::Spec {
+                hostname: hostname.clone(),
+                tag: tag.clone(),
+                install_sha256: install_sha256.to_lowercase(),
+                repo: repo.clone(),
+                pairing_secret: rp_policy::pairing::new_secret(),
+                instance_id: format!("rp-{}", rp_core::changeset::now()),
+                admin,
+                wifi,
+                timezone: timezone.clone(),
+            };
+            let files = pv::files(&spec).map_err(|e| anyhow::anyhow!("{}", e.join("; ")))?;
+            for (name, content) in &files {
+                let p = dir.join(name);
+                std::fs::write(&p, content)?;
+            }
+            let meta = std::fs::read_to_string(dir.join("meta-data")).unwrap_or_default();
+            std::fs::write(dir.join("meta-data"), pv::meta_data(&meta, &spec.instance_id))?;
+            let qr = pv::pairing_qr(&spec, 8443);
+            if cli.json {
+                println!("{qr}");
+            } else {
+                if !no_qr {
+                    let code = qrcode::QrCode::new(qr.as_bytes())?;
+                    println!(
+                        "{}",
+                        code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build()
+                    );
+                }
+                println!("Card ready: {} file(s) written to {}", files.len() + 1, dir.display());
+                println!("Boot the device on your network, then pair in the app with this code:");
+                println!("  host {}.local:8443", spec.hostname);
+                println!("  code {}", spec.pairing_secret);
+            }
+        }
+        Cmd::Setup { pairing_minutes, no_pairing, no_packages } => {
+            return setup(cli, &target, *pairing_minutes, *no_pairing, *no_packages);
+        }
         Cmd::Pairing(PairingCmd::Close) => {
             let p = under_root(&cli.root, rp_privd::PAIRING);
             if p.exists() {
@@ -822,6 +1005,125 @@ fn peers_array(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::Array
 
 /// Edit the config preserving comments/formatting; keeps a timestamped backup
 /// and refuses to write a result that fails validation.
+fn setup(
+    cli: &Cli,
+    t: &Target,
+    pairing_minutes: u32,
+    no_pairing: bool,
+    no_packages: bool,
+) -> Result<ExitCode> {
+    let mut report = serde_json::Map::new();
+    let say = |m: &str| {
+        if !cli.json {
+            println!("{m}");
+        }
+    };
+    // 1. A config.
+    if !cli.config.exists() {
+        let d = rp_core::init::detect(t).map_err(anyhow::Error::msg)?;
+        let text = rp_core::init::render(&d);
+        rp_core::config::parse(&text)?;
+        if let Some(dir) = cli.config.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&cli.config, text)?;
+        say(&format!("wrote {} for uplink {}", cli.config.display(), d.wan_if));
+        report.insert("config_written".into(), true.into());
+    } else {
+        report.insert("config_written".into(), false.into());
+    }
+    // 2. The sections the console needs (an existing v0.1 config has neither).
+    let cfg = rp_core::config::load(&cli.config)?;
+    let mut added = vec![];
+    if cfg.agent.is_none() {
+        added.push("agent");
+    }
+    if cfg.api.is_none() {
+        added.push("api");
+    }
+    if !added.is_empty() {
+        edit_config(&cli.config, |doc| {
+            for sect in &added {
+                doc[*sect] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+            Ok(())
+        })?;
+        say(&format!("enabled [{}] in {}", added.join("], ["), cli.config.display()));
+    }
+    report.insert("sections_added".into(), serde_json::json!(added));
+    // 3. Apply. Locally there is no session to lose; over SSH, preflight's
+    // lockout check already proved the session stays allowed (these modules
+    // only add allow rules), so no confirm timer is armed.
+    let cfg = rp_core::config::load(&cli.config)?;
+    let mut applied = serde_json::Map::new();
+    for name in ["base", "agent", "api"] {
+        let m = module(name)?;
+        let facts = preflight::gather(&cfg, t);
+        let checks = preflight::evaluate(&cfg, name, &facts, false);
+        if !preflight::passed(&checks) {
+            if !cli.json {
+                print_checks(&checks, false);
+            }
+            let failed: Vec<_> = checks.iter().filter(|c| c.status == Status::Fail).collect();
+            report.insert("failed_module".into(), name.into());
+            report.insert("checks".into(), serde_json::to_value(failed)?);
+            if cli.json {
+                println!("{}", serde_json::Value::Object(report));
+            }
+            eprintln!("setup stopped: preflight for {name} failed; nothing else was changed");
+            return Ok(ExitCode::from(EXIT_PREFLIGHT));
+        }
+        let _lock = rp_core::changeset::Lock::acquire(t).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let opts = ApplyOptions {
+            dry_run: false,
+            install_packages: !no_packages,
+            dead_man_secs: None,
+            rpctl_argv: self_argv(cli)?,
+        };
+        let rep = apply::apply(m.as_ref(), &cfg, t, &opts)?;
+        applied.insert(name.into(), serde_json::json!(rep.changes.len()));
+        say(&format!(
+            "{name}: {}",
+            if rep.changes.is_empty() {
+                "up to date".into()
+            } else {
+                format!("applied {} file(s)", rep.changes.len())
+            }
+        ));
+    }
+    report.insert("applied".into(), serde_json::Value::Object(applied));
+    // 4. Pairing.
+    let admins = rp_policy::admin::Admins::load(&under_root(&cli.root, rp_privd::ADMINS))
+        .unwrap_or_default();
+    let paired = admins.active().next().is_some();
+    report.insert("paired".into(), paired.into());
+    let pairing_file = under_root(&cli.root, rp_privd::PAIRING);
+    if !no_pairing && !paired && !pairing_file.exists() {
+        anyhow::ensure!((1..=1440).contains(&pairing_minutes), "--pairing-minutes must be 1-1440");
+        let dev = rp_privd::device_id(&cli.root)?;
+        let secret = rp_policy::pairing::open(
+            &pairing_file,
+            rp_core::changeset::now(),
+            Some(i64::from(pairing_minutes) * 60),
+        )?;
+        let host =
+            std::fs::read_to_string(under_root(&cli.root, "/etc/hostname")).unwrap_or_default();
+        let port = cfg.api.as_ref().map(|a| a.listen.port()).unwrap_or(8443);
+        let p = serde_json::json!({"v": 1, "host": format!("{}.local", host.trim()), "port": port,
+            "device": dev, "secret": secret, "cert": rp_privd::cert_sha256(&cli.root)});
+        if !cli.json {
+            println!("pairing open for {pairing_minutes} min; code {secret}");
+        }
+        report.insert("pairing".into(), p);
+    } else {
+        report.insert("pairing".into(), serde_json::Value::Null);
+    }
+    if cli.json {
+        println!("{}", serde_json::Value::Object(report));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn edit_config(
     path: &Path,
     f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,

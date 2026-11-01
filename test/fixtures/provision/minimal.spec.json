@@ -1,0 +1,11 @@
+{
+  "hostname": "rp-security",
+  "tag": "v0.2.0",
+  "install_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "repo": "Jest-Test-Team/rp_app",
+  "pairing_secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "instance_id": "rp-1793500000",
+  "admin": null,
+  "wifi": null,
+  "timezone": null
+}
