@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "rp-agent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "rp-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "rp-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "flate2",
@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "rp-dns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "rp-http"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "tokio",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "rp-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "rp-policy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "rp-privd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "rp-probe"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "rp-schema"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ipnet",
  "serde",
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "rpctl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
