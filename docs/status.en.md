@@ -28,15 +28,15 @@
 
 | Item | Latest reading |
 |---|---|
-| Status | **critical** |
-| Alert | **Under-voltage** (firmware `rpi_volt` alarm): the power supply is too weak |
-| Temperature | about 42 °C |
+| Status | **ok** (previously critical: under-voltage) |
+| Alert | none; no Undervoltage entries in either boot since Ethernet was connected, and the soak records the alarm every 5 minutes (all 0 so far) |
+| Temperature | about 50 °C (AP + VPN running) |
 | Clock | NTP synchronized |
 | Disk | 20% |
 
 > ⚠️ The device runs from a dedicated power supply, yet the kernel logs intermittent "Undervoltage detected" (below about 4.63 V under load). Common causes: a thin or long micro-USB cable dropping voltage, or a supply that cannot deliver its rated current. Use the official 5.1 V / 2.5 A supply with a short, thick cable. Under-voltage can cause throttling, SD card corruption and USB adapter drop-outs.
 >
-> Reboot check: rp-firewall, rp-dns, rp-agent and rp-mcp all start automatically; the firewall and DNS blocking keep working.
+> Reboot check (with all five modules applied, 2026-11-01): SSH back in about 36 seconds; rp-firewall, rp-dns, rp-agent, rp-mcp, the AP (hostapd / dnsmasq) and tailscaled all start automatically; forwarding, DoT rejection, VPN / AP-to-LAN blocking and the input `policy drop` are all in place; the Tailscale exit node is still approved.
 
 ## SSH admin access
 
@@ -61,6 +61,8 @@
 | Restricted key: no other commands, no pty, forwarding refused | ✅ |
 | Network namespace integration tests (Pi kernel) | 16 / 16 |
 | e2e (non-destructive) | 6 / 6 |
+| e2e (device in use, `RP_E2E_ALLOW_IN_USE=1`, all five modules applied) | 8 passed, 3 destructive cases skipped by design (real apply / re-apply / rollback verified separately with ap) |
+| Every daemon matches the config version (`rp-dns check`, `rp-agent snapshot`, `rpctl check`) | ✅ after redeploying all binaries; the old rp-dns rejects `block_dot` (now caught by an e2e case) |
 | `ssh.password_auth = false`: new key session works, password-only login refused (`Permission denied (publickey)`), confirmed with `sshd -T` | ✅ |
 | mac80211_hwsim AP tests (Pi kernel) | 5 / 5 |
 | CI (Linux, Windows ps1, hwsim, root netns, armv7 / aarch64 cross build) | ✅ all green |
@@ -84,4 +86,4 @@
 2. **Point the router's DHCP DNS at this device**, keeping a public DNS server as the second entry (fail-open)
 3. **IoT AP**: keep at least 3 devices joined (24-hour stability test) and run a speed test on one of them (throughput); also add a DHCP reservation for eth0 on the router
 4. **VPN**: approve the exit node in the Tailscale admin console; on each device install Tailscale and pick the exit node (see [gateway.en.md](gateway.en.md#4-vpn-exit-node)); **revoke the used auth key**
-5. **Push tag `v0.1.0`** → an official GitHub Release (after which `install.sh`'s default release download works)
+5. ~~Push tag `v0.1.0`~~ ✅ released: https://github.com/Jest-Test-Team/rp_app/releases/tag/v0.1.0 (checksum verified and `rpctl` run on the Pi)

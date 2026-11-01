@@ -7,6 +7,15 @@ Two parts:
 1. **Headless wireless setup** (this page): scripts that re-image an SD card with Raspberry Pi OS Lite (32-bit, Trixie) so the Pi joins Wi-Fi over a USB adapter and enables SSH on first boot.
 2. **Edge Security Gateway** (Rust): a VPN exit node (Tailscale / WireGuard; friends cannot reach your LAN), a DNS firewall, an isolated IoT access point, a read-only observation agent, and a policy-controlled MCP server whose privileged actions need human approval. → [docs/gateway.en.md](docs/gateway.en.md)
 
+3. **RP Security console** (v0.2, Flutter: Android, iOS, macOS, Linux, Windows): add a Pi from a fresh SD card, over one SSH session, or with a pairing code; then manage DNS, IoT Wi-Fi, firewall rules, VPN, MCP approvals and signed updates — no SSH or root for the app, every change rolled back by the device unless confirmed. → [docs/console.en.md](docs/console.en.md), [apps/rp_console](apps/rp_console)
+
+### Console quick start (v0.2)
+
+```bash
+sudo rpctl setup            # on the Pi: config for this network, base + agent + api, pairing code
+# then in the app: Add Raspberry Pi › I have a pairing code
+```
+
 ### Current status
 
 This Pi 2B uses eth0 as its uplink and runs `base` (firewall baseline, key-only SSH), `dns` (DNS firewall with the StevenBlack list), `ap` (wlan0 as an isolated IoT AP), `vpn` (Tailscale exit node) and `agent` (agent + MCP). Claude Code can query it over SSH with read-only tools. See [docs/status.en.md](docs/status.en.md).
@@ -14,7 +23,9 @@ This Pi 2B uses eth0 as its uplink and runs `base` (firewall baseline, key-only 
 ### Gateway quick start
 
 ```bash
-# Deploy from macOS / Linux to the Pi (until a GitHub Release is published use --from-source; needs zig + cargo-zigbuild)
+# Deploy from macOS / Linux to the Pi: the latest GitHub Release (checksums verified)
+deploy/install.sh --host <USER>@<PI_HOST>
+# or build the current source (needs zig + cargo-zigbuild)
 deploy/install.sh --host <USER>@<PI_HOST> --from-source
 
 # On the Pi: preflight and dry-run each module before applying; confirm firewall changes before the deadline

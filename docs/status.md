@@ -28,15 +28,15 @@
 
 | 項目 | 最近一次讀數 |
 |---|---|
-| 狀態 | **critical** |
-| 警報 | **電壓不足**（firmware `rpi_volt` 警報）：電源太弱 |
-| 溫度 | 約 42 °C |
+| 狀態 | **ok**（之前為 critical：電壓不足） |
+| 警報 | 無；接上 Ethernet 後的兩次開機都沒有 Undervoltage 紀錄，soak 每 5 分鐘也記錄電壓警報（目前皆 0） |
+| 溫度 | 約 50 °C（AP + VPN 運作中） |
 | 時鐘 | NTP 已同步 |
 | 磁碟 | 20% |
 
 > ⚠️ 裝置由電源供應器直接供電，但 kernel 記錄到間歇性的「Undervoltage detected」（負載時電壓低於約 4.63 V）。常見原因：micro-USB 線太細／太長造成壓降，或供應器實際電流不足。建議改用官方 5.1 V／2.5 A 供應器與短而粗的線。電壓不足可能造成降頻、SD 卡損毀與 USB 網卡斷線。
 >
-> 重開機驗證：rp-firewall、rp-dns、rp-agent、rp-mcp 全部自動啟動，防火牆與 DNS 封鎖照常生效。
+> 重開機驗證（五個模組都套用後，2026-11-01）：約 36 秒恢復 SSH；rp-firewall、rp-dns、rp-agent、rp-mcp、AP（hostapd／dnsmasq）、tailscaled 全部自動啟動；forwarding、DoT reject、VPN／AP 到 LAN 的阻擋、input `policy drop` 都還在；Tailscale exit node 仍為已核准。
 
 ## SSH 管理存取
 
@@ -61,6 +61,8 @@
 | 受限金鑰：不能執行其他指令、無 pty、forwarding 被拒 | ✅ |
 | network namespace 整合測試（Pi kernel） | 16／16 |
 | e2e（非破壞性） | 6／6 |
+| e2e（已上線裝置，`RP_E2E_ALLOW_IN_USE=1`，五個模組都已套用） | 8 過、3 個破壞性案例依設計跳過（實機 apply／re-apply／rollback 已另以 ap 驗證） |
+| 所有 daemon 與設定版本一致（`rp-dns check`、`rp-agent snapshot`、`rpctl check`） | ✅ 重新部署全部 binary 後通過；舊版 rp-dns 會拒絕 `block_dot`（已由 e2e 案例攔截） |
 | `ssh.password_auth = false`：新金鑰連線成功、純密碼連線被拒（`Permission denied (publickey)`）、`sshd -T` 確認 | ✅ |
 | mac80211_hwsim AP 測試（Pi kernel） | 5／5 |
 | CI（Linux、Windows ps1、hwsim、root netns、armv7／aarch64 cross build） | ✅ 全綠 |
@@ -84,4 +86,4 @@
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
 3. **IoT AP**：讓至少 3 台裝置連上（24 小時穩定性測試）、用其中一台跑測速（吞吐量測）；並在路由器為 eth0 設 DHCP 保留位址
 4. **VPN**：在 Tailscale 管理後台核准 exit node；各裝置安裝 Tailscale 並選擇 exit node（見 [gateway.md](gateway.md#4-vpn-exit-node)）；**撤銷已用過的 auth key**
-5. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）
+5. ~~推 tag `v0.1.0`~~ ✅ 已發佈：https://github.com/Jest-Test-Team/rp_app/releases/tag/v0.1.0（已在 Pi 上核對 checksum 並執行 `rpctl`）

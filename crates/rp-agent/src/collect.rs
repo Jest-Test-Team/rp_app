@@ -414,6 +414,23 @@ pub fn dns_events(ctx: &Ctx, since_mins: i64, action: Option<&str>, limit: u32) 
     }
 }
 
+pub fn dns_stats(ctx: &Ctx, since_mins: i64) -> Value {
+    let Some(d) = &ctx.cfg.dns else { return json!({"configured": false}) };
+    let db = ctx.path(&d.events_db);
+    if !Path::new(&db).exists() {
+        return json!({"configured": true, "total": 0, "blocked": 0, "block_rate": 0.0,
+                      "top_domains": [], "top_blocked": [], "top_clients": []});
+    }
+    match rp_dns::events::stats(&db, now() - since_mins * 60, 10) {
+        Ok(mut v) => {
+            v["configured"] = json!(true);
+            v["since_mins"] = json!(since_mins);
+            v
+        }
+        Err(e) => json!({"configured": true, "error": e.to_string()}),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

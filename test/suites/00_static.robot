@@ -36,3 +36,10 @@ Every Managed File Carries The Ownership Header
         ${t}=    Get File    ${FIXTURES}/golden/${f}
         Should Contain    ${t}    Managed by rpctl
     END
+
+OpenAPI Document Matches rp-api
+    [Documentation]    The app's committed API contract must be what rp-api serves.
+    ${live}=    Run Ok    ${REPO}/target/debug/rp-api    openapi
+    ${committed}=    Get File    ${REPO}/apps/rp_console/api/openapi.json
+    Should Be Equal    ${live.strip()}    ${committed.strip()}
+    ...    msg=apps/rp_console/api/openapi.json is stale: run `rp-api openapi > apps/rp_console/api/openapi.json`

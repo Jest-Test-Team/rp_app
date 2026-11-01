@@ -7,6 +7,15 @@
 1. **無線開機設定**（本頁）：用腳本把 SD 卡重灌成 Raspberry Pi OS Lite (32-bit, Trixie)，第一次開機就透過 USB Wi-Fi 連上網、開好 SSH。
 2. **Edge Security Gateway**（Rust）：VPN exit node（Tailscale／WireGuard，親友無法進入 LAN）、DNS 防火牆、隔離的 IoT AP、唯讀觀測 agent，以及受 policy 管控、特權動作需人工核准的 MCP server。→ [docs/gateway.md](docs/gateway.md)
 
+3. **RP Security 管理 App**（v0.2，Flutter：Android、iOS、macOS、Linux、Windows）：從空白 SD 卡、一次 SSH 連線或配對碼加入 Pi；接著管理 DNS、IoT Wi-Fi、防火牆規則、VPN、MCP 核准與簽章更新——App 不需要 SSH 或 root，任何變更未確認時都由裝置自行復原。→ [docs/console.md](docs/console.md)、[apps/rp_console](apps/rp_console)
+
+### 管理 App 快速開始（v0.2）
+
+```bash
+sudo rpctl setup            # 在 Pi 上：產生此網路的設定、套用 base + agent + api、顯示配對碼
+# 接著在 App：加入 Raspberry Pi › 我有配對碼
+```
+
 ### 目前狀態
 
 這台 Pi 2B 以 eth0 為 uplink，已套用 `base`（防火牆基線、SSH 只接受金鑰）、`dns`（DNS 防火牆，含 StevenBlack 清單）、`ap`（wlan0 為隔離的 IoT AP）、`vpn`（Tailscale exit node）、`agent`（agent + MCP），Claude Code 可經 SSH 以唯讀工具查詢。詳見 [docs/status.md](docs/status.md)。
@@ -14,7 +23,9 @@
 ### Gateway 快速開始
 
 ```bash
-# 從 Mac／Linux 部署到 Pi（GitHub Release 發佈前請用 --from-source，需要 zig + cargo-zigbuild）
+# 從 Mac／Linux 部署到 Pi：最新的 GitHub Release（會核對 checksum）
+deploy/install.sh --host <USER>@<PI_HOST>
+# 或編譯目前的原始碼（需要 zig + cargo-zigbuild）
 deploy/install.sh --host <USER>@<PI_HOST> --from-source
 
 # 在 Pi 上：每個模組都先 preflight、dry-run，再 apply；防火牆類變更要在時限內 confirm

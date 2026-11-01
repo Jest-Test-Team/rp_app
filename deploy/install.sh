@@ -26,7 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BINS=(rpctl rp-dns rp-agent rp-mcp)
+BINS=(rpctl rp-dns rp-agent rp-mcp rp-privd rp-api)
 
 mode=release tag=latest host="" prefix=/usr/local root="" archive="" target=""
 repo="${RP_REPO:-Jest-Test-Team/rp_app}" base_url="${RP_BASE_URL:-}"
@@ -150,6 +150,8 @@ build_archive() {
   for b in "${BINS[@]}"; do install -m 0755 "$bin_dir/$b" "$stage/$name/bin/$b"; done
   install -m 0644 "$SRC_DIR/configs/rp.example.toml" "$stage/$name/configs/"
   install -m 0755 "$SRC_DIR/deploy/install.sh" "$stage/$name/"
+  # The release signing key: devices verify every later update with it.
+  if [[ -f $SRC_DIR/deploy/minisign.pub ]]; then install -m 0644 "$SRC_DIR/deploy/minisign.pub" "$stage/$name/"; fi
   # Owner is recorded as root (never the builder's account), and no macOS
   # xattrs / AppleDouble files (GNU tar on the device warns about them).
   local owner=(--uid 0 --gid 0 --uname root --gname root)
@@ -184,6 +186,11 @@ install_archive() {
     echo "$prefix/bin/$b" >> "$dir/manifest"
   done
   as_root install -m 0644 "$src/configs/rp.example.toml" "$etc/rp.example.toml"
+  # Trust-on-install of the update signing key; never replaced silently.
+  if [[ -f $src/minisign.pub && ! -e $etc/minisign.pub ]]; then
+    as_root install -m 0644 "$src/minisign.pub" "$etc/minisign.pub"
+    log "installed the update signing key ($etc/minisign.pub)"
+  fi
   if [[ ! -e $etc/rp.toml ]]; then
     as_root install -m 0644 "$src/configs/rp.example.toml" "$etc/rp.toml"
     log "created $etc/rp.toml — edit device.lan_cidrs before applying"

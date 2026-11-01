@@ -27,6 +27,7 @@ Rpctl
     ...    --fake-output    id -u\=0
     ...    --fake-output    dpkg-query\=install ok installed
     ...    --fake-output    nmcli -g WIFI-PROPERTIES.AP\=yes
+    ...    --fake-output    uname -m\=armv7l
     ...    --fail-commands    ${fail}
     ...    @{args}    &{opts}
     RETURN    ${r.stdout}

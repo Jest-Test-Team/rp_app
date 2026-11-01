@@ -6,10 +6,14 @@
 //! * [`ratelimit`]: per-principal limits
 //! * [`approvals`]: privileged actions wait for a human `rpctl approve` on the device
 //! * [`audit`]: append-only, hash-chained audit log
+//! * [`admin`]: console admins (Ed25519 keys) and signed, single-use requests
+//! * [`pairing`]: one-time-secret pairing of a new console admin
 
+pub mod admin;
 pub mod approvals;
 pub mod audit;
 pub mod auth;
+pub mod pairing;
 pub mod ratelimit;
 pub mod validate;
 

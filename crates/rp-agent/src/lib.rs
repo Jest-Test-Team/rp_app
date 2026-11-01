@@ -2,5 +2,6 @@
 //! privileged actions that a human must approve on the device.
 
 pub mod actions;
+pub mod admin_ops;
 pub mod api;
 pub mod collect;
