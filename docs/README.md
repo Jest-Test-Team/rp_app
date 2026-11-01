@@ -15,6 +15,8 @@
 | [setup.md](setup.md) | 燒錄 SD 卡、Wi-Fi／SSH 首次開機設定、登入 |
 | [scripts.md](scripts.md) | 燒錄相關腳本的用途與安全檢查 |
 | [troubleshooting.md](troubleshooting.md) | 已知問題、根本原因與診斷方法 |
+| [console.md](console.md) | **v0.2 管理 App**：加入裝置（SD 卡、SSH、配對碼）、change set、更新 |
+| [api.md](api.md) | 管理 API：傳輸、簽章信封、配對、change set 鍵值 |
 | [gateway.md](gateway.md) | Edge Security Gateway：安裝、各模組、MCP、測試 |
 | [architecture.md](architecture.md) | 元件、資料平面／控制平面、可組合防火牆、apply 與核准流程 |
 | [threat-model.md](threat-model.md) | 攻擊者、對策與對應測試、已知限制 |
