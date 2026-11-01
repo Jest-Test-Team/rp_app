@@ -128,7 +128,10 @@ interface = "wlan0"
 ssid = "<IOT_SSID>"
 country = "TW"
 subnet = "10.77.0.0/24"
+block_dot = false            # true: reject DNS-over-TLS / QUIC (853) from IoT clients so they fall back to the DNS firewall
 ```
+
+- Port 853 connections are always logged (`rp-ap-dot` / `rp-ap-doq`); with `block_dot = true` they are rejected, so phones with "Private DNS" on automatic switch to plain DNS immediately. A phone set to strict mode with a **specific hostname** will be unable to resolve names
 
 ```bash
 sudo rpctl ap set-passphrase     # no echo; stored 0600; never appears in configs or backups

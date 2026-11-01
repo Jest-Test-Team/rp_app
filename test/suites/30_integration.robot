@@ -118,6 +118,19 @@ IoT Client Cannot Reach VPN Clients
     ${r}=    TCP Connects From    iot    198.51.100.2    22
     Should Be Equal    ${r}    closed
 
+IoT DNS-over-TLS Is Logged By Default And Rejected With block_dot
+    [Tags]    integration    requires-root    ap
+    ${dir}=    Render AP
+    Load Firewall    ${dir}/etc/rp/.check/ap.nft
+    ${open}=    TCP Connects From    iot    203.0.113.10    853
+    Should Be Equal    ${open}    open    msg=DoT is only logged unless block_dot is set
+    ${blk}=    Render AP    extra=block_dot = true
+    Load Firewall    ${blk}/etc/rp/.check/ap.nft
+    ${shut}=    TCP Connects From    iot    203.0.113.10    853
+    Should Be Equal    ${shut}    closed
+    ${web}=    HTTP From    iot    203.0.113.10:8080
+    Should Be Equal    ${web}    200    msg=only port 853 is affected
+
 LAN Can Manage IoT Devices Unless Disabled
     [Tags]    integration    requires-root    ap
     ${dir}=    Render AP

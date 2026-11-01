@@ -115,6 +115,9 @@ Create Topology
     ...    socketserver.ThreadingTCPServer.allow_reuse_address = True
     ...    socketserver.ThreadingTCPServer(('203.0.113.10', 7777), H).serve_forever()
     Start Process    ip    netns    exec    ${NS}inet    python3    -c    ${echo}    alias=inet-echo
+    # A DNS-over-TLS stand-in on the "internet" host (TCP 853).
+    Start Process    ip    netns    exec    ${NS}inet    python3    -m    http.server    853
+    ...    --bind    203.0.113.10    alias=inet-dot
     Sleep    1s
 
 Destroy Topology

@@ -20,7 +20,7 @@
 | Malicious IoT device | Inject commands through DHCP host names or USB descriptor strings | The agent rejects malformed names and keeps printable ASCII only; MCP strips control characters and limits length; tool descriptions mark results as untrusted data | `34_mcp_integration` "Sanitises Device-Supplied Names" |
 | Malicious IoT device | Reach the LAN, attack other IoT devices or the management interface | AP isolation: hostapd `ap_isolate`, hairpin drop, LAN and private ranges dropped, no IPv6, no access to the device's SSH | `30_integration` IoT cases |
 | Malicious IoT device | Change IP or keep existing connections after quarantine | Quarantine by IP and MAC, dropped before conntrack accepts established flows (`mod_prefilter`) | `30_integration` quarantine cases |
-| Malicious IoT device | Bypass the DNS firewall with DoH / DoT | Port 853 connections (DoT / DoQ) are logged; DoH cannot be fully blocked by DNS alone (known limitation) | `23_ap_cli` |
+| Malicious IoT device | Bypass the DNS firewall with DoH / DoT | Port 853 connections (DoT / DoQ) are logged, and rejected with `ap.block_dot = true`; DoH cannot be fully blocked by DNS alone (known limitation) | `23_ap_cli`, `30_integration` DoT case |
 | VPN user (friend) | Reach the home LAN / homelab | The forward chain blocks the LAN, RFC1918, CGNAT, link-local, ULA and multicast; only explicit `allow_lan` exceptions | `30_integration` VPN cases |
 | Someone who stole the MCP SSH key | Get a shell or tunnel into the LAN | The key is restricted in `authorized_keys` with `restrict,command="rp-mcp --stdio"`: no other commands, no pty, forwarding refused; stdio is read-only by default | On-device check ([status.en.md](status.en.md)) |
 | Someone who stole the admin's password | Log in over SSH | SSH accepts keys only (`ssh.password_auth = false`); the admin key is passphrase-protected | On-device check ([status.en.md](status.en.md)) |
@@ -33,7 +33,7 @@
 
 ## Known limitations
 
-- The DNS firewall only protects clients that use this device as their DNS server. DoH bypasses it; DoT / DoQ are only logged.
+- The DNS firewall only protects clients that use this device as their DNS server. DoH bypasses it; DoT / DoQ are logged by default and can be blocked on the AP with `ap.block_dot`.
 - Devices on the main LAN cannot be blocked: this device is not their gateway. Privileged tools only act on AP clients.
 - Scoring is a deterministic heuristic; its measured rates come from fixed samples (see [benchmarks.en.md](benchmarks.en.md)) and are not guaranteed for every network.
 - Protection of the Wi-Fi password relies on file permissions; anyone holding the SD card can read it.

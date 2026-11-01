@@ -20,7 +20,7 @@
 | 惡意 IoT 裝置 | 透過 DHCP 主機名稱或 USB 描述字串注入指令 | agent 拒絕格式錯誤的名稱、只保留可列印 ASCII；MCP 移除控制字元、限制長度；工具說明標示結果為不可信資料 | `34_mcp_integration`「Sanitises Device-Supplied Names」 |
 | 惡意 IoT 裝置 | 進入 LAN、攻擊其他 IoT 裝置、管理介面 | AP 隔離：hostapd `ap_isolate`、hairpin drop、LAN 與私有網段 drop、無 IPv6、不得連裝置的 SSH | `30_integration` IoT 案例 |
 | 惡意 IoT 裝置 | 被隔離後換 IP 或沿用既有連線 | quarantine 依 IP 與 MAC；在 conntrack 接受既有連線之前（`mod_prefilter`）就丟棄 | `30_integration` quarantine 案例 |
-| 惡意 IoT 裝置 | 用 DoH／DoT 繞過 DNS 防火牆 | 記錄 853 埠連線（DoT／DoQ）；DoH 無法只靠 DNS 防護完全阻擋（已知限制） | `23_ap_cli` |
+| 惡意 IoT 裝置 | 用 DoH／DoT 繞過 DNS 防火牆 | 記錄 853 埠連線（DoT／DoQ）；`ap.block_dot = true` 時 reject；DoH 無法只靠 DNS 防護完全阻擋（已知限制） | `23_ap_cli`、`30_integration` DoT 案例 |
 | VPN 使用者（親友） | 進入家用 LAN／Homelab | forward 鏈阻擋 LAN、RFC1918、CGNAT、link-local、ULA、多播；僅 `allow_lan` 明確例外 | `30_integration` VPN 案例 |
 | 偷到 MCP 專用 SSH 金鑰的人 | 取得 shell、隧道進內網 | 金鑰在 `authorized_keys` 以 `restrict,command="rp-mcp --stdio"` 限制：其他指令不執行、無 pty、forwarding 被拒；stdio 預設只有 read | 實機驗證（[status.md](status.md)） |
 | 偷到管理者密碼的人 | 經 SSH 登入 | SSH 只接受金鑰（`ssh.password_auth = false`）；管理金鑰有 passphrase | 實機驗證（[status.md](status.md)） |
@@ -33,7 +33,7 @@
 
 ## 已知限制
 
-- DNS 防火牆只對使用本裝置作為 DNS 的用戶端有效。DoH 可以繞過；DoT／DoQ 只做記錄。
+- DNS 防火牆只對使用本裝置作為 DNS 的用戶端有效。DoH 可以繞過；DoT／DoQ 預設只記錄，AP 上可用 `ap.block_dot` 阻擋。
 - 主 LAN 上的裝置無法被封鎖：本裝置不是它們的 gateway。特權工具只對 AP client 有效。
 - 評分規則是確定性的啟發式，量測值以固定樣本為準（見 [benchmarks.md](benchmarks.md)），不保證適用於所有網路。
 - Wi-Fi 密碼的保護依賴檔案權限；拿到 SD 卡的人可以讀取。

@@ -227,6 +227,12 @@ pub fn snippet(cfg: &Config) -> String {
         s,
         "\t\tiifname \"{w}\" udp dport 853 limit rate 6/minute log prefix \"rp-ap-doq \""
     );
+    if a.block_dot {
+        // Reject (not drop) so clients in automatic "Private DNS" mode fall back
+        // to plain DNS immediately instead of waiting for a timeout.
+        let _ = writeln!(s, "\t\tiifname \"{w}\" tcp dport 853 reject with tcp reset");
+        let _ = writeln!(s, "\t\tiifname \"{w}\" udp dport 853 reject");
+    }
     let _ = writeln!(s, "\t\tiifname \"{w}\" oifname \"{wan}\" ip daddr @ap_allow4 accept");
     let _ = writeln!(s, "\t\tiifname \"{w}\" ip daddr @ap_block4 drop");
     // No IPv6 is offered to AP clients; never forward any from them.
@@ -405,6 +411,12 @@ mod tests {
         assert!(s.contains("192.0.2.0/24"));
         assert!(s.contains("oifname \"eth0\" ip saddr 10.77.0.0/24 masquerade"));
         assert!(s.contains("tcp dport 853"));
+        assert!(!s.contains("reject"), "DoT is only logged by default");
+        let b = snippet(&cfg("block_dot = true"));
+        let rej = b.find("iifname \"wlan0\" tcp dport 853 reject with tcp reset").unwrap();
+        assert!(b.contains("iifname \"wlan0\" udp dport 853 reject"));
+        let allow = b.find("ip daddr @ap_allow4 accept").unwrap();
+        assert!(rej < allow, "an allow_lan exception must not re-open DoT");
         assert!(s.contains("iifname \"eth0\" oifname \"wlan0\" ip saddr @lan4 accept"));
         assert!(!snippet(&cfg("lan_can_reach_clients = false\n"))
             .contains("oifname \"wlan0\" ip saddr @lan4"));

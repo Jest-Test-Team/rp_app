@@ -128,7 +128,10 @@ interface = "wlan0"
 ssid = "<IOT_SSID>"
 country = "TW"
 subnet = "10.77.0.0/24"
+block_dot = false            # true：拒絕 IoT client 的 DNS-over-TLS／QUIC（853），讓它們回到 DNS 防火牆
 ```
+
+- 853 埠連線一律記錄（`rp-ap-dot`／`rp-ap-doq`）；`block_dot = true` 時改為 reject，手機「私人 DNS」設為自動的會立刻改用一般 DNS；若設成**指定主機名稱**的嚴格模式，該裝置會無法解析 DNS
 
 ```bash
 sudo rpctl ap set-passphrase     # 不回顯；存成 0600，從不出現在設定或備份中
