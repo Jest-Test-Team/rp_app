@@ -31,6 +31,21 @@
 | Tamperer | Modify or delete audit records | Hash-chained JSONL; `rpctl audit verify` pinpoints the modified or deleted line; multiple writers use a file lock | `40_security`, `rp-policy` unit tests |
 | The admin | Lock themselves out with a bad rule | preflight checks the current SSH source; `nft -c` validates first; the dead-man timer rolls back automatically | `20_cli`, `60_e2e` (destructive) |
 
+## Console and management API (v0.2)
+
+The RP Security Console (Flutter app) manages the device through `rp-api`. `rp-api` is never root: every change goes through `rp-privd`, a socket-activated root helper that only accepts typed operations signed by an admin key.
+
+| Attacker | Attack | Mitigation | Test |
+|---|---|---|---|
+| Thief of a phone running the app | Use the paired app | The admin key lives in the platform keystore and needs the device unlocked; another admin or `sudo rpctl admins revoke` removes it | `41_api_security` |
+| Attacker who takes over rp-api | Change the configuration or approve actions | rp-api has no privileges; rp-privd checks the caller's uid, the admin's Ed25519 signature, the device id, a single-use nonce and an expiry of at most 5 minutes, then validates the change again itself | `42_privd_security` |
+| Malicious device on the LAN | Pair first (the device has no screen) | No open pairing window: pairing needs a 32-byte one-time secret, written to the SD card or shown by `sudo rpctl pairing new`; both sides prove it with HMAC; repeated failures lock pairing | `36_pairing` |
+| Man in the middle | Pose as the device | The pairing proof covers the device's TLS certificate fingerprint; the app pins it and refuses any other certificate | `36_pairing`, app contract tests |
+| Replay | Resend a captured signed request | The signature covers the whole payload; nonces are stored and rejected when reused; expired requests are rejected | `41_api_security` |
+| MCP client | Use its token against the management API | MCP tokens and admin sessions are different identities; rp-api accepts only sessions created with an admin signature | `41_api_security` |
+| Bad change from the app | Lock the device off the network | Every change set arms a device-local rollback timer; the device checks itself after applying; only a signed confirm that reaches the device keeps the change | `35_api_integration` |
+| Internet | Reach the management API | rp-api is allowed only from `device.lan_cidrs` and (optionally) the tailnet; the WAN is always dropped | `20_cli` golden, `41_api_security` |
+
 ## Known limitations
 
 - The DNS firewall only protects clients that use this device as their DNS server. DoH bypasses it; DoT / DoQ are logged by default and can be blocked on the AP with `ap.block_dot`.
