@@ -405,3 +405,30 @@ fn frames_round_trip_and_oversize_is_refused() {
     huge.extend([0u8; 8]);
     assert!(read_frame(&mut huge.as_slice()).is_err());
 }
+
+#[test]
+fn update_without_a_signing_key_is_refused_and_status_says_why() {
+    let d = Dev::new("update");
+    d.pair(&key(1));
+    let st = d.call(Request::UpdateStatus {});
+    assert_eq!(st.result["signing_key"], false);
+    let r = d.signed(&key(1), 1, json!({"op": "install_update", "tag": "v9.9.9"}));
+    assert_eq!(code(&r), "verification_failed");
+    let r = d.signed(&key(1), 2, json!({"op": "install_update", "tag": "latest; reboot"}));
+    assert_eq!(code(&r), "invalid");
+    let r = d.signed(&key(1), 3, json!({"op": "rollback_update"}));
+    assert_eq!(code(&r), "state");
+}
+
+#[test]
+fn uninstall_needs_the_device_id_and_forgets_admins() {
+    let d = Dev::new("uninstall");
+    d.pair(&key(1));
+    let r = d.signed(&key(1), 1, json!({"op": "uninstall", "confirm_device_id": "wrong"}));
+    assert_eq!(code(&r), "invalid");
+    let id = d.dev_id();
+    let r = d.signed(&key(1), 2, json!({"op": "uninstall", "confirm_device_id": id}));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(d.call(Request::Info {}).result["paired"], false);
+    assert_eq!(code(&d.signed(&key(1), 3, json!({"op": "session"}))), "unauthorized");
+}

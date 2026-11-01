@@ -156,7 +156,9 @@ pub fn status_for(code: &str) -> StatusCode {
         "not_found" => StatusCode::NOT_FOUND,
         "conflict" | "busy" | "state" => StatusCode::CONFLICT,
         "invalid" | "bad_request" => StatusCode::BAD_REQUEST,
-        "preflight_failed" | "apply_failed" => StatusCode::UNPROCESSABLE_ENTITY,
+        "preflight_failed" | "apply_failed" | "verification_failed" | "update_failed" => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
         "locked" | "rate_limited" => StatusCode::TOO_MANY_REQUESTS,
         "unavailable" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -781,6 +783,48 @@ async fn audit(State(st): St, _a: Authed) -> ApiResult {
     observe(&st, "/v1/audit?limit=100".into()).await
 }
 
+/// Installed release, previous release, history, and whether a signing key is set.
+#[utoipa::path(get, path = "/v1/update", tag = "update", responses((status = 200, body = Object)), security(("session" = [])))]
+async fn update_status(State(st): St, _a: Authed) -> ApiResult {
+    from_privd(privd(&st, PReq::UpdateStatus {}).await)
+}
+
+/// Install a signed release (signed `install_update`). Long-running.
+#[utoipa::path(post, path = "/v1/update", tag = "update", request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 422, body = ApiError)))]
+async fn update_install(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "install_update", &[])?;
+    signed(&st, peer, env).await
+}
+
+/// Switch back to the previous release (signed `rollback_update`).
+#[utoipa::path(post, path = "/v1/update/rollback", tag = "update", request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 409, body = ApiError)))]
+async fn update_rollback(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "rollback_update", &[])?;
+    signed(&st, peer, env).await
+}
+
+/// Remove every module and forget all admins (signed `uninstall`).
+#[utoipa::path(post, path = "/v1/uninstall", tag = "update", request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 400, body = ApiError)))]
+async fn uninstall(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "uninstall", &[])?;
+    signed(&st, peer, env).await
+}
+
 /// This API's OpenAPI document.
 #[utoipa::path(get, path = "/v1/openapi.json", tag = "device", responses((status = 200, body = Object)))]
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
@@ -807,7 +851,8 @@ impl utoipa::Modify for SecurityAddon {
     paths(info, pair, pairing_open, session, logout, me, capabilities, status, modules, config, module_config,
           list_changesets, get_changeset, create_changeset, cs_preflight, cs_apply, cs_confirm, cs_rollback,
           set_secret, admins, revoke_admin, actions, approve, deny, mcp_tools, mcp_clients, mcp_add, mcp_remove,
-          health, inventory, ap_clients, vpn_status, dns_events, dns_stats, flows, firewall_rules, audit, openapi_json),
+          health, inventory, ap_clients, vpn_status, dns_events, dns_stats, flows, firewall_rules, audit,
+          update_status, update_install, update_rollback, uninstall, openapi_json),
     components(schemas(SignedEnvelope, PairRequest, ApiError)),
     modifiers(&SecurityAddon),
 )]
@@ -850,6 +895,9 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/v1/flows", get(flows))
         .route("/v1/firewall/rules", get(firewall_rules))
         .route("/v1/audit/events", get(audit))
+        .route("/v1/update", get(update_status).post(update_install))
+        .route("/v1/update/rollback", post(update_rollback))
+        .route("/v1/uninstall", post(uninstall))
         .fallback(|| async {
             ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such endpoint")
         })

@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 mod console;
 mod dnsprobe;
 mod https;
+mod release;
 mod secrets;
 mod tput;
 
@@ -25,6 +26,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Release signing and test releases (minisign).
+    #[command(subcommand)]
+    Release(release::ReleaseCmd),
     /// Console API helpers (signing, pairing proofs, rp-privd requests).
     #[command(subcommand)]
     Console(console::ConsoleCmd),
@@ -159,6 +163,13 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Cmd::Release(c) => match release::run(c) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Console(c) => match console::run(c) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

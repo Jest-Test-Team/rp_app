@@ -48,6 +48,8 @@ pub enum Request {
         id: String,
     },
     ListAdmins {},
+    /// Installed release, previous release and update history.
+    UpdateStatus {},
     /// MCP client names and capabilities (never token hashes).
     McpClients {},
     Pair {
@@ -111,6 +113,16 @@ pub enum SignedOp {
     McpRemoveClient {
         name: String,
     },
+    /// Install a signed release (all binaries at once, automatic switch-back).
+    InstallUpdate {
+        tag: String,
+    },
+    RollbackUpdate {},
+    /// Remove every module (api last) and forget all admins.
+    /// `confirm_device_id` must repeat this device's id.
+    Uninstall {
+        confirm_device_id: String,
+    },
 }
 
 impl SignedOp {
@@ -129,6 +141,9 @@ impl SignedOp {
             Self::OpenPairing { .. } => "open_pairing",
             Self::McpAddClient { .. } => "mcp_add_client",
             Self::McpRemoveClient { .. } => "mcp_remove_client",
+            Self::InstallUpdate { .. } => "install_update",
+            Self::RollbackUpdate {} => "rollback_update",
+            Self::Uninstall { .. } => "uninstall",
         }
     }
 
@@ -330,6 +345,13 @@ pub fn handle(ctx: &Ctx, req: Request) -> Response {
                 .map(|a| json!({"id": a.id, "name": a.name, "added_at": a.added_at}))
                 .collect();
             Response::ok(Value::Array(v))
+        }
+        Request::UpdateStatus {} => {
+            let mut v = serde_json::to_value(rp_core::update::load_state(&t)).unwrap();
+            v["live"] = json!(rp_core::update::live_tag(&t));
+            v["running_version"] = json!(env!("CARGO_PKG_VERSION"));
+            v["signing_key"] = json!(ctx.p(rp_core::update::PUBKEY).exists());
+            Response::ok(v)
         }
         Request::McpClients {} => {
             let Ok(c) = rp_core::config::load(&ctx.config) else {
@@ -546,6 +568,59 @@ fn run_op(
                 Err(e) => Response::err("invalid", e),
             }
         }
+        SignedOp::InstallUpdate { tag } => {
+            let _lock = match cs::Lock::acquire(&t) {
+                Ok(l) => l,
+                Err(e) => return cs_err(e),
+            };
+            let o = rp_core::update::Options {
+                tag: tag.clone(),
+                base_url: rp_core::update::DEFAULT_BASE.into(),
+                target: None,
+                config: ctx.config.clone(),
+                settle: std::time::Duration::from_secs(if ctx.root == Path::new("/") {
+                    5
+                } else {
+                    0
+                }),
+                dry_run: false,
+            };
+            update_result(rp_core::update::install(&t, &o))
+        }
+        SignedOp::RollbackUpdate {} => {
+            let _lock = match cs::Lock::acquire(&t) {
+                Ok(l) => l,
+                Err(e) => return cs_err(e),
+            };
+            let settle =
+                std::time::Duration::from_secs(if ctx.root == Path::new("/") { 5 } else { 0 });
+            update_result(rp_core::update::rollback(&t, settle))
+        }
+        SignedOp::Uninstall { confirm_device_id } => {
+            let dev = device_id(&ctx.root).unwrap_or_default();
+            if confirm_device_id != &dev {
+                return Response::err("invalid", "confirm_device_id must repeat this device's id");
+            }
+            let _lock = match cs::Lock::acquire(&t) {
+                Ok(l) => l,
+                Err(e) => return cs_err(e),
+            };
+            let state = t.load_state();
+            let mut removed = vec![];
+            // Everything else first, the console API (our own access) last.
+            for m in ["firewall", "ap", "vpn", "dns", "agent", "base", "api"] {
+                if state.modules.get(m).is_some_and(|s| !s.rolled_back) {
+                    if let Some(module) = rp_core::module::lookup(m) {
+                        if rp_core::apply::rollback(module.as_ref(), &t, None).is_ok() {
+                            removed.push(m);
+                        }
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(ctx.p(ADMINS));
+            let _ = std::fs::remove_file(ctx.p(PAIRING));
+            Response::ok(json!({"removed": removed, "admins_removed": true}))
+        }
         SignedOp::McpRemoveClient { name } => {
             let c = match cfg() {
                 Ok(c) => c,
@@ -562,6 +637,26 @@ fn run_op(
                 }
                 Err(e) => Response::err("not_found", e),
             }
+        }
+    }
+}
+
+fn update_result(r: Result<rp_core::update::Report, rp_core::update::UpdateError>) -> Response {
+    use rp_core::update::UpdateError as E;
+    match r {
+        Ok(rep) => Response::ok(serde_json::to_value(rep).unwrap()),
+        Err(e) => {
+            let code = match &e {
+                E::BadTag(_) => "invalid",
+                E::NoKey | E::Signature(_) | E::Checksum(_) | E::Archive(_) => {
+                    "verification_failed"
+                }
+                E::SmokeTest(_) | E::RolledBack(..) => "update_failed",
+                E::NoPrevious => "state",
+                E::Download(_) => "unavailable",
+                E::Io(_) => "internal",
+            };
+            Response::err(code, e.to_string())
         }
     }
 }

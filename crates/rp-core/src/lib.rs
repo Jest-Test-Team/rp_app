@@ -19,6 +19,7 @@ pub mod preflight;
 pub mod provision;
 pub mod runner;
 pub mod secrets;
+pub mod update;
 pub mod vpn;
 pub mod wg;
 

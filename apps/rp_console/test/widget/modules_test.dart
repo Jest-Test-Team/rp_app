@@ -148,4 +148,34 @@ void main() {
     expect(code['secret'], kSecret);
     expect(code['cert'], kCert);
   });
+
+  testWidgets('Settings: check for updates, install a signed release, go back', (t) async {
+    final h = await onDevice(t, 'Settings');
+    expect(find.text('v0.2.0'), findsOneWidget);
+    await tapKey(t, 'upd-check');
+    await tapKey(t, 'upd-install');
+    expect(find.text('Updated to v0.2.1.'), findsOneWidget);
+    expect(h.device.live, 'v0.2.1');
+    final call = h.device.calls.lastWhere((c) => c.path == '/v1/update' && c.method == 'POST');
+    expect(jsonDecode((call.body as Map)['payload'] as String), {'op': 'install_update', 'tag': 'v0.2.1'});
+    await tapKey(t, 'upd-rollback');
+    expect(h.device.live, 'v0.2.0');
+  });
+
+  testWidgets('Settings: a device without a signing key is explained, no install offered', (t) async {
+    await onDevice(t, 'Settings', prep: (d) => d.signingKey = false);
+    expect(find.byKey(const Key('upd-nokey')), findsOneWidget);
+    await tapKey(t, 'upd-check');
+    expect(find.byKey(const Key('upd-install')), findsNothing);
+  });
+
+  testWidgets('Settings: removal needs the device name typed, then forgets the device', (t) async {
+    final h = await onDevice(t, 'Settings');
+    await tapKey(t, 'uninstall');
+    expect(t.widget<FilledButton>(find.byKey(const Key('uninstall-go'))).onPressed, isNull);
+    await enter(t, 'uninstall-confirm', 'rp-demo');
+    await tapKey(t, 'uninstall-go');
+    expect(h.device.uninstalled, isTrue);
+    expect(await h.services.vault.devices(), isEmpty);
+  });
 }

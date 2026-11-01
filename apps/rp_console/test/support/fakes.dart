@@ -86,6 +86,10 @@ class FakeDevice implements Transport {
   final actions = <Map<String, Object?>>[];
   final mcpClients = <Map<String, Object?>>[];
   String? preflightFail;
+  String live = 'v0.2.0';
+  String? previous;
+  bool signingKey = true;
+  bool uninstalled = false;
   bool applyFails = false;
 
   ApiException _err(int s, String code, String msg, [Object? details]) => ApiException(s, code, msg, details);
@@ -236,6 +240,9 @@ class FakeDevice implements Transport {
         'entries': [],
       };
     }
+    if (p == '/v1/update') {
+      return {'live': live, 'previous': previous, 'running_version': '0.2.0', 'signing_key': signingKey, 'history': []};
+    }
     if (p == '/v1/admins') {
       return {
         'admins': [
@@ -345,6 +352,30 @@ class FakeDevice implements Transport {
       _bound(op, 'mcp_remove_client', 'name', mr.group(1));
       mcpClients.removeWhere((c) => c['name'] == mr.group(1));
       return {'removed': mr.group(1)};
+    }
+    if (p == '/v1/update') {
+      _bound(op, 'install_update');
+      if (!signingKey) throw _err(422, 'verification_failed', 'no update signing key on this device');
+      previous = live;
+      live = op['tag'] as String;
+      return {'tag': live, 'previous': previous};
+    }
+    if (p == '/v1/update/rollback') {
+      _bound(op, 'rollback_update');
+      if (previous == null) throw _err(409, 'state', 'nothing to roll back to');
+      final x = live;
+      live = previous!;
+      previous = x;
+      return {'tag': live};
+    }
+    if (p == '/v1/uninstall') {
+      _bound(op, 'uninstall');
+      if (op['confirm_device_id'] != kDevice) throw _err(400, 'invalid', 'confirm_device_id');
+      uninstalled = true;
+      admins.clear();
+      return {
+        'removed': ['base', 'api'],
+      };
     }
     if (p == '/v1/pairing/open') {
       _bound(op, 'open_pairing');

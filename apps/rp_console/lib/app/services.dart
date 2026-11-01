@@ -22,19 +22,22 @@ class Services {
     TransportFactory? transport,
     ShellFactory? shell,
     Future<ReleaseInfo> Function()? release,
+    Future<String?> Function()? latest,
     this.desktop = false,
   }) : transport = transport ?? ((h, p, pin) => PinnedTransport(host: h, port: p, pin: pin)),
        shell =
            shell ??
            (({required host, required user, required password, required verifyHostKey}) =>
                DartSshShell.connect(host: host, user: user, password: password, verifyHostKey: verifyHostKey)),
-       release = release ?? fetchRelease;
+       release = release ?? fetchRelease,
+       latest = latest ?? latestTag;
 
   final Vault vault;
   final Discoverer discoverer;
   final TransportFactory transport;
   final ShellFactory shell;
   final Future<ReleaseInfo> Function() release;
+  final Future<String?> Function() latest;
 
   /// Can write SD cards (desktop builds).
   final bool desktop;

@@ -21,6 +21,7 @@ class Harness {
   final bool desktop;
   final FakeShell shell;
   final store = MemoryStore();
+  String? latestRelease = 'v0.2.1';
   late final Services services = Services(
     vault: Vault(store),
     discoverer: StaticDiscoverer([Found(name: 'RP Security on rp-demo', host: 'rp-demo.local', port: 8443)]),
@@ -30,6 +31,7 @@ class Harness {
       return shell;
     },
     release: () async => ReleaseInfo('v0.2.0', 'a' * 64),
+    latest: () async => latestRelease,
     desktop: desktop,
   );
   late final AppState state = AppState(services);

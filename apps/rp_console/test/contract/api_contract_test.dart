@@ -30,6 +30,7 @@ void main() {
   final port = int.tryParse(addr?.split(':').last ?? '') ?? 0;
 
   late RpClient client;
+  late RpClient secondClient;
   late AdminKey key;
   PinnedTransport pinned() => PinnedTransport(host: host, port: port, pin: pin);
 
@@ -237,6 +238,16 @@ void main() {
       expect(cs.configDiff, contains(keys.publicB64));
     });
 
+    test('updates are refused on a device without a signing key', () async {
+      final st = await client.updateStatus();
+      expect(st['signing_key'], false);
+      await expectLater(
+        client.installUpdate('v9.9.9'),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'verification_failed')),
+      );
+      await expectLater(client.rollbackUpdate(), throwsA(isA<ApiException>().having((e) => e.code, 'code', 'state')));
+    });
+
     test('a second app pairs; revoking the first locks it out', () async {
       final open = await client.openPairing(validMinutes: 5);
       final second = await AdminKey.fromSeed(List.filled(32, 43));
@@ -256,6 +267,18 @@ void main() {
       await c2.revokeAdmin(key.adminId);
       final fresh = RpClient(pinned(), key: key, deviceId: client.deviceId);
       await expectLater(fresh.status(), throwsA(isA<ApiException>().having((e) => e.status, 'status', 401)));
+      secondClient = c2;
+    });
+
+    test('uninstall rolls every module back and forgets all admins', () async {
+      final r = await secondClient.uninstall();
+      // Everything that was applied, base after the modules that need it.
+      expect(r['removed'], ['firewall', 'ap', 'dns', 'base']);
+      expect((await secondClient.info()).paired, isFalse);
+      await expectLater(
+        secondClient.openSession(),
+        throwsA(isA<ApiException>().having((e) => e.status, 'status', 401)),
+      );
     });
   });
 }

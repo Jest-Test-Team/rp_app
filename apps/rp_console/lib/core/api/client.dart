@@ -127,6 +127,7 @@ class RpClient {
   Future<Map<String, Object?>> firewallRules() async => asMap(await _get('/v1/firewall/rules'));
   Future<Map<String, Object?>> auditEvents() async => asMap(await _get('/v1/audit/events'));
   Future<Map<String, Object?>> openapi() async => asMap(await transport.request('GET', '/v1/openapi.json'));
+  Future<Map<String, Object?>> updateStatus() async => asMap(await _get('/v1/update'));
 
   // --------------------------------------------------------------- changes
 
@@ -173,6 +174,16 @@ class RpClient {
 
   Future<Map<String, Object?>> openPairing({int validMinutes = 10}) =>
       _signed('POST', '/v1/pairing/open', {'op': 'open_pairing', 'valid_minutes': validMinutes});
+
+  /// Install a signed release on the device (verified there; all-or-nothing).
+  Future<Map<String, Object?>> installUpdate(String tag) =>
+      _signed('POST', '/v1/update', {'op': 'install_update', 'tag': tag});
+
+  Future<Map<String, Object?>> rollbackUpdate() => _signed('POST', '/v1/update/rollback', {'op': 'rollback_update'});
+
+  /// Remove every module and forget all admins. Irreversible from the app.
+  Future<Map<String, Object?>> uninstall() =>
+      _signed('POST', '/v1/uninstall', {'op': 'uninstall', 'confirm_device_id': deviceId});
 
   /// Returns the new client's token: show it once, never store it.
   Future<Map<String, Object?>> mcpAddClient(String name, List<String> capabilities) =>

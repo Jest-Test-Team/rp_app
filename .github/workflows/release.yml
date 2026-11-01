@@ -77,6 +77,22 @@ jobs:
       - name: SHA256SUMS
         working-directory: dist
         run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Sign SHA256SUMS (minisign)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY is not set: this build is unsigned and cannot be published"
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          cargo run -q --release -p rp-probe -- release sign --secret-key-file "$RUNNER_TEMP/minisign.key" \
+            --password-env MINISIGN_PASSWORD --file dist/SHA256SUMS
+          rm -f "$RUNNER_TEMP/minisign.key"
+          test -f deploy/minisign.pub && cargo run -q --release -p rp-probe -- release verify \
+            --public-key-file deploy/minisign.pub --file dist/SHA256SUMS
       - name: Build provenance attestation
         if: github.event_name == 'push' || inputs.publish
         uses: actions/attest-build-provenance@v1
@@ -93,4 +109,6 @@ jobs:
           TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid tag '$TAG'"; exit 1; }
+          # Devices refuse unsigned updates; so does the release.
+          [[ -f dist/SHA256SUMS.minisig ]] || { echo "refusing to publish an unsigned release"; exit 1; }
           gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag

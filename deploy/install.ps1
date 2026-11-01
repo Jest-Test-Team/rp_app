@@ -136,6 +136,8 @@ function Build-SourceArchive([string] $TargetTriple, [string] $WorkDir) {
     }
     Copy-Item (Join-Path $src 'configs/rp.example.toml') (Join-Path $stage 'configs/')
     Copy-Item (Join-Path $src 'deploy/install.sh') $stage
+    $pub = Join-Path $src 'deploy/minisign.pub'
+    if (Test-Path $pub) { Copy-Item $pub $stage }
     tar -C $WorkDir -czf $out $name
     if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
     return $out

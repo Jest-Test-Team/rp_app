@@ -38,3 +38,21 @@ Future<ReleaseInfo> fetchRelease({String tag = kReleaseTag, String repo = kRepo}
     c.close(force: true);
   }
 }
+
+/// The newest published release tag (GitHub API), or null.
+Future<String?> latestTag({String repo = kRepo}) async {
+  final c = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+  try {
+    final req = await c.getUrl(Uri.parse('https://api.github.com/repos/$repo/releases/latest'));
+    req.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+    final resp = await req.close();
+    if (resp.statusCode != 200) return null;
+    final v = jsonDecode(await resp.transform(utf8.decoder).join());
+    final tag = v is Map ? v['tag_name'] : null;
+    return tag is String && RegExp(r'^v\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$').hasMatch(tag) ? tag : null;
+  } on Exception {
+    return null;
+  } finally {
+    c.close(force: true);
+  }
+}

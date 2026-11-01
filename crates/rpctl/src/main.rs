@@ -145,6 +145,9 @@ enum Cmd {
     /// Prepare a freshly flashed SD card (boot partition).
     #[command(subcommand)]
     Bootfs(BootfsCmd),
+    /// Signed software updates (all binaries switch together, automatic switch-back).
+    #[command(subcommand)]
+    Update(UpdateCmd),
     /// Get this device ready for the console app (idempotent): write a config
     /// if there is none, enable [agent] and [api], apply base, agent and api,
     /// and open pairing when no app is paired yet.
@@ -201,6 +204,33 @@ enum BootfsCmd {
         #[arg(long)]
         no_qr: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// Download, verify (minisign + SHA-256), self-test and switch to a release.
+    Install {
+        #[arg(long)]
+        tag: String,
+        /// Release download base (https://…/releases/download or file:///dir).
+        #[arg(long, default_value = rp_core::update::DEFAULT_BASE)]
+        base_url: String,
+        #[arg(long)]
+        target: Option<String>,
+        /// Verify only; switch nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Seconds to wait before checking the restarted services.
+        #[arg(long, default_value_t = 5)]
+        settle_secs: u64,
+    },
+    /// Switch back to the previous release.
+    Rollback {
+        #[arg(long, default_value_t = 5)]
+        settle_secs: u64,
+    },
+    /// Current and previous release, and history.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -794,6 +824,37 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 println!("  host {}.local:8443", spec.hostname);
                 println!("  code {}", spec.pairing_secret);
             }
+        }
+        Cmd::Update(c) => {
+            use rp_core::update as up;
+            let _lock =
+                rp_core::changeset::Lock::acquire(&target).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let out = match c {
+                UpdateCmd::Install { tag, base_url, target: triple, dry_run, settle_secs } => {
+                    let o = up::Options {
+                        tag: tag.clone(),
+                        base_url: base_url.clone(),
+                        target: triple.clone(),
+                        config: cli.config.clone(),
+                        settle: std::time::Duration::from_secs(*settle_secs),
+                        dry_run: *dry_run,
+                    };
+                    serde_json::to_value(up::install(&target, &o)?)?
+                }
+                UpdateCmd::Rollback { settle_secs } => serde_json::to_value(up::rollback(
+                    &target,
+                    std::time::Duration::from_secs(*settle_secs),
+                )?)?,
+                UpdateCmd::Status => {
+                    let mut v = serde_json::to_value(up::load_state(&target))?;
+                    v["live"] = serde_json::json!(up::live_tag(&target));
+                    v
+                }
+            };
+            println!(
+                "{}",
+                if cli.json { out.to_string() } else { serde_json::to_string_pretty(&out)? }
+            );
         }
         Cmd::Setup { pairing_minutes, no_pairing, no_packages } => {
             return setup(cli, &target, *pairing_minutes, *no_pairing, *no_packages);
