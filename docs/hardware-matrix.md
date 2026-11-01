@@ -20,6 +20,11 @@
 - kernel 已內建：wireguard、nf_tables、nft_masq、nft_chain_nat、tun、bridge、8021q、mac80211_hwsim
 - 新版 kernel 沒有 `/proc/net/nf_conntrack`；agent 改用 `conntrack -L -o extended`
 
+## 電源
+
+- Pi 2 + USB Wi-Fi 需要 **5 V／2.5 A**。從電腦 USB 孔供電時，這台裝置實測持續回報**電壓不足**（`get_system_health` 的 `under_voltage`）。
+- 電壓不足會造成降頻、SD 卡損毀、USB 網卡斷線；24/7 運作前請換專用電源。
+
 ## 重要前提
 
 - 要把 wlan0 改成 AP，必須先有**另一條管理連線**（eth0）。preflight 會拒絕在管理介面上啟用 AP。

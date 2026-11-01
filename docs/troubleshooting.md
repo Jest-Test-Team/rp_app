@@ -122,6 +122,7 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 | 稽核 `audit verify` 顯示 chain 斷掉 | rp-agent 與 `rpctl approve` 兩個 process 寫同一個檔，agent 快取了舊的鏈頭 | 每次寫入都加檔案鎖並重新讀取鏈頭 |
 | `get_flows` 永遠是空的 | 新版 kernel 沒有 `/proc/net/nf_conntrack` | agent 改用 `conntrack -L -o extended`（agent 模組會安裝 `conntrack`） |
 | 防火牆重載後 quarantine 消失 | 重載會重建 table，timeout 元素跟著消失 | `rp-firewall` 啟動／重載後執行 `rpctl quarantine-restore` 補回剩餘時間 |
+| `get_system_health` 回報 critical：under_voltage | 電源不足（例如由電腦 USB 孔供電） | 換 5 V／2.5 A 電源；agent 讀 firmware 的 `rpi_volt` 警報（沙箱看不到 `vcgencmd`） |
 | `apply` 在 `apt-get install` 失敗 | apt 每日更新／unattended-upgrades 正持有 dpkg 鎖 | apt 以 `-o DPkg::Lock::Timeout=120` 執行；失敗時尚未安裝任何檔案 |
 | `rp-mcp.service` 啟動失敗（`217/USER`） | 另建的 `rp-mcp` 群組與 `DynamicUser=` 自動配置的同名使用者衝突 | token 群組改名為 `rp-mcp-clients`；舊的 `rp-mcp` 群組需 `groupdel` |
 | `ssh <host> rp-mcp --stdio` 讀不到 agent token | token 原本只有 root 可讀 | token 改為 `0640 root:rp-mcp-clients`；`usermod -aG rp-mcp-clients <user>` 後重新登入 |

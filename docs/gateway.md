@@ -59,6 +59,19 @@ sudo rpctl rollback <module>
 - 預設丟棄所有 inbound；SSH 只允許 `ssh.allow_from`（預設為 `device.lan_cidrs`）；允許 mDNS 以保留 `<hostname>.local`
 - sysctl 強化、sshd 強化（drop-in 名為 `10-rp.conf`，優先於 cloud-init 的設定）、unattended-upgrades
 - 確認可用金鑰登入後，再設 `ssh.password_auth = false`；沒有 `authorized_keys` 時 preflight 會拒絕
+- journald 上限（降低 SD 卡磨損）：`base.journal_max_mb`（預設 64；設 0 不管理）
+
+### 裝置健康
+
+`rp-agent snapshot health`（或 MCP `get_system_health`）回報溫度、電壓不足、CPU 頻率、NTP、磁碟與記憶體，並給出 `status`（ok／warning／critical）與 `alerts`：
+
+| 警報 | 門檻 |
+|---|---|
+| under_voltage | firmware 警報為 1（critical） |
+| temperature | ≥ 70 °C warning、≥ 80 °C critical |
+| disk | ≥ 90% warning、≥ 95% critical |
+| memory | 可用 < 10% warning |
+| clock | NTP 未同步 warning |
 
 ## 4. VPN exit node
 
