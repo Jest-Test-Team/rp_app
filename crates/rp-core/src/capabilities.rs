@@ -93,10 +93,10 @@ pub fn parse_iw_list(text: &str) -> BTreeMap<String, Phy> {
                 phy.bands.push(b.into());
             }
         }
-        // SAE shows up as an authentication/AKM suite or an extended feature
-        // (e.g. SAE_OFFLOAD); hostapd can also do SAE in software on any
-        // mac80211 driver that lists it. A heuristic: unknown drivers get WPA2.
-        if t.contains("SAE") {
+        // WPA3 for an access point: an AKM suite list entry `* SAE` or the
+        // SAE_OFFLOAD_AP extended feature. "SAE with AUTHENTICATE command" is
+        // station-side only and does not count. Unknown drivers get WPA2.
+        if t == "* SAE" || t.contains("SAE_OFFLOAD_AP") {
             phy.sae = true;
         }
     }
@@ -141,7 +141,12 @@ pub fn gather(t: &Target, cfg: Option<&Config>, peer: Option<IpAddr>) -> HwFacts
         })
         .unwrap_or_default();
 
-    let phys = run_stdout(t, &["iw", "list"]).map(|s| parse_iw_list(&s));
+    // iw lives in /usr/sbin, which is not on a non-root PATH.
+    let phys = ["iw", "/usr/sbin/iw", "/sbin/iw"]
+        .iter()
+        .filter_map(|b| run_stdout(t, &[b, "list"]))
+        .map(|s| parse_iw_list(&s))
+        .find(|m| !m.is_empty());
     let mut names: Vec<String> = fs::read_dir(under_root(&t.root, "/sys/class/net"))
         .map(|rd| rd.flatten().filter_map(|e| e.file_name().into_string().ok()).collect())
         .unwrap_or_default();
@@ -198,8 +203,15 @@ pub fn gather(t: &Target, cfg: Option<&Config>, peer: Option<IpAddr>) -> HwFacts
         })
         .collect();
 
+    // Loaded, or shipped as a module / built in for the running kernel.
+    let release = run_stdout(t, &["uname", "-r"]).map(|s| s.trim().to_string());
     let kernel_wireguard = under_root(&t.root, "/sys/module/wireguard").exists()
-        || run_stdout(t, &["modinfo", "-n", "wireguard"]).is_some();
+        || release.is_some_and(|r| {
+            ["modules.dep", "modules.builtin"].iter().any(|f| {
+                read(t, &format!("/lib/modules/{r}/{f}"))
+                    .is_some_and(|m| m.contains("/wireguard.ko"))
+            })
+        });
 
     let mgmt_if = peer
         .and_then(|p| route_dev(t, p))
@@ -350,9 +362,12 @@ mod tests {
     fn parses_iw_list() {
         let p = parse_iw_list(IW);
         assert_eq!(p["phy0"], Phy { ap_mode: true, bands: vec!["2.4".into()], sae: false });
-        let p = parse_iw_list(&IW.replace("* AP", "* P2P-client").replace("CCMP-128", "SAE"));
+        let p = parse_iw_list(&IW.replace("* AP", "* P2P-client"));
         assert!(!p["phy0"].ap_mode);
-        assert!(p["phy0"].sae);
+        let sta_only = format!("{IW}\tDevice supports SAE with AUTHENTICATE command\n");
+        assert!(!parse_iw_list(&sta_only)["phy0"].sae, "station-side SAE is not WPA3 AP");
+        let akm = format!("{IW}\tSupported AKM suites:\n\t\t* PSK\n\t\t* SAE\n");
+        assert!(parse_iw_list(&akm)["phy0"].sae);
         assert!(parse_iw_list("").is_empty());
     }
 
@@ -451,9 +466,13 @@ mod tests {
         mk("/sys/class/net/wlan0/carrier", "0\n");
         mk("/sys/class/net/wlan0/phy80211/name", "phy0\n");
         mk("/sys/class/net/lo/carrier", "1\n");
-        mk("/sys/module/wireguard/x", "");
+        mk(
+            "/lib/modules/6.18.0-test/modules.dep",
+            "kernel/drivers/net/wireguard/wireguard.ko.xz: x\n",
+        );
         let r = RecordingRunner::default()
             .with_response("uname -m", "armv7l\n")
+            .with_response("uname -r", "6.18.0-test\n")
             .with_response("iw list", IW)
             .with_response("ip -j route get", r#"[{"dst":"192.0.2.5","dev":"eth0"}]"#);
         let t = Target { root: root.clone(), runner: &r };
