@@ -132,6 +132,21 @@ sudo systemctl restart rp-mcp
 - Streamable HTTP：`http://<MCP_LISTEN>/mcp`，Header `Authorization: Bearer <TOKEN>`
 - stdio：先 `sudo usermod -aG rp-mcp-clients <USER>` 並重新登入，再用 `ssh <USER>@<PI_HOST> rp-mcp --stdio`（預設只有 read 能力；稽核寫到 `~/.local/state/rp-mcp/`）
 
+### 接到 Claude Code（建議：受限制的專用金鑰）
+
+MCP client 在背景啟動、無法輸入密碼，所以用一把沒有 passphrase、但**只能執行 rp-mcp** 的專用金鑰：
+
+```bash
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/rp_mcp_ed25519 -C 'rp-mcp'
+# 在裝置的 ~/.ssh/authorized_keys 加一行（restrict = 無 shell、無 pty、無 forwarding）：
+#   restrict,command="/usr/local/bin/rp-mcp --stdio" ssh-ed25519 AAAA... rp-mcp
+claude mcp add --scope user rp-gateway -- \
+  ssh -i ~/.ssh/rp_mcp_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes <USER>@<PI_HOST> rp-mcp --stdio
+claude mcp list        # rp-gateway: ✔ Connected
+```
+
+金鑰外洩時，對方也只能用 MCP 的唯讀工具；撤銷就是刪掉 authorized_keys 裡那一行。
+
 特權動作：
 
 ```bash
