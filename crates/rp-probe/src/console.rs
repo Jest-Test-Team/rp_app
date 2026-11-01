@@ -6,20 +6,32 @@ use ed25519_dalek::SigningKey;
 
 #[derive(Subcommand)]
 pub enum ConsoleCmd {
-    /// Base64 public key of the test key with this seed (never use outside tests).
-    Pubkey {
+    /// Create a random admin key file (mode 600) for tests against real devices.
+    Keygen {
         #[arg(long)]
-        seed: u8,
+        out: std::path::PathBuf,
     },
-    /// Admin id for the test key with this seed.
-    AdminId {
-        #[arg(long)]
+    /// Base64 public key of a test key (seed, or --key-file).
+    Pubkey {
+        #[arg(long, default_value_t = 0)]
         seed: u8,
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
+    },
+    /// Admin id of a test key.
+    AdminId {
+        #[arg(long, default_value_t = 0)]
+        seed: u8,
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
     },
     /// Print a signed envelope as JSON.
     Sign {
-        #[arg(long)]
+        /// Deterministic test key (never pair one with a real device).
+        #[arg(long, default_value_t = 0)]
         seed: u8,
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
         #[arg(long)]
         device: String,
         #[arg(long)]
@@ -69,22 +81,42 @@ pub enum ConsoleCmd {
     },
 }
 
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8, file: Option<&std::path::Path>) -> anyhow::Result<SigningKey> {
+    match file {
+        Some(f) => {
+            let raw = hex::decode(std::fs::read_to_string(f)?.trim())?;
+            let b: [u8; 32] =
+                raw.try_into().map_err(|_| anyhow::anyhow!("key file must hold 32 bytes hex"))?;
+            Ok(SigningKey::from_bytes(&b))
+        }
+        None => {
+            anyhow::ensure!(seed != 0, "give --seed N (test keys) or --key-file");
+            Ok(SigningKey::from_bytes(&[seed; 32]))
+        }
+    }
 }
 
 pub fn run(c: ConsoleCmd) -> anyhow::Result<()> {
     use rp_policy::{admin, pairing};
     match c {
-        ConsoleCmd::Pubkey { seed } => println!("{}", admin::public_key_b64(&key(seed))),
-        ConsoleCmd::AdminId { seed } => {
-            println!("{}", admin::admin_id(&admin::public_key_b64(&key(seed))))
+        ConsoleCmd::Keygen { out } => {
+            rp_policy::admin::write_private(&out, &rp_policy::pairing::new_secret())?;
+            println!("{}", admin::public_key_b64(&key(0, Some(&out))?));
         }
-        ConsoleCmd::Sign { seed, device, nonce, expires_at, payload } => {
+        ConsoleCmd::Pubkey { seed, key_file } => {
+            println!("{}", admin::public_key_b64(&key(seed, key_file.as_deref())?))
+        }
+        ConsoleCmd::AdminId { seed, key_file } => {
+            println!(
+                "{}",
+                admin::admin_id(&admin::public_key_b64(&key(seed, key_file.as_deref())?))
+            )
+        }
+        ConsoleCmd::Sign { seed, key_file, device, nonce, expires_at, payload } => {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()
                 as i64;
-            let s =
-                admin::sign(&key(seed), &device, &nonce, expires_at.unwrap_or(now + 60), &payload);
+            let k = key(seed, key_file.as_deref())?;
+            let s = admin::sign(&k, &device, &nonce, expires_at.unwrap_or(now + 60), &payload);
             println!("{}", serde_json::to_string(&s)?);
         }
         ConsoleCmd::PairProof { secret, device, pubkey, nonce } => {
