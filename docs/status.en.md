@@ -71,7 +71,10 @@
 | A real IoT client joining | ✅ gets 10.77.0.x, signal about -53 dBm |
 | IoT client internet access | ❌→fixed: the ap module never enabled `ip_forward`; it now renders `/etc/sysctl.d/91-rp-ap.conf`, re-applied and confirmed, `ip_forward=1` |
 | netns integration tests after the fix (Pi kernel) | 16 / 16 (with the old rpctl 4 / 8 AP tests fail, proving the tests now catch it) |
-| IoT client isolation (cannot reach the LAN), throughput | ⏳ to test once the client rejoins |
+| IoT client internet access (after the fix) | ✅ websites load; conntrack: 51 flows to the internet, 3 to the gateway |
+| IoT client isolation: router admin page | ✅ fails (dropped); 0 conntrack flows to any private / LAN address |
+| IoT client DoT (853) | ⚠️ the phone's "Private DNS" uses DoT and bypasses rp-dns; logged only (`rp-ap-dot`), not blocked |
+| AP throughput | ⏳ not measured |
 
 ## To-dos (need the user)
 

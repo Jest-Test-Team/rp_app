@@ -71,7 +71,10 @@
 | IoT client 實際連線 | ✅ 取得 10.77.0.x、訊號約 -53 dBm |
 | IoT client 上網 | ❌→修正：ap 模組原本沒開 `ip_forward`；新增 `/etc/sysctl.d/91-rp-ap.conf` 後重新套用並 confirm，`ip_forward=1` |
 | 修正後 netns 整合測試（Pi kernel） | 16／16（舊版 rpctl：AP 測試 4／8 失敗，證明測試能抓到此問題） |
-| IoT client 隔離（連不到 LAN）、吞吐 | ⏳ 待 client 重新連線後實測 |
+| IoT client 上網（修正後） | ✅ 網站可開；conntrack：51 條連線到公網、3 條到 gateway |
+| IoT client 隔離：連路由器管理頁 | ✅ 失敗（被丟棄）；conntrack 中 0 條連到私有／LAN 位址 |
+| IoT client 的 DoT（853） | ⚠️ 手機的「私人 DNS」走 DoT 繞過 rp-dns，只有記錄（`rp-ap-dot`），未阻擋 |
+| AP 吞吐 | ⏳ 未量測 |
 
 ## 待辦（需要使用者）
 
