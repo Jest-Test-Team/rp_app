@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::apply::{apply, confirm, rollback, ApplyError, ApplyOptions, Target};
-use crate::base::{Base, NFT_PATH, SSHD_PATH};
+use crate::apply::{apply, confirm, rollback, rollback_last, ApplyError, ApplyOptions, Target};
+use crate::base::{Base, JOURNAL_PATH, NFT_PATH, SSHD_PATH};
 use crate::config::parse;
 use crate::files::under_root;
 use crate::runner::RecordingRunner;
@@ -188,4 +188,66 @@ fn vpn_failure_after_early_files_restores_them() {
     let err = apply(&Vpn, &vpn_cfg("tailscale"), &t2, &o).unwrap_err();
     assert!(matches!(err, ApplyError::Command { .. }), "{err}");
     assert!(!under_root(&root, TS_LIST_PATH).exists(), "apt source must be removed again");
+}
+
+fn cfg_no_journal() -> rp_schema::Config {
+    parse(
+        "[device]\nwan_if = \"eth0\"\nlan_cidrs = [\"192.0.2.0/24\"]\n[base]\njournal_max_mb = 0\n",
+    )
+    .unwrap()
+}
+
+/// v1 (no journald file) then v2 (adds it), both confirmed; sshd had an original.
+fn applied_twice(tag: &str, legacy: bool) -> (PathBuf, RecordingRunner) {
+    let root = tmp_root(tag);
+    let sshd = under_root(&root, SSHD_PATH);
+    fs::create_dir_all(sshd.parent().unwrap()).unwrap();
+    fs::write(&sshd, "original\n").unwrap();
+    let r = RecordingRunner::default();
+    let t = Target { root: root.clone(), runner: &r };
+    apply(&Base, &cfg_no_journal(), &t, &opts()).unwrap();
+    confirm(&t).unwrap();
+    if legacy {
+        // State written by an rpctl that did not track a base backup.
+        let mut st = t.load_state();
+        st.modules.get_mut("base").unwrap().base_backup_id.clear();
+        t.save_state(&st).unwrap();
+    }
+    apply(&Base, &cfg(), &t, &opts()).unwrap();
+    confirm(&t).unwrap();
+    assert!(under_root(&root, JOURNAL_PATH).exists());
+    (root, r)
+}
+
+#[test]
+fn rollback_after_reapply_removes_the_module_entirely() {
+    for legacy in [false, true] {
+        let (root, r) = applied_twice(if legacy { "reapply-legacy" } else { "reapply" }, legacy);
+        let t = Target { root: root.clone(), runner: &r };
+        rollback(&Base, &t, None).unwrap();
+        assert_eq!(fs::read_to_string(under_root(&root, SSHD_PATH)).unwrap(), "original\n");
+        assert!(!under_root(&root, NFT_PATH).exists(), "v1 file left behind (legacy={legacy})");
+        assert!(!under_root(&root, JOURNAL_PATH).exists(), "v2-only file left (legacy={legacy})");
+        assert!(t.load_state().modules["base"].rolled_back);
+    }
+}
+
+#[test]
+fn undoing_a_reapply_restores_the_previous_version_and_keeps_the_module() {
+    let root = tmp_root("undo-reapply");
+    let r = RecordingRunner::default();
+    let t = Target { root: root.clone(), runner: &r };
+    apply(&Base, &cfg_no_journal(), &t, &opts()).unwrap();
+    confirm(&t).unwrap();
+    let v1 = t.load_state().modules["base"].backup_id.clone();
+    apply(&Base, &cfg(), &t, &opts()).unwrap(); // not confirmed: the timer fires
+    rollback_last(&Base, &t).unwrap();
+    assert!(!under_root(&root, JOURNAL_PATH).exists(), "v2's new file is removed");
+    assert!(under_root(&root, NFT_PATH).exists(), "v1 stays in place");
+    let st = &t.load_state().modules["base"];
+    assert!(!st.rolled_back && st.confirmed);
+    assert_eq!(st.backup_id, v1);
+    // A later manual rollback still removes everything.
+    rollback(&Base, &t, None).unwrap();
+    assert!(!under_root(&root, NFT_PATH).exists());
 }

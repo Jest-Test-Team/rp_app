@@ -100,9 +100,17 @@ struct Manifest {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ModuleState {
+    /// Backup taken by the latest apply (undoing it restores the previous version).
     pub backup_id: String,
     pub confirmed: bool,
     pub rolled_back: bool,
+    /// Backup holding the state from before the module was first applied, extended
+    /// with every file later applies add. `rpctl rollback <module>` restores this.
+    #[serde(default)]
+    pub base_backup_id: String,
+    /// `backup_id` of the apply before the latest one, if the latest was a re-apply.
+    #[serde(default)]
+    pub prev_backup_id: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -131,7 +139,7 @@ impl Target<'_> {
             .unwrap_or_default()
     }
 
-    fn save_state(&self, state: &State) -> Result<(), ApplyError> {
+    pub(crate) fn save_state(&self, state: &State) -> Result<(), ApplyError> {
         let p = self.state_path();
         write_atomic(&p, &serde_json::to_string_pretty(state).unwrap(), 0o600)
     }
@@ -364,9 +372,31 @@ pub fn apply(
     let _ = fs::remove_dir_all(&staging);
 
     let mut state = t.load_state();
+    let (base_id, prev_id) = match state.modules.get(module.name()) {
+        Some(p) if !p.rolled_back => {
+            // Re-apply. Older state files have no base: the oldest backup was taken
+            // before the module owned anything, so it is the pre-module state.
+            let base = if p.base_backup_id.is_empty() {
+                oldest_backup(t, module.name(), &id).unwrap_or_else(|| p.backup_id.clone())
+            } else {
+                p.base_backup_id.clone()
+            };
+            (base, p.backup_id.clone())
+        }
+        _ => (id.clone(), String::new()),
+    };
+    if base_id != id {
+        extend_base(t, module.name(), &base_id, &id).map_err(fail)?;
+    }
     state.modules.insert(
         module.name().into(),
-        ModuleState { backup_id: id.clone(), confirmed: dead_man.is_none(), rolled_back: false },
+        ModuleState {
+            backup_id: id.clone(),
+            confirmed: dead_man.is_none(),
+            rolled_back: false,
+            base_backup_id: base_id,
+            prev_backup_id: prev_id,
+        },
     );
     t.save_state(&state)?;
 
@@ -417,6 +447,61 @@ pub fn confirm(t: &Target) -> Result<Vec<String>, ApplyError> {
     Ok(done)
 }
 
+fn read_manifest(t: &Target, module: &str, id: &str) -> Result<Manifest, ApplyError> {
+    let mpath = t.backup_dir(module, id).join("manifest.json");
+    let text = fs::read_to_string(&mpath).map_err(|_| ApplyError::NoBackup(module.into()))?;
+    serde_json::from_str(&text)
+        .map_err(|e| ApplyError::Manifest { path: mpath.display().to_string(), msg: e.to_string() })
+}
+
+/// Oldest backup of `module` other than `except` (ids sort by time).
+fn oldest_backup(t: &Target, module: &str, except: &str) -> Option<String> {
+    let dir = t.path(&format!("{STATE_DIR}/backups/{module}"));
+    let mut ids: Vec<String> = fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n != except && t.backup_dir(module, n).join("manifest.json").exists())
+        .collect();
+    ids.sort();
+    ids.into_iter().next()
+}
+
+/// Add to the base backup every file that backup `new` covers but the base does
+/// not: before this apply the module never owned it, so its saved state is the
+/// pre-module state.
+fn extend_base(t: &Target, module: &str, base: &str, new: &str) -> Result<(), ApplyError> {
+    let mut bm = read_manifest(t, module, base)?;
+    let nm = read_manifest(t, module, new)?;
+    let (bdir, ndir) = (t.backup_dir(module, base), t.backup_dir(module, new));
+    let mut changed = false;
+    for e in nm.files {
+        if bm.files.iter().any(|b| b.path == e.path) {
+            continue;
+        }
+        if e.existed {
+            let (src, dst) = (
+                under_root(&ndir.join("files"), &e.path),
+                under_root(&bdir.join("files"), &e.path),
+            );
+            if let Some(p) = dst.parent() {
+                fs::create_dir_all(p).map_err(io(p))?;
+            }
+            fs::copy(&src, &dst).map_err(io(&src))?;
+        }
+        bm.files.push(e);
+        changed = true;
+    }
+    if changed {
+        write_atomic(
+            &bdir.join("manifest.json"),
+            &serde_json::to_string_pretty(&bm).unwrap(),
+            0o600,
+        )?;
+    }
+    Ok(())
+}
+
 /// Restore only the files recorded in backup `id` (no service steps). Used
 /// when an apply fails before anything was activated.
 fn rollback_files(
@@ -448,8 +533,20 @@ fn rollback_files(
     Ok(changes)
 }
 
-/// Restore the files saved by an apply (latest one when `id` is None) and run
-/// the module's rollback steps.
+/// Undo only the latest apply (the dead-man timer uses this): a re-apply goes
+/// back to the previous version and the module stays applied.
+pub fn rollback_last(module: &dyn Module, t: &Target) -> Result<Report, ApplyError> {
+    let id = t
+        .load_state()
+        .modules
+        .get(module.name())
+        .map(|m| m.backup_id.clone())
+        .ok_or_else(|| ApplyError::NoBackup(module.name().into()))?;
+    rollback(module, t, Some(&id))
+}
+
+/// Restore backup `id`, or with `None` remove the module entirely (restore the
+/// state from before it was first applied), and run the rollback steps.
 pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Report, ApplyError> {
     let state = t.load_state();
     let id = match id {
@@ -457,7 +554,13 @@ pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Rep
         None => state
             .modules
             .get(module.name())
-            .map(|m| m.backup_id.clone())
+            .map(|m| {
+                if m.base_backup_id.is_empty() {
+                    m.backup_id.clone()
+                } else {
+                    m.base_backup_id.clone()
+                }
+            })
             .ok_or_else(|| ApplyError::NoBackup(module.name().into()))?,
     };
     // Fail early (before stopping services) if the backup is unusable.
@@ -477,8 +580,13 @@ pub fn rollback(module: &dyn Module, t: &Target, id: Option<&str>) -> Result<Rep
 
     let mut state = t.load_state();
     if let Some(m) = state.modules.get_mut(module.name()) {
-        if m.backup_id == id {
+        let is_base = id == m.base_backup_id || (m.base_backup_id.is_empty() && id == m.backup_id);
+        if is_base || (id == m.backup_id && m.prev_backup_id.is_empty()) {
             m.rolled_back = true;
+        } else if id == m.backup_id {
+            // Undid a re-apply: the previous version is live and was confirmed.
+            m.backup_id = std::mem::take(&mut m.prev_backup_id);
+            m.confirmed = true;
         }
     }
     t.save_state(&state)?;
