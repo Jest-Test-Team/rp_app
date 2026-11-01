@@ -311,16 +311,17 @@ fn print_checks(checks: &[preflight::Check], json: bool) {
 fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
     let target = Target { root: cli.root.clone(), runner };
     // Real changes share one lock with change sets (the app) so they can't interleave.
-    let mutating = match &cli.cmd {
-        Cmd::Apply { dry_run, .. } => !dry_run,
-        Cmd::Confirm | Cmd::Rollback { .. } => true,
-        _ => false,
-    };
-    let _lock = if mutating {
-        Some(rp_core::changeset::Lock::acquire(&target).map_err(|e| anyhow::anyhow!("{e}"))?)
-    } else {
-        None
-    };
+    // The dead-man timer's rollback waits for the lock instead of giving up.
+    use rp_core::changeset::Lock;
+    let _lock = match &cli.cmd {
+        Cmd::Rollback { auto: true, .. } => Some(Lock::wait(&target)),
+        Cmd::Apply { dry_run: false, .. } | Cmd::Confirm | Cmd::Rollback { .. } => {
+            Some(Lock::acquire(&target))
+        }
+        _ => None,
+    }
+    .transpose()
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     match &cli.cmd {
         Cmd::Modules => {
             for m in MODULES {

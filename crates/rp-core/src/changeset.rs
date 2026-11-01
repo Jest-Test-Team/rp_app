@@ -152,17 +152,30 @@ fn valid_id(id: &str) -> bool {
 pub struct Lock(#[allow(dead_code)] fs::File);
 
 impl Lock {
-    pub fn acquire(t: &Target) -> Result<Lock, CsError> {
+    fn open(t: &Target) -> Result<fs::File, CsError> {
         let p = t_path(t, LOCK_PATH);
         if let Some(d) = p.parent() {
             fs::create_dir_all(d)?;
         }
-        let f = fs::OpenOptions::new().create(true).truncate(false).write(true).open(&p)?;
+        Ok(fs::OpenOptions::new().create(true).truncate(false).write(true).open(&p)?)
+    }
+
+    /// Take the lock or fail at once with `Busy` (interactive callers).
+    pub fn acquire(t: &Target) -> Result<Lock, CsError> {
+        let f = Self::open(t)?;
         match f.try_lock() {
             Ok(()) => Ok(Lock(f)),
             Err(fs::TryLockError::WouldBlock) => Err(CsError::Busy),
             Err(fs::TryLockError::Error(e)) => Err(e.into()),
         }
+    }
+
+    /// Wait for the lock. Safety rollbacks (timers) use this: they must never
+    /// give up just because another change happens to be running.
+    pub fn wait(t: &Target) -> Result<Lock, CsError> {
+        let f = Self::open(t)?;
+        f.lock()?;
+        Ok(Lock(f))
     }
 }
 
@@ -800,7 +813,7 @@ pub fn confirm(t: &Target, config: &Path, id: &str) -> Result<ChangeSet, CsError
 
 /// The timer fired: undo the change if it is still unconfirmed.
 pub fn expire(t: &Target, config: &Path, id: &str) -> Result<ChangeSet, CsError> {
-    let _lock = Lock::acquire(t)?;
+    let _lock = Lock::wait(t)?;
     let mut cs = get(t, config, id)?;
     if cs.status != CsStatus::AwaitingConfirm {
         return Ok(cs);

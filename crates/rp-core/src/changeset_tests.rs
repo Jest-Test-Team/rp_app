@@ -273,3 +273,24 @@ fn ids_are_validated_and_listing_is_newest_first() {
     assert_eq!(list(&t, &config)[0].id, a.id);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn expiry_waits_for_the_lock_instead_of_giving_up() {
+    let (root, config) = fake_root("wait");
+    let r = runner();
+    let t = Target { root: root.clone(), runner: &r };
+    let cs = ready(&t, &config, json!({"base.allow_mdns": false}));
+    let cs = apply_cs(&t, &config, &cs.id, &CsApplyOptions::default()).unwrap();
+    let held = Lock::acquire(&t).unwrap();
+    let (root2, config2, id) = (root.clone(), config.clone(), cs.id.clone());
+    let h = std::thread::spawn(move || {
+        let r = runner();
+        let t = Target { root: root2, runner: &r };
+        expire(&t, &config2, &id).map(|c| c.status)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!h.is_finished(), "expire must block while another change holds the lock");
+    drop(held);
+    assert_eq!(h.join().unwrap().unwrap(), CsStatus::RolledBack);
+    let _ = fs::remove_dir_all(&root);
+}

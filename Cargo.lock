@@ -759,14 +759,17 @@ name = "rp-core"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "hex",
  "ipnet",
  "rand_core",
  "rp-schema",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "thiserror 2.0.21",
  "toml",
+ "toml_edit",
  "x25519-dalek",
 ]
 
