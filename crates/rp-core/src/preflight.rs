@@ -95,9 +95,17 @@ pub fn gather(cfg: &Config, t: &Target) -> Facts {
         f.ifaces.insert(name, Iface { exists, carrier, addrs });
     }
 
-    f.ssh_client = std::env::var("SSH_CONNECTION")
-        .ok()
-        .and_then(|v| v.split_whitespace().next().and_then(|a| a.parse().ok()));
+    // sudo resets the environment, so SSH_CONNECTION is usually missing from
+    // rpctl's own env even when the admin is on SSH; fall back to the nearest
+    // ancestor process that has it (the login shell), on the live system only.
+    let ssh_conn = std::env::var("SSH_CONNECTION").ok().or_else(|| {
+        (t.root == std::path::Path::new("/"))
+            .then(|| {
+                ssh_connection_from_ancestors(std::path::Path::new("/proc"), std::process::id())
+            })
+            .flatten()
+    });
+    f.ssh_client = ssh_conn.as_deref().and_then(ssh_client_addr);
 
     let mut key_files = vec![under_root(&t.root, "/root/.ssh/authorized_keys")];
     if let Ok(rd) = fs::read_dir(under_root(&t.root, "/home")) {
@@ -126,6 +134,35 @@ pub fn gather(cfg: &Config, t: &Target) -> Facts {
             .unwrap_or(false)
     });
     f
+}
+
+/// First field of an `SSH_CONNECTION` value: the client address.
+pub fn ssh_client_addr(v: &str) -> Option<IpAddr> {
+    v.split_whitespace().next().and_then(|a| a.parse().ok())
+}
+
+/// Walk the parent chain of `pid` under `proc` and return the first
+/// `SSH_CONNECTION` found in an ancestor's environment.
+pub fn ssh_connection_from_ancestors(proc: &std::path::Path, pid: u32) -> Option<String> {
+    let ppid = |p: u32| -> Option<u32> {
+        let st = fs::read_to_string(proc.join(p.to_string()).join("status")).ok()?;
+        st.lines().find_map(|l| l.strip_prefix("PPid:")).and_then(|v| v.trim().parse().ok())
+    };
+    let mut cur = ppid(pid)?;
+    for _ in 0..64 {
+        if cur <= 1 {
+            return None;
+        }
+        if let Ok(env) = fs::read(proc.join(cur.to_string()).join("environ")) {
+            if let Some(v) =
+                env.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"SSH_CONNECTION="))
+            {
+                return Some(String::from_utf8_lossy(v).into_owned());
+            }
+        }
+        cur = ppid(cur)?;
+    }
+    None
 }
 
 fn run_stdout(t: &Target, argv: &[&str]) -> Option<String> {
@@ -333,5 +370,29 @@ mod tests {
         let j = r#"[{"ifname":"eth0","addr_info":[{"family":"inet","local":"192.0.2.10"},{"family":"inet6","local":"fe80::1"}]}]"#;
         assert_eq!(parse_ip_json(j).len(), 2);
         assert!(parse_ip_json("not json").is_empty());
+    }
+
+    #[test]
+    fn ssh_connection_is_found_in_an_ancestor_when_sudo_dropped_it() {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let proc = std::env::temp_dir().join(format!("rp-proc-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&proc);
+        let mk = |pid: u32, ppid: u32, env: &[u8]| {
+            let d = proc.join(pid.to_string());
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("status"), format!("Name:\tx\nPPid:\t{ppid}\n")).unwrap();
+            fs::write(d.join("environ"), env).unwrap();
+        };
+        mk(300, 200, b"PATH=/usr/bin\0"); // rpctl (env reset by sudo)
+        mk(200, 100, b"SUDO_USER=admin\0"); // sudo
+        mk(100, 50, b"USER=admin\0SSH_CONNECTION=192.0.2.9 50000 192.0.2.1 22\0"); // login shell
+        mk(50, 1, b"");
+        let v = ssh_connection_from_ancestors(&proc, 300).unwrap();
+        assert_eq!(ssh_client_addr(&v), Some("192.0.2.9".parse().unwrap()));
+        // no SSH anywhere up the chain
+        mk(100, 50, b"USER=admin\0");
+        assert_eq!(ssh_connection_from_ancestors(&proc, 300), None);
+        let _ = fs::remove_dir_all(&proc);
     }
 }
