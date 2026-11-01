@@ -48,7 +48,7 @@ The `rp-mcp-clients` group is deliberately not called `rp-mcp`: `DynamicUser=` i
 | `base` | nftables baseline, `rp-firewall.service`, sysctl hardening, sshd drop-in, unattended-upgrades, journald limits | — | yes |
 | `vpn` | `nft.d/50-vpn.nft`, forwarding sysctl, WireGuard config or Tailscale apt source | base | yes |
 | `dns` | `rp-dns.service`, `nft.d/40-dns.nft` | base | yes |
-| `ap` | hostapd / dnsmasq config and units, NetworkManager hand-over, `nft.d/60-ap.nft` | base | yes |
+| `ap` | hostapd / dnsmasq config and units, NetworkManager hand-over, `nft.d/60-ap.nft`, IPv4 forwarding sysctl | base | yes |
 | `agent` | `rp-agent.service`, `rp-mcp.service` | base | no |
 
 ## Composable firewall

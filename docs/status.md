@@ -68,7 +68,10 @@
 | 切換到 eth0：`mgmt_if` carrier、base／dns／agent 無變更 | ✅ |
 | 經 sudo 的 SSH 防鎖死檢查（`ssh_lockout`）：允許清單內 PASS、清單外 FAIL | ✅ |
 | `apply ap`：新開 eth0 SSH、wlan0 為 AP、hostapd／dnsmasq active、裝置仍可上網、`rpctl confirm` | ✅ |
-| IoT client 實際連線、隔離（連不到 LAN）、吞吐 | ⏳ 需要一台 IoT 裝置連上 |
+| IoT client 實際連線 | ✅ 取得 10.77.0.x、訊號約 -53 dBm |
+| IoT client 上網 | ❌→修正：ap 模組原本沒開 `ip_forward`；新增 `/etc/sysctl.d/91-rp-ap.conf` 後重新套用並 confirm，`ip_forward=1` |
+| 修正後 netns 整合測試（Pi kernel） | 16／16（舊版 rpctl：AP 測試 4／8 失敗，證明測試能抓到此問題） |
+| IoT client 隔離（連不到 LAN）、吞吐 | ⏳ 待 client 重新連線後實測 |
 
 ## 待辦（需要使用者）
 

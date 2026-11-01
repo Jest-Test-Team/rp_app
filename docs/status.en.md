@@ -68,7 +68,10 @@
 | Switch to eth0: `mgmt_if` carrier, no changes for base / dns / agent | ✅ |
 | SSH anti-lockout check through sudo (`ssh_lockout`): PASS inside the allow list, FAIL outside | ✅ |
 | `apply ap`: new eth0 SSH session, wlan0 in AP mode, hostapd / dnsmasq active, device still online, `rpctl confirm` | ✅ |
-| A real IoT client joining, isolation (cannot reach the LAN), throughput | ⏳ needs an IoT device to join |
+| A real IoT client joining | ✅ gets 10.77.0.x, signal about -53 dBm |
+| IoT client internet access | ❌→fixed: the ap module never enabled `ip_forward`; it now renders `/etc/sysctl.d/91-rp-ap.conf`, re-applied and confirmed, `ip_forward=1` |
+| netns integration tests after the fix (Pi kernel) | 16 / 16 (with the old rpctl 4 / 8 AP tests fail, proving the tests now catch it) |
+| IoT client isolation (cannot reach the LAN), throughput | ⏳ to test once the client rejoins |
 
 ## To-dos (need the user)
 

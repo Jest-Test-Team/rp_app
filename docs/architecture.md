@@ -48,7 +48,7 @@
 | `base` | nftables 基線、`rp-firewall.service`、sysctl 強化、sshd drop-in、unattended-upgrades、journald 上限 | — | 有 |
 | `vpn` | `nft.d/50-vpn.nft`、forwarding sysctl、WireGuard 設定或 Tailscale apt 來源 | base | 有 |
 | `dns` | `rp-dns.service`、`nft.d/40-dns.nft` | base | 有 |
-| `ap` | hostapd／dnsmasq 設定與 unit、NetworkManager 交接、`nft.d/60-ap.nft` | base | 有 |
+| `ap` | hostapd／dnsmasq 設定與 unit、NetworkManager 交接、`nft.d/60-ap.nft`、IPv4 forwarding sysctl | base | 有 |
 | `agent` | `rp-agent.service`、`rp-mcp.service` | base | 無 |
 
 ## 可組合的防火牆

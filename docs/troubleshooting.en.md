@@ -132,6 +132,7 @@ Reading the physical card (`/dev/diskNs2`) needs sudo. Delete the decompressed i
 | SSH says `Permission denied (publickey)` | `ssh.password_auth = false` is set and this computer has no authorized key | Use an authorized key (`ssh -i <KEY>`), or log in locally with a screen and keyboard, set `password_auth` back to `true`, and `rpctl apply base` |
 | preflight says `ssh_lockout … not running over SSH` while you are on SSH | sudo resets the environment and drops `SSH_CONNECTION` | rpctl now reads `SSH_CONNECTION` from its ancestor processes |
 | `apply ap` fails validation: `dnsmasq: cannot read {staged:…}` | Only arguments that were entirely a `{staged:…}` token were replaced, not `--conf-file={staged:…}` | Tokens are now replaced anywhere in an argument (fixed; nothing was changed when it failed) |
+| IoT clients get an address and DNS but no internet at all | The ap module did not enable IPv4 forwarding (the netns tests enabled it themselves, so they missed it) | ap now writes `/etc/sysctl.d/91-rp-ap.conf`; check that `cat /proc/sys/net/ipv4/ip_forward` is 1 |
 | `install.sh --host` hangs at sudo | The remote has no TTY so sudo cannot prompt | Interactive runs use `ssh -t` |
 | `not valid!` in a plain list was taken as the domain `not` | Only the first word of a multi-word line was used | Non-hosts-format lines with several words are invalid (fixed in both rp-dns and `rpctl dns import`) |
 
