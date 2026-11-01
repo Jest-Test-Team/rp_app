@@ -32,7 +32,9 @@
 | 時鐘 | NTP 已同步 |
 | 磁碟 | 20% |
 
-> ⚠️ 目前由 Mac 的 USB-C 孔供電。Pi 2 加 USB Wi-Fi 需要穩定的 **5 V／2.5 A** 電源；電壓不足可能造成 SD 卡損毀與 USB 網卡斷線。
+> ⚠️ 裝置由電源供應器直接供電，但 kernel 記錄到間歇性的「Undervoltage detected」（負載時電壓低於約 4.63 V）。常見原因：micro-USB 線太細／太長造成壓降，或供應器實際電流不足。建議改用官方 5.1 V／2.5 A 供應器與短而粗的線。電壓不足可能造成降頻、SD 卡損毀與 USB 網卡斷線。
+>
+> 重開機驗證：rp-firewall、rp-dns、rp-agent、rp-mcp 全部自動啟動，防火牆與 DNS 封鎖照常生效。
 
 ## MCP 連線
 
@@ -54,7 +56,7 @@
 
 ## 待辦（需要使用者）
 
-1. **換成 5 V／2.5 A 的電源**（目前電壓不足警報持續中）
+1. **改善供電**：換官方 5.1 V／2.5 A 供應器或更短更粗的 micro-USB 線（目前間歇性電壓不足）
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
 3. **SSH 改用金鑰登入**：建立一般用途金鑰並加入 `authorized_keys`，確認能登入後設 `ssh.password_auth = false` 再 `apply base`
 4. **接上 Ethernet**（或加第二張 USB Wi-Fi）→ 才能 `apply ap`、跑 `RP_E2E_APPLY=1` 破壞性 e2e

@@ -22,7 +22,7 @@
 
 ## 電源
 
-- Pi 2 + USB Wi-Fi 需要 **5 V／2.5 A**。從電腦 USB 孔供電時，這台裝置實測持續回報**電壓不足**（`get_system_health` 的 `under_voltage`）。
+- Pi 2 + USB Wi-Fi 需要 **5 V／2.5 A**。這台裝置以電源供應器直接供電，仍在負載時間歇回報**電壓不足**（`get_system_health` 的 `under_voltage`；kernel log 的「Undervoltage detected」），通常是 micro-USB 線壓降或供應器電流不足。
 - 電壓不足會造成降頻、SD 卡損毀、USB 網卡斷線；24/7 運作前請換專用電源。
 
 ## 重要前提
