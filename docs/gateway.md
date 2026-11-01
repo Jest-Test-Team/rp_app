@@ -130,7 +130,7 @@ sudo systemctl restart rp-mcp
 連線方式：
 
 - Streamable HTTP：`http://<MCP_LISTEN>/mcp`，Header `Authorization: Bearer <TOKEN>`
-- stdio：`ssh <USER>@<PI_HOST> rp-mcp --stdio`（預設只有 read 能力）
+- stdio：先 `sudo usermod -aG rp-mcp-clients <USER>` 並重新登入，再用 `ssh <USER>@<PI_HOST> rp-mcp --stdio`（預設只有 read 能力；稽核寫到 `~/.local/state/rp-mcp/`）
 
 特權動作：
 
