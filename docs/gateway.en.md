@@ -95,6 +95,30 @@ sudo rpctl apply vpn
 sudo rpctl vpn remove-peer <NAME> && sudo rpctl apply vpn   # revoke
 ```
 
+### Using it on phones and computers
+
+**Tailscale** (no router changes; works behind CGNAT)
+
+| Device | Steps |
+|---|---|
+| iPhone / iPad | Install Tailscale from the App Store → sign in to the same account → "Exit Node" → pick this device |
+| Android | Install Tailscale from Google Play → sign in → top-right menu "Exit node" → pick this device |
+| Windows | Install from tailscale.com/download → tray icon → Exit nodes → pick this device |
+| macOS | Install from the App Store or tailscale.com/download → menu-bar icon → Exit Node → pick this device |
+
+- The first time, approve "Use as exit node" in the admin console (Machines → this device → Edit route settings)
+- Friends: Share this machine with "Allow use as an exit node"; they sign in with their own account
+- Check: with the exit node on, look up your public IP — it should show your home ISP
+
+**WireGuard** (needs a public IPv4 address and UDP `listen_port` forwarded on the router)
+
+| Device | Steps |
+|---|---|
+| iPhone / Android | Install the WireGuard app → "Add tunnel → Scan QR code" (printed by `rpctl vpn add-peer`) → turn it on |
+| Windows / macOS | Install from wireguard.com/install → "Import tunnel(s) from file" with the `.conf` → Activate |
+
+One peer per device (`rpctl vpn add-peer <NAME> --write`); the QR code and private key are shown only once.
+
 ## 5. DNS firewall
 
 ```toml

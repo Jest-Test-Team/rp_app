@@ -21,7 +21,7 @@
 | `base` | ✅ 已套用並確認 | 預設丟棄 inbound；SSH 只限 LAN；mDNS 保留；journal 上限 64 MB／保留 2 週；**SSH 只接受金鑰**（密碼與 keyboard-interactive 皆關閉） |
 | `dns` | ✅ 已套用並確認 | 上游 1.1.1.1／9.9.9.9／8.8.8.8；封鎖清單匯入 StevenBlack（76,744 網域，RSS 8.5 MB） |
 | `agent` | ✅ 已套用 | rp-agent、rp-mcp 只聽 127.0.0.1；agent token `0640 root:rp-mcp-clients` |
-| `vpn` | ⏸ 未套用 | 需要 Tailscale auth key，或 WireGuard 的公開 endpoint 與路由器轉 UDP |
+| `vpn` | ✅ 已套用並確認（Tailscale） | exit node 已宣告（`0.0.0.0/0`、`::/0`），`--accept-dns=false`；**待使用者在管理後台核准**；VPN client 不能進入 LAN（`allow_lan = []`） |
 | `ap` | ✅ 已套用並確認 | wlan0 為 AP（2.4 GHz、channel 6、WPA2）；IoT 網段 10.77.0.0/24；`block_dot = true`（拒絕 DoT／DoQ）；密碼 `/etc/rp/ap.psk`（0600） |
 
 ## 裝置健康（`get_system_health`）
@@ -76,12 +76,12 @@
 | IoT client 的 DoT（853） | ✅ `block_dot = true`：TCP／UDP 853 被 reject（netns 測試：預設可連、開啟後拒絕、網頁不受影響） |
 | `rpctl rollback ap`（套用 → 修改後重新套用 → rollback） | ✅ 所有 AP 檔案、防火牆規則、forwarding 都移除；wlan0 自動重新連回原本的 Wi-Fi（必要時自動重載驅動） |
 | 24 小時 AP 穩定性 | 🔄 記錄中：每 5 分鐘一筆，寫到 `/var/lib/rp/ap/soak.log`（自動在 288 筆後停止；重開機會中止） |
-| AP 吞吐 | ⏳ 未量測 |
+| AP 吞吐（iPhone，-41 dBm，link 65 Mbit/s） | 下載峰值 12.6 Mbit/s（5 秒視窗）；上傳未量到；CPU load ≤ 0.34 |
 
 ## 待辦（需要使用者）
 
 1. **改善供電**：換官方 5.1 V／2.5 A 供應器或更短更粗的 micro-USB 線（目前間歇性電壓不足）
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
 3. **IoT AP**：讓至少 3 台裝置連上（24 小時穩定性測試）、用其中一台跑測速（吞吐量測）；並在路由器為 eth0 設 DHCP 保留位址
-4. **VPN**：提供 Tailscale auth key（或決定用 WireGuard）
+4. **VPN**：在 Tailscale 管理後台核准 exit node；各裝置安裝 Tailscale 並選擇 exit node（見 [gateway.md](gateway.md#4-vpn-exit-node)）；**撤銷已用過的 auth key**
 5. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）

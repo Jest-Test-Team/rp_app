@@ -9,7 +9,7 @@ Two parts:
 
 ### Current status
 
-This Pi 2B uses eth0 as its uplink and runs `base` (firewall baseline, key-only SSH), `dns` (DNS firewall with the StevenBlack list), `ap` (wlan0 as an isolated IoT AP) and `agent` (agent + MCP). Claude Code can query it over SSH with read-only tools. VPN is waiting on a Tailscale key. See [docs/status.en.md](docs/status.en.md).
+This Pi 2B uses eth0 as its uplink and runs `base` (firewall baseline, key-only SSH), `dns` (DNS firewall with the StevenBlack list), `ap` (wlan0 as an isolated IoT AP) `vpn` (Tailscale exit node) and `agent` (agent + MCP). Claude Code can query it over SSH with read-only tools. See [docs/status.en.md](docs/status.en.md).
 
 ### Gateway quick start
 

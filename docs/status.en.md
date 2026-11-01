@@ -21,7 +21,7 @@
 | `base` | ✅ Applied and confirmed | Inbound dropped by default; SSH from the LAN only; mDNS kept; journal capped at 64 MB / 2 weeks; **key-only SSH** (password and keyboard-interactive disabled) |
 | `dns` | ✅ Applied and confirmed | Upstreams 1.1.1.1 / 9.9.9.9 / 8.8.8.8; StevenBlack blocklist imported (76,744 domains, RSS 8.5 MB) |
 | `agent` | ✅ Applied | rp-agent and rp-mcp listen on 127.0.0.1 only; agent token `0640 root:rp-mcp-clients` |
-| `vpn` | ⏸ Not applied | Needs a Tailscale auth key, or a public WireGuard endpoint with UDP forwarded on the router |
+| `vpn` | ✅ Applied and confirmed (Tailscale) | Exit node advertised (`0.0.0.0/0`, `::/0`), `--accept-dns=false`; **awaiting approval in the admin console**; VPN clients cannot reach the LAN (`allow_lan = []`) |
 | `ap` | ✅ Applied and confirmed | wlan0 is the AP (2.4 GHz, channel 6, WPA2); IoT subnet 10.77.0.0/24; `block_dot = true` (DoT / DoQ rejected); passphrase in `/etc/rp/ap.psk` (0600) |
 
 ## Device health (`get_system_health`)
@@ -76,12 +76,12 @@
 | IoT client DoT (853) | ✅ `block_dot = true`: TCP / UDP 853 rejected (netns test: reachable by default, refused when enabled, web unaffected) |
 | `rpctl rollback ap` (apply → re-apply with a change → rollback) | ✅ every AP file, firewall rule and forwarding removed; wlan0 rejoins the original Wi-Fi by itself (reloading the driver if needed) |
 | 24-hour AP stability | 🔄 recording: one sample every 5 minutes in `/var/lib/rp/ap/soak.log` (stops after 288 samples; a reboot ends it) |
-| AP throughput | ⏳ not measured |
+| AP throughput (iPhone, -41 dBm, 65 Mbit/s link) | Peak download 12.6 Mbit/s (5 s window); upload not captured; CPU load ≤ 0.34 |
 
 ## To-dos (need the user)
 
 1. **Fix the power supply**: use the official 5.1 V / 2.5 A supply or a shorter, thicker micro-USB cable (intermittent under-voltage now)
 2. **Point the router's DHCP DNS at this device**, keeping a public DNS server as the second entry (fail-open)
 3. **IoT AP**: keep at least 3 devices joined (24-hour stability test) and run a speed test on one of them (throughput); also add a DHCP reservation for eth0 on the router
-4. **VPN**: provide a Tailscale auth key (or decide on WireGuard)
+4. **VPN**: approve the exit node in the Tailscale admin console; on each device install Tailscale and pick the exit node (see [gateway.en.md](gateway.en.md#4-vpn-exit-node)); **revoke the used auth key**
 5. **Push tag `v0.1.0`** → an official GitHub Release (after which `install.sh`'s default release download works)

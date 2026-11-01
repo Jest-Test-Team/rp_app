@@ -95,6 +95,30 @@ sudo rpctl apply vpn
 sudo rpctl vpn remove-peer <NAME> && sudo rpctl apply vpn   # 撤銷
 ```
 
+### 在手機與電腦上使用
+
+**Tailscale**（不需路由器設定，CGNAT 也可用）
+
+| 裝置 | 步驟 |
+|---|---|
+| iPhone／iPad | App Store 安裝 Tailscale → 登入同一帳號 → 「Exit Node」選這台裝置 |
+| Android | Play 商店安裝 Tailscale → 登入 → 右上選單「Exit node」→ 選這台裝置 |
+| Windows | tailscale.com/download 安裝 → 系統匣圖示 → Exit nodes → 選這台裝置 |
+| macOS | App Store 或 tailscale.com/download 安裝 → 選單列圖示 → Exit Node → 選這台裝置 |
+
+- 第一次需在管理後台（Machines → 這台 → Edit route settings）核准「Use as exit node」
+- 親友：Share 這台機器並勾選「Allow use as an exit node」，對方用自己的帳號登入
+- 驗證：開啟 exit node 後查詢公網 IP，應顯示家裡的 ISP
+
+**WireGuard**（需要公網 IPv4 與路由器轉發 UDP `listen_port`）
+
+| 裝置 | 步驟 |
+|---|---|
+| iPhone／Android | 安裝 WireGuard App →「新增通道 → 掃描 QR code」（`rpctl vpn add-peer` 輸出）→ 開啟 |
+| Windows／macOS | wireguard.com/install 安裝 →「Import tunnel(s) from file」匯入 `.conf` → Activate |
+
+每台裝置各用一個 peer（`rpctl vpn add-peer <NAME> --write`）；QR 與私鑰只顯示一次。
+
 ## 5. DNS 防火牆
 
 ```toml
