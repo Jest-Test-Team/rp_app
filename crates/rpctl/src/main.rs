@@ -1,6 +1,7 @@
 //! rpctl — configure, apply and roll back the rp edge security gateway.
 //!
-//! Exit codes: 0 ok · 1 error · 2 preflight failed · 3 invalid config.
+//! Exit codes: 0 ok · 1 error · 2 preflight failed · 3 invalid config ·
+//! 4 revision conflict or another change in progress.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -116,6 +117,69 @@ enum Cmd {
     /// Audit log tools.
     #[command(subcommand)]
     Audit(AuditCmd),
+    /// Revision-checked configuration changes with automatic rollback (what
+    /// the console app uses).
+    #[command(subcommand)]
+    Changeset(ChangesetCmd),
+    /// Store a named secret (ap_passphrase, tailscale_auth_key) root-only, from stdin.
+    #[command(subcommand)]
+    Secret(SecretCmd),
+}
+
+#[derive(Subcommand)]
+enum ChangesetCmd {
+    /// Current configuration revision.
+    Revision,
+    /// Create a change set from a JSON patch of dotted keys.
+    Create {
+        module: String,
+        #[arg(long)]
+        expected_revision: u64,
+        /// JSON object, e.g. '{"ap.block_dot": true}'.
+        #[arg(long)]
+        patch: String,
+    },
+    /// Run preflight checks for a change set.
+    Preflight {
+        id: String,
+        /// Management client address (must stay allowed).
+        #[arg(long)]
+        peer: Option<std::net::IpAddr>,
+    },
+    /// Apply a preflighted change set and arm the rollback timer.
+    Apply {
+        id: String,
+        /// Seconds to confirm before the device rolls back by itself.
+        #[arg(long, default_value_t = rp_core::changeset::DEFAULT_CONFIRM_SECS)]
+        confirm_secs: u32,
+        #[arg(long)]
+        no_packages: bool,
+    },
+    /// Keep an applied change set.
+    Confirm {
+        id: String,
+    },
+    /// Undo the latest applied change set.
+    Rollback {
+        id: String,
+    },
+    /// Called by the rollback timer.
+    #[command(hide = true)]
+    Expire {
+        id: String,
+    },
+    Show {
+        id: String,
+    },
+    List,
+}
+
+#[derive(Subcommand)]
+enum SecretCmd {
+    /// Read the value from stdin (one line) and store it with mode 600.
+    Set { name: String },
+    /// Show which secrets are set (never their values).
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -246,6 +310,17 @@ fn print_checks(checks: &[preflight::Check], json: bool) {
 
 fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
     let target = Target { root: cli.root.clone(), runner };
+    // Real changes share one lock with change sets (the app) so they can't interleave.
+    let mutating = match &cli.cmd {
+        Cmd::Apply { dry_run, .. } => !dry_run,
+        Cmd::Confirm | Cmd::Rollback { .. } => true,
+        _ => false,
+    };
+    let _lock = if mutating {
+        Some(rp_core::changeset::Lock::acquire(&target).map_err(|e| anyhow::anyhow!("{e}"))?)
+    } else {
+        None
+    };
     match &cli.cmd {
         Cmd::Modules => {
             for m in MODULES {
@@ -454,6 +529,22 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             write_secret(&path, &rp_core::ap::psk_file_content(&pass))?;
             println!("passphrase saved to {} (mode 600)", a.passphrase_file);
             println!("apply or re-apply: sudo rpctl apply ap   (hostapd re-reads it on restart)");
+        }
+        Cmd::Changeset(c) => return changeset_cmd(cli, c, &target),
+        Cmd::Secret(SecretCmd::Set { name }) => {
+            let cfg = rp_core::config::load(&cli.config).ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            let value = line.trim_end_matches(['\r', '\n']);
+            let fp = rp_core::secrets::set(&cli.root, cfg.as_ref(), name, value)?;
+            println!("{name} stored (fingerprint {fp})");
+        }
+        Cmd::Secret(SecretCmd::Status) => {
+            let cfg = rp_core::config::load(&cli.config).ok();
+            for n in rp_core::secrets::NAMES {
+                let set = rp_core::secrets::is_set(&cli.root, cfg.as_ref(), n);
+                println!("{n:<20} {}", if set { "set" } else { "not set" });
+            }
         }
         Cmd::Mcp(c) => return mcp_cmd(cli, c),
         Cmd::Dns(c) => return dns_cmd(cli, c, runner),
@@ -912,6 +1003,91 @@ fn mcp_cmd(cli: &Cli, c: &McpCmd) -> Result<ExitCode> {
 }
 
 /// Write a secret atomically with mode 600 from the start (never world-readable).
+fn changeset_cmd(cli: &Cli, c: &ChangesetCmd, t: &Target) -> Result<ExitCode> {
+    use rp_core::changeset as cs;
+    let by = format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
+    let show = |x: &cs::ChangeSet| -> Result<()> {
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&x.public())?);
+        } else {
+            println!("{} {:<8} {:?} (base revision {})", x.id, x.module, x.status, x.base_revision);
+            for k in &x.checks {
+                println!("  [{:?}] {:<16} {}", k.status, k.name, k.detail);
+            }
+            for k in &x.verification {
+                println!("  verify [{:?}] {:<14} {}", k.status, k.name, k.detail);
+            }
+            if let Some(e) = &x.error {
+                println!("  error: {e}");
+            }
+            if let Some(d) = x.deadline {
+                println!("  confirm before unix time {d} (rpctl changeset confirm {})", x.id);
+            }
+        }
+        Ok(())
+    };
+    let res = match c {
+        ChangesetCmd::Revision => {
+            println!("{}", cs::revision(t, &cli.config)?);
+            return Ok(ExitCode::SUCCESS);
+        }
+        ChangesetCmd::Create { module, expected_revision, patch } => {
+            let p: serde_json::Value =
+                serde_json::from_str(patch).context("--patch is not JSON")?;
+            let p = p.as_object().cloned().context("--patch must be a JSON object")?;
+            cs::create(t, &cli.config, module, *expected_revision, p, &by).inspect(|x| {
+                if !cli.json {
+                    print!("{}", x.config_diff);
+                }
+            })
+        }
+        ChangesetCmd::Preflight { id, peer } => cs::preflight(t, &cli.config, id, *peer),
+        ChangesetCmd::Apply { id, confirm_secs, no_packages } => cs::apply_cs(
+            t,
+            &cli.config,
+            id,
+            &cs::CsApplyOptions {
+                confirm_secs: *confirm_secs,
+                rpctl_argv: self_argv(cli)?,
+                install_packages: !no_packages,
+            },
+        ),
+        ChangesetCmd::Confirm { id } => cs::confirm(t, &cli.config, id),
+        ChangesetCmd::Rollback { id } => cs::rollback(t, &cli.config, id),
+        ChangesetCmd::Expire { id } => cs::expire(t, &cli.config, id),
+        ChangesetCmd::Show { id } => cs::get(t, &cli.config, id),
+        ChangesetCmd::List => {
+            let all = cs::list(t, &cli.config);
+            if cli.json {
+                let v: Vec<_> = all.iter().map(|x| x.public()).collect();
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                for x in all {
+                    println!("{} {:<8} {:?}", x.id, x.module, x.status);
+                }
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+    };
+    match res {
+        Ok(x) => {
+            show(&x)?;
+            let bad = matches!(x.status, cs::CsStatus::Failed)
+                || (matches!(c, ChangesetCmd::Preflight { .. })
+                    && x.status != cs::CsStatus::Preflighted);
+            Ok(if bad { ExitCode::from(EXIT_PREFLIGHT) } else { ExitCode::SUCCESS })
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(match e {
+                cs::CsError::Invalid(_) | cs::CsError::Patch(_) => EXIT_CONFIG,
+                cs::CsError::Conflict { .. } | cs::CsError::Busy => 4,
+                _ => 1,
+            }))
+        }
+    }
+}
+
 fn write_secret(path: &Path, content: &str) -> Result<()> {
     use std::io::Write;
     #[cfg(unix)]

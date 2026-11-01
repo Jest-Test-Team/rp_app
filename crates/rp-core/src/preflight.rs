@@ -12,7 +12,7 @@ use crate::apply::Target;
 use crate::config::ssh_allow;
 use crate::files::under_root;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     Pass,
@@ -20,7 +20,7 @@ pub enum Status {
     Fail,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Check {
     pub name: String,
     pub status: Status,
@@ -28,7 +28,7 @@ pub struct Check {
 }
 
 impl Check {
-    fn new(name: &str, status: Status, detail: impl Into<String>) -> Self {
+    pub fn new(name: &str, status: Status, detail: impl Into<String>) -> Self {
         Self { name: name.into(), status, detail: detail.into() }
     }
 }

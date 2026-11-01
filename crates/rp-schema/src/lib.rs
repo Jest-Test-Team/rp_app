@@ -32,6 +32,41 @@ pub struct Config {
     /// MCP server exposing agent tools to AI clients, behind rp-policy.
     #[serde(default)]
     pub mcp: Option<Mcp>,
+    /// Management API for the console app (rp-api + rp-privd).
+    #[serde(default)]
+    pub api: Option<Api>,
+}
+
+/// The console management API. rp-api is unprivileged; changes go through
+/// rp-privd and need an admin signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Api {
+    #[serde(default = "default_api_listen")]
+    pub listen: std::net::SocketAddr,
+    /// Also allow the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48). The WAN never is.
+    #[serde(default = "default_true")]
+    pub allow_tailnet: bool,
+    /// Lifetime of a read session created with an admin signature.
+    #[serde(default = "default_session_minutes")]
+    pub session_minutes: u32,
+}
+
+impl Default for Api {
+    fn default() -> Self {
+        Self {
+            listen: default_api_listen(),
+            allow_tailnet: true,
+            session_minutes: default_session_minutes(),
+        }
+    }
+}
+
+fn default_api_listen() -> std::net::SocketAddr {
+    "0.0.0.0:8443".parse().unwrap()
+}
+fn default_session_minutes() -> u32 {
+    15
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
