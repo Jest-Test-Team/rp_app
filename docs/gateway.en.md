@@ -6,7 +6,7 @@
 
 ## 1. Install
 
-> Until a GitHub Release is published (by pushing a tag), the default release download returns 404; use `--from-source` first.
+> Releases are published on GitHub (latest: `v0.1.0`, armv7 / aarch64 / x86_64, with `SHA256SUMS`, SBOM and build provenance). `--from-source` builds the current branch instead.
 
 ### Directly on the Pi
 

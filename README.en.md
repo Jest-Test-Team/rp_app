@@ -14,7 +14,9 @@ This Pi 2B uses eth0 as its uplink and runs `base` (firewall baseline, key-only 
 ### Gateway quick start
 
 ```bash
-# Deploy from macOS / Linux to the Pi (until a GitHub Release is published use --from-source; needs zig + cargo-zigbuild)
+# Deploy from macOS / Linux to the Pi: the latest GitHub Release (checksums verified)
+deploy/install.sh --host <USER>@<PI_HOST>
+# or build the current source (needs zig + cargo-zigbuild)
 deploy/install.sh --host <USER>@<PI_HOST> --from-source
 
 # On the Pi: preflight and dry-run each module before applying; confirm firewall changes before the deadline

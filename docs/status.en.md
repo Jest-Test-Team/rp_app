@@ -86,4 +86,4 @@
 2. **Point the router's DHCP DNS at this device**, keeping a public DNS server as the second entry (fail-open)
 3. **IoT AP**: keep at least 3 devices joined (24-hour stability test) and run a speed test on one of them (throughput); also add a DHCP reservation for eth0 on the router
 4. **VPN**: approve the exit node in the Tailscale admin console; on each device install Tailscale and pick the exit node (see [gateway.en.md](gateway.en.md#4-vpn-exit-node)); **revoke the used auth key**
-5. **Push tag `v0.1.0`** → an official GitHub Release (after which `install.sh`'s default release download works)
+5. ~~Push tag `v0.1.0`~~ ✅ released: https://github.com/Jest-Test-Team/rp_app/releases/tag/v0.1.0 (checksum verified and `rpctl` run on the Pi)

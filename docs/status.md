@@ -86,4 +86,4 @@
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
 3. **IoT AP**：讓至少 3 台裝置連上（24 小時穩定性測試）、用其中一台跑測速（吞吐量測）；並在路由器為 eth0 設 DHCP 保留位址
 4. **VPN**：在 Tailscale 管理後台核准 exit node；各裝置安裝 Tailscale 並選擇 exit node（見 [gateway.md](gateway.md#4-vpn-exit-node)）；**撤銷已用過的 auth key**
-5. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）
+5. ~~推 tag `v0.1.0`~~ ✅ 已發佈：https://github.com/Jest-Test-Team/rp_app/releases/tag/v0.1.0（已在 Pi 上核對 checksum 並執行 `rpctl`）

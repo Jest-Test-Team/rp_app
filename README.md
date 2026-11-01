@@ -14,7 +14,9 @@
 ### Gateway 快速開始
 
 ```bash
-# 從 Mac／Linux 部署到 Pi（GitHub Release 發佈前請用 --from-source，需要 zig + cargo-zigbuild）
+# 從 Mac／Linux 部署到 Pi：最新的 GitHub Release（會核對 checksum）
+deploy/install.sh --host <USER>@<PI_HOST>
+# 或編譯目前的原始碼（需要 zig + cargo-zigbuild）
 deploy/install.sh --host <USER>@<PI_HOST> --from-source
 
 # 在 Pi 上：每個模組都先 preflight、dry-run，再 apply；防火牆類變更要在時限內 confirm

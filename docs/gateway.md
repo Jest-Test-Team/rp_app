@@ -6,7 +6,7 @@
 
 ## 1. 安裝
 
-> GitHub Release 發佈（推 tag）之前，預設的 release 下載會 404；請先用 `--from-source`。
+> GitHub Release 已發佈（最新：`v0.1.0`，armv7／aarch64／x86_64，附 `SHA256SUMS`、SBOM 與 build provenance）。`--from-source` 則改為編譯目前的分支。
 
 ### 在 Pi 上直接安裝
 
