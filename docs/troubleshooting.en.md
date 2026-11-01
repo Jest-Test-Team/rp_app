@@ -128,7 +128,9 @@ Reading the physical card (`/dev/diskNs2`) needs sudo. Delete the decompressed i
 | `apply` fails in `apt-get install` | apt's daily update / unattended-upgrades holds the dpkg lock | apt runs with `-o DPkg::Lock::Timeout=120`; on failure no files have been installed yet |
 | `rp-mcp.service` fails to start (`217/USER`) | A separately created `rp-mcp` group clashed with the same-named user that `DynamicUser=` allocates | The token group was renamed to `rp-mcp-clients`; remove an old `rp-mcp` group with `groupdel` |
 | `ssh <host> rp-mcp --stdio` cannot read the agent token | The token was readable by root only | The token is now `0640 root:rp-mcp-clients`; `usermod -aG rp-mcp-clients <user>` and log in again |
+| After connecting Ethernet `ssh <PI_HOST>.local` sometimes times out | mDNS advertises both the eth0 and wlan0 addresses, and replies to the wlan0 address leave via eth0 | Connect to the eth0 address; once wlan0 becomes the AP only eth0 remains |
 | SSH says `Permission denied (publickey)` | `ssh.password_auth = false` is set and this computer has no authorized key | Use an authorized key (`ssh -i <KEY>`), or log in locally with a screen and keyboard, set `password_auth` back to `true`, and `rpctl apply base` |
+| preflight says `ssh_lockout … not running over SSH` while you are on SSH | sudo resets the environment and drops `SSH_CONNECTION` | rpctl now reads `SSH_CONNECTION` from its ancestor processes |
 | `install.sh --host` hangs at sudo | The remote has no TTY so sudo cannot prompt | Interactive runs use `ssh -t` |
 | `not valid!` in a plain list was taken as the domain `not` | Only the first word of a multi-word line was used | Non-hosts-format lines with several words are invalid (fixed in both rp-dns and `rpctl dns import`) |
 

@@ -10,9 +10,9 @@
 |---|---|
 | Hardware | Raspberry Pi 2 Model B Rev 1.1, Edimax EW-7811Un (2.4 GHz) |
 | OS | Raspberry Pi OS Lite 32-bit (trixie), flashed with the SD scripts, first boot via cloud-init |
-| Uplink | **Wi-Fi only (wlan0)**: both the management interface and the uplink; no Ethernet yet |
+| Uplink | **eth0 (100 Mbps)**: uplink and management interface; wlan0 is still joined to the original Wi-Fi and will become the IoT AP |
 | Installed | `rpctl`, `rp-dns`, `rp-agent`, `rp-mcp` (deployed with `deploy/install.sh --from-source --host`) |
-| Configuration | `/etc/rp/rp.toml`: `device.wan_if = "wlan0"`, `lan_cidrs = ["<LAN_CIDR>"]` |
+| Configuration | `/etc/rp/rp.toml`: `device.wan_if = "eth0"`, `lan_cidrs = ["<LAN_CIDR>"]` |
 
 ## Modules
 
@@ -22,7 +22,7 @@
 | `dns` | ✅ Applied and confirmed | Upstreams 1.1.1.1 / 9.9.9.9 / 8.8.8.8; StevenBlack blocklist imported (76,744 domains, RSS 8.5 MB) |
 | `agent` | ✅ Applied | rp-agent and rp-mcp listen on 127.0.0.1 only; agent token `0640 root:rp-mcp-clients` |
 | `vpn` | ⏸ Not applied | Needs a Tailscale auth key, or a public WireGuard endpoint with UDP forwarded on the router |
-| `ap` | ⏸ Unavailable | wlan0 is the uplink; needs Ethernet or a second AP-capable USB adapter |
+| `ap` | ⏸ Ready to apply | Ethernet is connected; preflight only lacks the AP passphrase (`rpctl ap set-passphrase`), and the IoT SSID needs choosing |
 
 ## Device health (`get_system_health`)
 
@@ -65,11 +65,13 @@
 | mac80211_hwsim AP tests (Pi kernel) | 5 / 5 |
 | CI (Linux, Windows ps1, hwsim, root netns, armv7 / aarch64 cross build) | ✅ all green |
 | GHA release dry run (3 targets, SHA256SUMS, SBOM) | ✅ all green |
+| Switch to eth0: `mgmt_if` carrier, no changes for base / dns / agent | ✅ |
+| SSH anti-lockout check through sudo (`ssh_lockout`): PASS inside the allow list, FAIL outside | ✅ |
 
 ## To-dos (need the user)
 
 1. **Fix the power supply**: use the official 5.1 V / 2.5 A supply or a shorter, thicker micro-USB cable (intermittent under-voltage now)
 2. **Point the router's DHCP DNS at this device**, keeping a public DNS server as the second entry (fail-open)
-3. **Connect Ethernet** (or add a second USB Wi-Fi adapter) → required for `apply ap` and the destructive `RP_E2E_APPLY=1` e2e run
+3. **IoT AP**: choose the SSID and set the passphrase (`sudo rpctl ap set-passphrase`) → `apply ap`; also add a DHCP reservation for eth0 on the router
 4. **VPN**: provide a Tailscale auth key (or decide on WireGuard)
 5. **Push tag `v0.1.0`** → an official GitHub Release (after which `install.sh`'s default release download works)
