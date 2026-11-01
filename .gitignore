@@ -4,3 +4,5 @@ local.env
 target/
 test/.venv/
 test/results/
+/dist/
+__pycache__/
