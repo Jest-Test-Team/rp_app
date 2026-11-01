@@ -419,7 +419,10 @@ mod tests {
     use super::*;
 
     fn fixture() -> Ctx {
-        let root = std::env::temp_dir().join(format!("rp-agent-fx-{}", std::process::id()));
+        // Unique per call: tests run in parallel and must not share (or delete) a root.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("rp-agent-fx-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let w = |p: &str, c: &str| {
             let full = under_root(&root, p);
