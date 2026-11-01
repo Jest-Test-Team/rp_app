@@ -3,7 +3,7 @@ Documentation     Builds of the console app for each platform this machine can b
 ...               checks on the built artefacts (merged Android manifest, iOS Info.plist).
 ...               A platform whose toolchain is missing is skipped, not failed.
 Resource          ../resources/app.resource
-Test Tags         build    app    mobile
+Test Tags         build    mobile
 
 *** Test Cases ***
 Android Debug APK
@@ -20,7 +20,9 @@ iOS App Without Code Signing
     Require Xcode
     Pub Get
     Flutter    0    build    ios    --debug    --no-codesign    timeout=40min
-    ${plist}=    Get File    ${APP}/build/ios/iphoneos/Runner.app/Info.plist
+    # Built plists are binary: convert to XML first.
+    ${p}=    Run Process    plutil    -convert    xml1    -o    -    ${APP}/build/ios/iphoneos/Runner.app/Info.plist
+    ${plist}=    Set Variable    ${p.stdout}
     Should Contain    ${plist}    NSLocalNetworkUsageDescription
     Should Contain    ${plist}    _rp-security._tcp
 
@@ -52,6 +54,7 @@ Require Android SDK
 
 Require Xcode
     Require Flutter
+    Require Tool    xcodebuild
     ${r}=    Run Process    xcodebuild    -version    stderr=STDOUT
     Skip If    ${r.rc} != 0    full Xcode is not installed
 
