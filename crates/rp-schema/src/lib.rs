@@ -6,6 +6,8 @@
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
+pub mod capability;
+
 /// Root of `rp.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

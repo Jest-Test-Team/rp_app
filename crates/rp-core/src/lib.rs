@@ -5,6 +5,7 @@ pub mod agent;
 pub mod ap;
 pub mod apply;
 pub mod base;
+pub mod capabilities;
 pub mod config;
 pub mod dns;
 pub mod files;

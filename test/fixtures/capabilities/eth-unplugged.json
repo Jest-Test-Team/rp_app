@@ -1,0 +1,25 @@
+{
+  "model": "Raspberry Pi 2 Model B Rev 1.1",
+  "arch": "armv7l",
+  "mem_kb": 942000,
+  "os": "Debian GNU/Linux 13 (trixie)",
+  "ifaces": [
+    {
+      "name": "eth0",
+      "kind": "ethernet",
+      "carrier": false
+    },
+    {
+      "name": "wlan0",
+      "kind": "wifi",
+      "carrier": true,
+      "ap_mode": true,
+      "bands": [
+        "2.4"
+      ],
+      "wpa3": false
+    }
+  ],
+  "kernel_wireguard": true,
+  "mgmt_if": "wlan0"
+}

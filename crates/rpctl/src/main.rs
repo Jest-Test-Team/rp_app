@@ -50,6 +50,15 @@ enum Cmd {
     Check,
     /// Check that the system is safe to apply a module to.
     Preflight { module: String },
+    /// What this hardware can run (per module, with reasons). Always JSON.
+    Capabilities {
+        /// Management client address: its route decides the management link.
+        #[arg(long)]
+        peer: Option<std::net::IpAddr>,
+        /// Evaluate a hardware-facts JSON file instead of this system (testing).
+        #[arg(long)]
+        facts: Option<PathBuf>,
+    },
     /// Print (or write to --out) the files a module manages.
     Render {
         module: String,
@@ -266,6 +275,17 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             if !preflight::passed(&checks) {
                 return Ok(ExitCode::from(EXIT_PREFLIGHT));
             }
+        }
+        Cmd::Capabilities { peer, facts } => {
+            let hw = match facts {
+                Some(p) => serde_json::from_str(&std::fs::read_to_string(p)?)
+                    .with_context(|| format!("invalid facts file {}", p.display()))?,
+                None => {
+                    let cfg = rp_core::config::load(&cli.config).ok();
+                    rp_core::capabilities::gather(&target, cfg.as_ref(), *peer)
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&rp_core::capabilities::evaluate(&hw))?);
         }
         Cmd::Render { module: name, out } => {
             module(name)?;
