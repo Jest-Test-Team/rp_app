@@ -579,43 +579,15 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 Ok(c) => c,
                 Err(code) => return Ok(code),
             };
-            let store = action_store(&cfg, &cli.root);
-            let audit =
-                rp_policy::audit::Audit::open(&agent_state(&cfg, &cli.root).join("audit.jsonl"))?;
             let admin =
                 format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
-            let pending = store.get(id)?;
-            if !approve {
-                store.decide(id, false, &admin)?;
-                audit.record(
-                    &admin,
-                    &pending.tool,
-                    &pending.args,
-                    "denied",
-                    &format!("id={id}"),
-                )?;
-                println!("denied {id}: {}", pending.summary);
-                return Ok(ExitCode::SUCCESS);
+            let a = rp_agent::admin_ops::decide(&cfg, &cli.root, id, approve, &admin, runner)
+                .map_err(anyhow::Error::msg)?;
+            if approve {
+                println!("approved and applied {id}: {} (expires automatically)", a.summary);
+            } else {
+                println!("denied {id}: {}", a.summary);
             }
-            // The stored request is data: validate it again and build the exact command.
-            let argv = rp_agent::actions::command(&cfg, &pending.tool, &pending.args)
-                .map_err(|e| anyhow::anyhow!("request no longer valid: {e}"))?;
-            let a = store.decide(id, true, &admin)?;
-            audit.record(&admin, &a.tool, &a.args, "approved", &format!("id={id}"))?;
-            let out = runner.run(&argv)?;
-            let ok = out.ok();
-            store.finish(id, ok, if ok { "applied" } else { out.stderr.trim() })?;
-            audit.record(
-                &admin,
-                &a.tool,
-                &a.args,
-                if ok { "executed" } else { "error" },
-                &format!("id={id}"),
-            )?;
-            if !ok {
-                anyhow::bail!("applying {id} failed: {}", out.stderr.trim());
-            }
-            println!("approved and applied {id}: {} (expires automatically)", a.summary);
         }
         Cmd::QuarantineRestore => {
             let Ok(cfg) = rp_core::config::load(&cli.config) else { return Ok(ExitCode::SUCCESS) };
@@ -942,55 +914,25 @@ fn dns_cmd(cli: &Cli, c: &DnsCmd, runner: &dyn Runner) -> Result<ExitCode> {
 }
 
 fn mcp_cmd(cli: &Cli, c: &McpCmd) -> Result<ExitCode> {
-    use rp_policy::auth::{hash_token, new_token, Client, Clients};
     let cfg = match load_config(&cli.config) {
         Ok(c) => c,
         Err(code) => return Ok(code),
     };
-    let m = cfg.mcp.as_ref().context("no [mcp] section in the config")?;
-    let path = under_root(&cli.root, &m.clients_file);
-    let mut clients = if path.exists() && std::fs::metadata(&path)?.len() > 0 {
-        Clients::load(&path).map_err(anyhow::Error::msg)?
-    } else {
-        Clients::default()
-    };
+    cfg.mcp.as_ref().context("no [mcp] section in the config")?;
+    let clients = rp_agent::admin_ops::load_clients(&cfg, &cli.root).map_err(anyhow::Error::msg)?;
     match c {
         McpCmd::AddClient { name, cap } => {
-            anyhow::ensure!(
-                !name.is_empty()
-                    && name.len() <= 32
-                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-                "client name must be 1-32 letters, digits, '-' or '_'"
-            );
-            anyhow::ensure!(
-                !clients.clients.iter().any(|c| &c.name == name),
-                "client '{name}' exists"
-            );
-            let mut caps = std::collections::BTreeSet::new();
-            for c in cap.split(',').map(str::trim).filter(|c| !c.is_empty()) {
-                caps.insert(match c {
-                    "read" => rp_policy::Capability::Read,
-                    "active" => rp_policy::Capability::Active,
-                    "privileged" => rp_policy::Capability::Privileged,
-                    other => anyhow::bail!("unknown capability '{other}'"),
-                });
-            }
-            let token = new_token();
-            clients.clients.push(Client {
-                name: name.clone(),
-                sha256: hash_token(&token),
-                capabilities: caps,
-            });
-            write_secret(&path, &clients.to_toml())?;
+            let caps: Vec<String> =
+                cap.split(',').map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+            let token = rp_agent::admin_ops::mcp_add_client(&cfg, &cli.root, name, &caps)
+                .map_err(anyhow::Error::msg)?;
             println!("client '{name}' created. Token (shown ONCE, store it in your MCP client):");
             println!("{token}");
             println!("restart to load it: sudo systemctl restart rp-mcp");
         }
         McpCmd::RemoveClient { name } => {
-            let before = clients.clients.len();
-            clients.clients.retain(|c| &c.name != name);
-            anyhow::ensure!(clients.clients.len() < before, "no client named '{name}'");
-            write_secret(&path, &clients.to_toml())?;
+            rp_agent::admin_ops::mcp_remove_client(&cfg, &cli.root, name)
+                .map_err(anyhow::Error::msg)?;
             println!("revoked '{name}' — restart to apply: sudo systemctl restart rp-mcp");
         }
         McpCmd::Clients => {
