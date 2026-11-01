@@ -7,7 +7,7 @@
 
 ### 目前狀態
 
-這台 Pi 2B 已套用 `base`（防火牆基線）、`dns`（DNS 防火牆，含 StevenBlack 清單）、`agent`（agent + MCP），Claude Code 可經 SSH 以唯讀工具查詢。VPN 與 IoT AP 尚待使用者條件（Tailscale key／Ethernet）。詳見 [docs/status.md](docs/status.md)。
+這台 Pi 2B 已套用 `base`（防火牆基線、SSH 只接受金鑰）、`dns`（DNS 防火牆，含 StevenBlack 清單）、`agent`（agent + MCP），Claude Code 可經 SSH 以唯讀工具查詢。VPN 與 IoT AP 尚待使用者條件（Tailscale key／Ethernet）。詳見 [docs/status.md](docs/status.md)。
 
 ### Gateway 快速開始
 

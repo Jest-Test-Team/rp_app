@@ -126,6 +126,7 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 | `apply` 在 `apt-get install` 失敗 | apt 每日更新／unattended-upgrades 正持有 dpkg 鎖 | apt 以 `-o DPkg::Lock::Timeout=120` 執行；失敗時尚未安裝任何檔案 |
 | `rp-mcp.service` 啟動失敗（`217/USER`） | 另建的 `rp-mcp` 群組與 `DynamicUser=` 自動配置的同名使用者衝突 | token 群組改名為 `rp-mcp-clients`；舊的 `rp-mcp` 群組需 `groupdel` |
 | `ssh <host> rp-mcp --stdio` 讀不到 agent token | token 原本只有 root 可讀 | token 改為 `0640 root:rp-mcp-clients`；`usermod -aG rp-mcp-clients <user>` 後重新登入 |
+| SSH 顯示 `Permission denied (publickey)` | 已設 `ssh.password_auth = false`，這台電腦沒有被授權的金鑰 | 用有授權的金鑰（`ssh -i <KEY>`）；或接螢幕鍵盤在本機把 `password_auth` 改回 `true` 後 `rpctl apply base` |
 | `install.sh --host` 卡在 sudo | 遠端沒有 TTY，sudo 無法詢問密碼 | 互動執行時改用 `ssh -t` |
 | 純文字清單的 `not valid!` 被當成網域 `not` | 一行多個字時只取第一個字 | 非 hosts 格式且有多個字的行視為無效（rp-dns 與 `rpctl dns import` 都已修正） |
 

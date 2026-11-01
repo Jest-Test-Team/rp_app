@@ -16,7 +16,7 @@
 
 | 模組 | 狀態 | 備註 |
 |---|---|---|
-| `base` | ✅ 已套用並確認 | 預設丟棄 inbound；SSH 只限 LAN；mDNS 保留；journal 上限 64 MB／保留 2 週；密碼登入**仍開啟** |
+| `base` | ✅ 已套用並確認 | 預設丟棄 inbound；SSH 只限 LAN；mDNS 保留；journal 上限 64 MB／保留 2 週；**SSH 只接受金鑰**（密碼與 keyboard-interactive 皆關閉） |
 | `dns` | ✅ 已套用並確認 | 上游 1.1.1.1／9.9.9.9／8.8.8.8；封鎖清單匯入 StevenBlack（76,744 網域，RSS 8.5 MB） |
 | `agent` | ✅ 已套用 | rp-agent、rp-mcp 只聽 127.0.0.1；agent token `0640 root:rp-mcp-clients` |
 | `vpn` | ⏸ 未套用 | 需要 Tailscale auth key，或 WireGuard 的公開 endpoint 與路由器轉 UDP |
@@ -36,6 +36,12 @@
 >
 > 重開機驗證：rp-firewall、rp-dns、rp-agent、rp-mcp 全部自動啟動，防火牆與 DNS 封鎖照常生效。
 
+## SSH 管理存取
+
+- 管理金鑰 `~/.ssh/rp_admin_ed25519`（有 passphrase；passphrase 存在 macOS 鑰匙圈），`~/.ssh/config` 的 `Host <PI_HOST>` 區塊指定 `IdentityFile` 與 `IdentitiesOnly yes`
+- 裝置只接受金鑰登入；sudo 仍需帳號密碼
+- 換電腦或遺失金鑰：接螢幕與鍵盤在本機登入，把 `/etc/rp/rp.toml` 的 `ssh.password_auth` 改回 `true` 後 `sudo rpctl apply base && sudo rpctl confirm`（macOS 無法直接寫入 SD 卡的 ext4 根分割區）
+
 ## MCP 連線
 
 - Claude Code 已加入 `rp-gateway`（user scope），經 SSH stdio 連線
@@ -53,13 +59,14 @@
 | 受限金鑰：不能執行其他指令、無 pty、forwarding 被拒 | ✅ |
 | network namespace 整合測試（Pi kernel） | 16／16 |
 | e2e（非破壞性） | 6／6 |
+| `ssh.password_auth = false`：新金鑰連線成功、純密碼連線被拒（`Permission denied (publickey)`）、`sshd -T` 確認 | ✅ |
+| mac80211_hwsim AP 測試（Pi kernel） | 5／5 |
+| CI（Linux、Windows ps1、hwsim、root netns、armv7／aarch64 cross build） | ✅ 全綠 |
 
 ## 待辦（需要使用者）
 
 1. **改善供電**：換官方 5.1 V／2.5 A 供應器或更短更粗的 micro-USB 線（目前間歇性電壓不足）
 2. **路由器 DHCP 的 DNS 改成這台裝置**，並保留一組公共 DNS 作為第二順位（fail-open）
-3. **SSH 改用金鑰登入**：建立一般用途金鑰並加入 `authorized_keys`，確認能登入後設 `ssh.password_auth = false` 再 `apply base`
-4. **接上 Ethernet**（或加第二張 USB Wi-Fi）→ 才能 `apply ap`、跑 `RP_E2E_APPLY=1` 破壞性 e2e
-5. **VPN**：提供 Tailscale auth key（或決定用 WireGuard）
-6. **push `pi-wifi-flash`** → 讓 CI（Linux、Windows、hwsim、root netns、cross build）實跑
-7. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）
+3. **接上 Ethernet**（或加第二張 USB Wi-Fi）→ 才能 `apply ap`、跑 `RP_E2E_APPLY=1` 破壞性 e2e
+4. **VPN**：提供 Tailscale auth key（或決定用 WireGuard）
+5. **推 tag `v0.1.0`** → 正式 GitHub Release（之後 `install.sh` 預設的 release 下載才可用）
