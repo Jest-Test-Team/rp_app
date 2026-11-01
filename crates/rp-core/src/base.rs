@@ -14,6 +14,7 @@ pub const SYSCTL_PATH: &str = "/etc/sysctl.d/90-rp-base.conf";
 /// order, so this must sort before cloud-init's `50-cloud-init.conf`.
 pub const SSHD_PATH: &str = "/etc/ssh/sshd_config.d/10-rp.conf";
 pub const APT_PATH: &str = "/etc/apt/apt.conf.d/52rp-auto-upgrades";
+pub const JOURNAL_PATH: &str = "/etc/systemd/journald.conf.d/90-rp.conf";
 
 pub struct Base;
 
@@ -63,6 +64,14 @@ fn sshd(cfg: &Config) -> String {
     )
 }
 
+/// Bound the journal so a 24/7 device doesn't wear out its SD card.
+fn journald(mb: u32) -> String {
+    format!(
+        "# {HEADER}\n[Journal]\nSystemMaxUse={mb}M\nSystemKeepFree=256M\nRuntimeMaxUse=32M\n\
+         MaxRetentionSec=2week\nCompress=yes\n"
+    )
+}
+
 fn apt() -> String {
     format!(
         "// {HEADER}\nAPT::Periodic::Update-Package-Lists \"1\";\n\
@@ -84,6 +93,9 @@ impl Module for Base {
         ];
         if cfg.base.unattended_upgrades {
             files.push(ManagedFile::new(APT_PATH, 0o644, apt()));
+        }
+        if cfg.base.journal_max_mb > 0 {
+            files.push(ManagedFile::new(JOURNAL_PATH, 0o644, journald(cfg.base.journal_max_mb)));
         }
         files
     }
@@ -108,6 +120,7 @@ impl Module for Base {
             Step::cmd(&["systemctl", "restart", "rp-firewall.service"]),
             Step::cmd(&["sysctl", "--system"]),
             Step::cmd(&["systemctl", "reload", "ssh.service"]),
+            Step::best_effort(&["systemctl", "restart", "systemd-journald.service"]),
         ]
     }
 
@@ -144,7 +157,9 @@ mod tests {
     fn renders_expected_files() {
         let files = Base.render(&cfg(""));
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        assert_eq!(paths, [NFT_PATH, UNIT_PATH, SYSCTL_PATH, SSHD_PATH, APT_PATH]);
+        assert_eq!(paths, [NFT_PATH, UNIT_PATH, SYSCTL_PATH, SSHD_PATH, APT_PATH, JOURNAL_PATH]);
+        let j = &files[5].content;
+        assert!(j.contains("SystemMaxUse=64M") && j.contains("MaxRetentionSec=2week"));
         assert!(files.iter().all(|f| f.content.contains(HEADER)));
     }
 
@@ -161,6 +176,12 @@ mod tests {
         assert!(on.contains("PasswordAuthentication yes"));
         assert!(off.contains("PasswordAuthentication no"));
         assert!(off.contains("PermitRootLogin no"));
+    }
+
+    #[test]
+    fn journal_management_can_be_disabled() {
+        let c = cfg("[base]\njournal_max_mb = 0\n");
+        assert!(!Base.render(&c).iter().any(|f| f.path == JOURNAL_PATH));
     }
 
     #[test]

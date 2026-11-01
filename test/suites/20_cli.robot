@@ -40,7 +40,7 @@ Rendered Base Files Match Golden Copies
     ${out}=    New Temp Dir
     Run Ok    ${RPCTL}    --config    ${BASIC}    render    base    --out    ${out}
     @{golden}=    List Files Recursively    ${FIXTURES}/golden/basic
-    Length Should Be    ${golden}    5
+    Length Should Be    ${golden}    6
     FOR    ${rel}    IN    @{golden}
         ${want}=    Get File    ${FIXTURES}/golden/basic/${rel}
         ${got}=    Get File    ${out}/${rel}
@@ -85,7 +85,7 @@ Apply Refuses To Run When Preflight Fails
 Dry Run Shows A Diff And Changes Nothing
     ${root}=    Create Fake Root
     ${out}=    Rpctl    ${root}    0    apply    base    --dry-run
-    Should Contain    ${out}    dry run: 5 file(s) would change
+    Should Contain    ${out}    dry run: 6 file(s) would change
     Should Contain    ${out}    +table inet rp {
     Should Contain    ${out}    would run: systemd-run --unit=rp-confirm-base
     Managed Files Should Not Exist    ${root}
@@ -131,7 +131,7 @@ Rollback Restores Pre-Existing Files And Removes New Ones
     Create File    ${root}/etc/sysctl.d/90-rp-base.conf    original contents\n
     Rpctl    ${root}    0    apply    base
     ${out}=    Rpctl    ${root}    0    rollback    base
-    Should Contain    ${out}    rolled back 5 file(s)
+    Should Contain    ${out}    rolled back 6 file(s)
     ${restored}=    Get File    ${root}/etc/sysctl.d/90-rp-base.conf
     Should Be Equal    ${restored}    original contents\n
     File Should Not Exist    ${root}/etc/rp/nftables.nft
@@ -162,7 +162,7 @@ Status Reports JSON
     ${out}=    Rpctl    ${root}    0    status    --json
     ${rows}=    Evaluate    json.loads($out)    modules=json
     Should Be Equal    ${rows[0]['module']}    base
-    Should Be Equal As Integers    ${rows[0]['pending_changes']}    5
+    Should Be Equal As Integers    ${rows[0]['pending_changes']}    6
 
 *** Keywords ***
 Config Is Rejected

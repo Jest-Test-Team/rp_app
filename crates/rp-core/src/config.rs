@@ -132,6 +132,10 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         }
     }
 
+    if cfg.base.journal_max_mb > 4096 {
+        errs.push("base.journal_max_mb must be 0-4096".into());
+    }
+
     let t = cfg.base.confirm_timeout_secs;
     if !(30..=3600).contains(&t) {
         errs.push(format!("base.confirm_timeout_secs {t} must be between 30 and 3600"));

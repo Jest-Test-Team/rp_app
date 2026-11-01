@@ -34,7 +34,7 @@ fn dry_run_changes_nothing() {
     let r = RecordingRunner::default();
     let t = Target { root: root.clone(), runner: &r };
     let rep = apply(&Base, &cfg(), &t, &ApplyOptions { dry_run: true, ..opts() }).unwrap();
-    assert_eq!(rep.changes.len(), 5);
+    assert_eq!(rep.changes.len(), 6);
     assert!(rep.needs_confirm);
     assert!(rep.steps.iter().any(|s| s.starts_with("systemd-run --unit=rp-confirm-base")));
     assert!(r.calls().is_empty(), "dry run must not execute anything");
@@ -73,7 +73,7 @@ fn apply_installs_backs_up_and_is_idempotent() {
     let disable = c2.iter().position(|c| c == "systemctl disable rp-firewall.service").unwrap();
     let reload = c2.iter().position(|c| c == "systemctl daemon-reload").unwrap();
     assert!(disable < reload, "unit must be disabled before its file is removed");
-    assert_eq!(rb.changes.len(), 5);
+    assert_eq!(rb.changes.len(), 6);
     assert_eq!(fs::read_to_string(&sshd).unwrap(), "original\n");
     assert!(!under_root(&root, NFT_PATH).exists());
     assert!(t2.load_state().modules["base"].rolled_back);

@@ -158,6 +158,76 @@ fn meminfo(text: &str, key: &str) -> Option<u64> {
         .and_then(|l| l.split_whitespace().nth(1)?.parse().ok())
 }
 
+/// The Raspberry Pi firmware's under-voltage alarm (hwmon "rpi_volt").
+fn under_voltage(ctx: &Ctx) -> Option<bool> {
+    let base = ctx.path("/sys/class/hwmon");
+    std::fs::read_dir(base).ok()?.flatten().find_map(|e| {
+        let d = e.path();
+        let name = std::fs::read_to_string(d.join("name")).ok()?;
+        (name.trim() == "rpi_volt")
+            .then(|| std::fs::read_to_string(d.join("in0_lcrit_alarm")).ok())
+            .flatten()
+            .map(|v| v.trim() == "1")
+    })
+}
+
+fn disk_used_percent(ctx: &Ctx) -> Option<u64> {
+    if ctx.root != Path::new("/") {
+        return ctx.read("/rp-fixture/disk_used_percent").and_then(|v| v.trim().parse().ok());
+    }
+    let out = run_with_timeout(&["df", "-P", "/"])?;
+    let line = out.lines().nth(1)?;
+    line.split_whitespace().nth(4)?.trim_end_matches('%').parse().ok()
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Signals {
+    pub temperature_c: Option<f64>,
+    pub under_voltage: Option<bool>,
+    pub disk_used_percent: Option<u64>,
+    pub mem_available_percent: Option<f64>,
+    pub ntp_synchronized: Option<bool>,
+}
+
+/// Turn raw signals into alerts. Pure, so thresholds are unit-tested.
+pub fn alerts(s: &Signals) -> Vec<Value> {
+    let mut a = Vec::new();
+    let mut push = |level: &str, kind: &str, detail: String| {
+        a.push(json!({"level": level, "kind": kind, "detail": detail}));
+    };
+    if s.under_voltage == Some(true) {
+        push(
+            "critical",
+            "under_voltage",
+            "power supply too weak: use a 5V/2.5A supply (risk of SD corruption and USB drop-outs)"
+                .into(),
+        );
+    }
+    if let Some(t) = s.temperature_c {
+        if t >= 80.0 {
+            push("critical", "temperature", format!("{t:.1}°C — the CPU throttles at 80°C"));
+        } else if t >= 70.0 {
+            push("warning", "temperature", format!("{t:.1}°C — improve cooling"));
+        }
+    }
+    if let Some(d) = s.disk_used_percent {
+        if d >= 95 {
+            push("critical", "disk", format!("root filesystem {d}% full"));
+        } else if d >= 90 {
+            push("warning", "disk", format!("root filesystem {d}% full"));
+        }
+    }
+    if let Some(m) = s.mem_available_percent {
+        if m < 10.0 {
+            push("warning", "memory", format!("only {m:.0}% memory available"));
+        }
+    }
+    if s.ntp_synchronized == Some(false) {
+        push("warning", "clock", "clock not synchronised (NTP): logs and TLS may be wrong".into());
+    }
+    a
+}
+
 pub fn health(ctx: &Ctx) -> Value {
     let load: Vec<f64> = ctx
         .read("/proc/loadavg")
@@ -175,13 +245,39 @@ pub fn health(ctx: &Ctx) -> Value {
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .map(|v| v["modules"].clone())
         .unwrap_or(json!({}));
+    let total = meminfo(&mem, "MemTotal:");
+    let avail = meminfo(&mem, "MemAvailable:");
+    let khz = |f: &str| ctx.read(f).and_then(|v| v.trim().parse::<u64>().ok()).map(|k| k / 1000);
+    let signals = Signals {
+        temperature_c: temp,
+        under_voltage: under_voltage(ctx),
+        disk_used_percent: disk_used_percent(ctx),
+        mem_available_percent: match (total, avail) {
+            (Some(t), Some(a)) if t > 0 => Some(a as f64 * 100.0 / t as f64),
+            _ => None,
+        },
+        // systemd-timesyncd creates this file once the clock is synchronised.
+        ntp_synchronized: ctx
+            .path("/run/systemd/timesync")
+            .exists()
+            .then(|| ctx.path("/run/systemd/timesync/synchronized").exists()),
+    };
+    let alerts = alerts(&signals);
     json!({
         "load": load,
-        "mem_total_kb": meminfo(&mem, "MemTotal:"),
-        "mem_available_kb": meminfo(&mem, "MemAvailable:"),
+        "mem_total_kb": total,
+        "mem_available_kb": avail,
         "temperature_c": temp,
+        "under_voltage": signals.under_voltage,
+        "cpu_mhz": khz("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+        "cpu_max_mhz": khz("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"),
+        "disk_used_percent": signals.disk_used_percent,
+        "ntp_synchronized": signals.ntp_synchronized,
         "uptime_s": uptime,
         "modules": modules,
+        "status": if alerts.iter().any(|a| a["level"] == "critical") { "critical" }
+                  else if alerts.is_empty() { "ok" } else { "warning" },
+        "alerts": alerts,
     })
 }
 
@@ -378,6 +474,47 @@ mod tests {
         assert_eq!(f["flows"][0]["dport"], 443);
         assert_eq!(f["flows"][0]["state"], "ESTABLISHED");
         assert_eq!(f["top_destinations"][0][0], "203.0.113.10:443");
+    }
+
+    #[test]
+    fn alert_thresholds() {
+        assert!(alerts(&Signals::default()).is_empty());
+        let a = alerts(&Signals {
+            temperature_c: Some(82.0),
+            under_voltage: Some(true),
+            disk_used_percent: Some(91),
+            mem_available_percent: Some(5.0),
+            ntp_synchronized: Some(false),
+        });
+        let kinds: Vec<&str> = a.iter().map(|x| x["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["under_voltage", "temperature", "disk", "memory", "clock"]);
+        assert_eq!(a[1]["level"], "critical");
+        assert_eq!(a[2]["level"], "warning");
+        let warm = alerts(&Signals { temperature_c: Some(72.5), ..Signals::default() });
+        assert_eq!(warm[0]["level"], "warning");
+    }
+
+    #[test]
+    fn health_reports_voltage_clock_and_status() {
+        let c = fixture();
+        let w = |p: &str, v: &str| {
+            let f = c.path(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, v).unwrap();
+        };
+        w("/sys/class/hwmon/hwmon1/name", "rpi_volt\n");
+        w("/sys/class/hwmon/hwmon1/in0_lcrit_alarm", "1\n");
+        w("/run/systemd/timesync/synchronized", "");
+        w("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "600000\n");
+        w("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "900000\n");
+        w("/rp-fixture/disk_used_percent", "42\n");
+        let h = health(&c);
+        assert_eq!(h["under_voltage"], true);
+        assert_eq!(h["ntp_synchronized"], true);
+        assert_eq!(h["cpu_mhz"], 600);
+        assert_eq!(h["disk_used_percent"], 42);
+        assert_eq!(h["status"], "critical");
+        assert_eq!(h["alerts"][0]["kind"], "under_voltage");
     }
 
     #[test]
