@@ -305,6 +305,7 @@ pub fn editable_keys(module: &str) -> &'static [(&'static str, Kind)] {
             ("vpn.wireguard.listen_port", Int),
             ("vpn.wireguard.subnet", Str),
             ("vpn.wireguard.client_dns", Str),
+            ("vpn.wireguard.peers", Tables),
         ],
         "agent" => &[
             ("agent.scan_allow", StrList),

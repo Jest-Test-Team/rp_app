@@ -82,6 +82,25 @@ Path Traversal In Ids Is Rejected
     ${r}=    Rpctl    ${root}    1    changeset    show    ../../../etc/passwd    config=${cfg}
     Should Contain    ${r}    unknown change set
 
+Firewall Rules Arrive As JSON Tables And Render Typed nftables
+    ${root}    ${cfg}=    Fresh Device
+    Append To File    ${cfg}    \n[ap]\nssid = "x"\ncountry = "TW"\nsubnet = "198.51.100.128/25"\n
+    ${rev}=    Revision    ${root}    ${cfg}
+    ${cs}=    CS    ${root}    ${cfg}    0    create    firewall    --expected-revision    ${rev}
+    ...    --patch    {"firewall.rules": [{"name": "No IoT to NAS", "from": "iot", "to": "lan", "proto": "tcp", "ports": [445], "action": "drop", "log": true}]}
+    Should Contain    ${cs['config_diff']}    [[firewall.rules]]
+    ${diff}=    Evaluate    [f['diff'] for f in $cs['files'] if f['path'].endswith('05-firewall.nft')][0]
+    Should Contain    ${diff}    iifname "wlan0" oifname "eth0" ip daddr @lan4 tcp dport { 445 } drop
+    # Raw nftables, shell text or management lockouts never get through.
+    FOR    ${bad}    IN
+    ...    {"firewall.rules": [{"name": "x", "from": "lan", "to": "wan", "action": "drop", "nft": "flush ruleset"}]}
+    ...    {"firewall.rules": [{"name": "x\\nflush ruleset", "from": "lan", "to": "wan", "action": "drop"}]}
+    ...    {"firewall.rules": [{"name": "x", "from": "lan", "to": "device", "proto": "tcp", "ports": [22], "action": "drop"}]}
+    ...    {"firewall.rules": "drop all"}
+        Rpctl    ${root}    3    changeset    create    firewall    --expected-revision    ${rev}
+        ...    --patch    ${bad}    config=${cfg}
+    END
+
 Secrets Are Stored Root Only And Never Printed
     ${root}    ${cfg}=    Fresh Device
     ${r}=    Run Expecting    0    ${RPCTL}    --config    ${cfg}    --root    ${root}

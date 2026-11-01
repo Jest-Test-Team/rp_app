@@ -132,6 +132,10 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         }
     }
 
+    if let Some(f) = &cfg.firewall {
+        errs.extend(crate::firewall::validate_rules(cfg, &f.rules));
+    }
+
     if cfg.base.journal_max_mb > 4096 {
         errs.push("base.journal_max_mb must be 0-4096".into());
     }

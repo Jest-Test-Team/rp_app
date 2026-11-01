@@ -11,6 +11,7 @@ pub mod changeset;
 pub mod config;
 pub mod dns;
 pub mod files;
+pub mod firewall;
 pub mod init;
 pub mod module;
 pub mod nft;

@@ -292,12 +292,17 @@ pub fn handle(ctx: &Ctx, req: Request) -> Response {
                     (n.to_string(), json!(rp_core::secrets::is_set(&ctx.root, cfg.as_ref(), n)))
                 })
                 .collect();
+            // The WireGuard server's public key (clients need it in their config).
+            let wg_public = std::fs::read_to_string(ctx.p(rp_core::wg::SERVER_KEY_PATH))
+                .ok()
+                .and_then(|k| rp_core::wg::public_from_private(k.trim()).ok());
             Response::ok(json!({
                 "device_id": dev,
                 "revision": cs::peek_revision(&t, &ctx.config),
                 "config_valid": cfg.is_some(),
                 "modules": modules,
                 "secrets": secrets,
+                "wireguard_public_key": wg_public,
             }))
         }
         Request::Config {} => match rp_core::config::load(&ctx.config) {

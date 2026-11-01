@@ -35,6 +35,67 @@ pub struct Config {
     /// Management API for the console app (rp-api + rp-privd).
     #[serde(default)]
     pub api: Option<Api>,
+    /// Typed firewall rules on top of the baseline (no raw nftables).
+    #[serde(default)]
+    pub firewall: Option<Firewall>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Firewall {
+    #[serde(default)]
+    pub rules: Vec<FwRule>,
+}
+
+/// Where traffic comes from or goes to. `lan` and `wan` share the uplink
+/// interface and are told apart by `device.lan_cidrs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Zone {
+    Lan,
+    Wan,
+    Iot,
+    Vpn,
+    /// This device itself (input).
+    Device,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Proto {
+    #[default]
+    Any,
+    Tcp,
+    Udp,
+    Icmp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FwAction {
+    Accept,
+    Drop,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FwRule {
+    /// Shown in the app; letters, digits, space, '-', '_' (1-40).
+    pub name: String,
+    pub from: Zone,
+    pub to: Zone,
+    /// Only these destination networks inside `to` (empty = the whole zone).
+    #[serde(default)]
+    pub dest: Vec<IpNet>,
+    #[serde(default)]
+    pub proto: Proto,
+    /// Destination ports (tcp / udp only; empty = all).
+    #[serde(default)]
+    pub ports: Vec<u16>,
+    pub action: FwAction,
+    #[serde(default)]
+    pub log: bool,
 }
 
 /// The console management API. rp-api is unprivileged; changes go through
