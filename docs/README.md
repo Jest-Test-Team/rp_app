@@ -1,5 +1,7 @@
 # rp-app 文件
 
+**繁體中文** | [English](README.en.md)
+
 兩部分：
 
 1. **無線開機**：讓 Raspberry Pi 2 Model B 不接網路線、不接螢幕，第一次開機就透過 USB Wi-Fi 網卡連上網路並開啟 SSH，全程用 Mac 上的腳本完成。

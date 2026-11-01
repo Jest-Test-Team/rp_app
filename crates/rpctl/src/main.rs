@@ -71,7 +71,8 @@ enum Cmd {
     },
     /// Keep the last firewall change (cancels the automatic rollback).
     Confirm,
-    /// Restore files from the last (or a given) backup.
+    /// Remove a module: restore the files from before it was first applied
+    /// (or from a given backup).
     Rollback {
         module: String,
         #[arg(long)]
@@ -342,7 +343,11 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
         }
         Cmd::Rollback { module: name, backup, auto } => {
             let m = module(name)?;
-            let rep = apply::rollback(m.as_ref(), &target, backup.as_deref())?;
+            let rep = if *auto {
+                apply::rollback_last(m.as_ref(), &target)?
+            } else {
+                apply::rollback(m.as_ref(), &target, backup.as_deref())?
+            };
             let why = if *auto { " (automatic: change was not confirmed)" } else { "" };
             println!(
                 "{name}: rolled back {} file(s) from backup {}{why}",

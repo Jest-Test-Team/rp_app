@@ -1,5 +1,7 @@
 # rp_app — Raspberry Pi Edge Security Gateway
 
+**繁體中文** | [English](README.en.md)
+
 兩部分：
 
 1. **無線開機設定**（本頁）：用腳本把 SD 卡重灌成 Raspberry Pi OS Lite (32-bit, Trixie)，第一次開機就透過 USB Wi-Fi 連上網、開好 SSH。
@@ -7,7 +9,7 @@
 
 ### 目前狀態
 
-這台 Pi 2B 已套用 `base`（防火牆基線、SSH 只接受金鑰）、`dns`（DNS 防火牆，含 StevenBlack 清單）、`agent`（agent + MCP），Claude Code 可經 SSH 以唯讀工具查詢。VPN 與 IoT AP 尚待使用者條件（Tailscale key／Ethernet）。詳見 [docs/status.md](docs/status.md)。
+這台 Pi 2B 以 eth0 為 uplink，已套用 `base`（防火牆基線、SSH 只接受金鑰）、`dns`（DNS 防火牆，含 StevenBlack 清單）、`ap`（wlan0 為隔離的 IoT AP）、`vpn`（Tailscale exit node）、`agent`（agent + MCP），Claude Code 可經 SSH 以唯讀工具查詢。詳見 [docs/status.md](docs/status.md)。
 
 ### Gateway 快速開始
 

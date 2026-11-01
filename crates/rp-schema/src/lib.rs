@@ -157,6 +157,10 @@ pub struct Ap {
     /// Destinations AP clients MAY reach despite isolation.
     #[serde(default)]
     pub allow_lan: Vec<IpNet>,
+    /// Reject DNS-over-TLS / -QUIC (port 853) from AP clients so they fall back
+    /// to the DNS firewall. Off by default: it is always logged either way.
+    #[serde(default)]
+    pub block_dot: bool,
 }
 
 fn default_ap_if() -> String {

@@ -24,8 +24,21 @@ pub const DNSMASQ_UNIT: &str = "/etc/systemd/system/rp-ap-dnsmasq.service";
 pub const NM_CONF: &str = "/etc/NetworkManager/conf.d/90-rp-ap.conf";
 pub const SNIPPET_PATH: &str = "/etc/rp/nft.d/60-ap.nft";
 pub const CHECK_PATH: &str = "/etc/rp/.check/ap.nft";
+/// IPv4 forwarding for AP clients (no IPv6 is offered to them). Separate from
+/// the vpn module's file so either module can be rolled back on its own.
+pub const SYSCTL_PATH: &str = "/etc/sysctl.d/91-rp-ap.conf";
 
 pub struct Ap;
+
+/// Rollback helper: reconnect each Wi-Fi device to its saved network, reloading
+/// the device's driver module once if the first attempt fails.
+pub const WIFI_RECONNECT: &str = r#"for d in $(nmcli -g DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1}'); do
+  nmcli --wait 40 device connect "$d" >/dev/null 2>&1 && continue
+  m=$(basename "$(readlink -f "/sys/class/net/$d/device/driver/module")" 2>/dev/null)
+  [ -n "$m" ] && [ "$m" != module ] || continue
+  modprobe -r "$m" && sleep 2 && modprobe "$m" && sleep 10
+  nmcli --wait 40 device connect "$d" >/dev/null 2>&1 || true
+done"#;
 
 fn ap(cfg: &Config) -> &rp_schema::Ap {
     cfg.ap.as_ref().expect("ap config")
@@ -224,6 +237,12 @@ pub fn snippet(cfg: &Config) -> String {
         s,
         "\t\tiifname \"{w}\" udp dport 853 limit rate 6/minute log prefix \"rp-ap-doq \""
     );
+    if a.block_dot {
+        // Reject (not drop) so clients in automatic "Private DNS" mode fall back
+        // to plain DNS immediately instead of waiting for a timeout.
+        let _ = writeln!(s, "\t\tiifname \"{w}\" tcp dport 853 reject with tcp reset");
+        let _ = writeln!(s, "\t\tiifname \"{w}\" udp dport 853 reject");
+    }
     let _ = writeln!(s, "\t\tiifname \"{w}\" oifname \"{wan}\" ip daddr @ap_allow4 accept");
     let _ = writeln!(s, "\t\tiifname \"{w}\" ip daddr @ap_block4 drop");
     // No IPv6 is offered to AP clients; never forward any from them.
@@ -260,6 +279,7 @@ impl Module for Ap {
             ManagedFile::new(HOSTAPD_UNIT, 0o644, hostapd_unit(cfg)),
             ManagedFile::new(DNSMASQ_UNIT, 0o644, dnsmasq_unit(cfg)),
             ManagedFile::new(NM_CONF, 0o644, nm_conf(cfg)),
+            ManagedFile::new(SYSCTL_PATH, 0o644, format!("# {HEADER}\nnet.ipv4.ip_forward = 1\n")),
             ManagedFile::new(SNIPPET_PATH, 0o600, snip.clone()),
             ManagedFile::check_only(CHECK_PATH, nft::combined(cfg, &snip)),
         ]
@@ -284,6 +304,8 @@ impl Module for Ap {
             Step::best_effort(&["nmcli", "device", "set", iface, "managed", "no"]),
             Step::cmd(&["systemctl", "daemon-reload"]),
             Step::cmd(&["systemctl", "reload-or-restart", "rp-firewall.service"]),
+            // Without forwarding, clients reach only this box (DHCP/DNS), never the internet.
+            Step::cmd(&["sysctl", "--system"]),
             Step::cmd(&["systemctl", "enable", "rp-ap-hostapd.service", "rp-ap-dnsmasq.service"]),
             Step::cmd(&["systemctl", "restart", "rp-ap-hostapd.service"]),
             Step::cmd(&["systemctl", "restart", "rp-ap-dnsmasq.service"]),
@@ -305,9 +327,16 @@ impl Module for Ap {
         vec![
             Step::cmd(&["systemctl", "daemon-reload"]),
             Step::best_effort(&["systemctl", "reload-or-restart", "rp-firewall.service"]),
+            // Removing the sysctl file does not undo the live value; reset it, then
+            // re-read sysctl.d so forwarding stays on if the vpn module still needs it.
+            Step::cmd(&["sysctl", "-w", "net.ipv4.ip_forward=0"]),
+            Step::cmd(&["sysctl", "--system"]),
             // Give the interface back; NM reconnects to the saved network.
             Step::cmd(&["nmcli", "general", "reload", "conf"]),
             Step::best_effort(&["sh", "-c", "for d in $(nmcli -g DEVICE,TYPE device | awk -F: '$2==\"wifi\"{print $1}'); do nmcli device set \"$d\" managed yes; done"]),
+            // Some USB adapters (seen with rtl8192cu) cannot associate again after AP
+            // mode until their driver is reloaded: try once, reset the driver, retry.
+            Step::best_effort(&["sh", "-c", WIFI_RECONNECT]),
         ]
     }
 
@@ -395,6 +424,12 @@ mod tests {
         assert!(s.contains("192.0.2.0/24"));
         assert!(s.contains("oifname \"eth0\" ip saddr 10.77.0.0/24 masquerade"));
         assert!(s.contains("tcp dport 853"));
+        assert!(!s.contains("reject"), "DoT is only logged by default");
+        let b = snippet(&cfg("block_dot = true"));
+        let rej = b.find("iifname \"wlan0\" tcp dport 853 reject with tcp reset").unwrap();
+        assert!(b.contains("iifname \"wlan0\" udp dport 853 reject"));
+        let allow = b.find("ip daddr @ap_allow4 accept").unwrap();
+        assert!(rej < allow, "an allow_lan exception must not re-open DoT");
         assert!(s.contains("iifname \"eth0\" oifname \"wlan0\" ip saddr @lan4 accept"));
         assert!(!snippet(&cfg("lan_can_reach_clients = false\n"))
             .contains("oifname \"wlan0\" ip saddr @lan4"));
@@ -424,7 +459,20 @@ mod tests {
     #[test]
     fn rendered_files_and_requirements() {
         let f = Ap.render(&cfg(""));
-        assert_eq!(f.len(), 7);
+        assert_eq!(f.len(), 8);
+        let sysctl = f.iter().find(|x| x.path == SYSCTL_PATH).expect("forwarding sysctl");
+        assert!(sysctl.content.contains("net.ipv4.ip_forward = 1"), "AP clients need forwarding");
+        assert!(!sysctl.content.contains("ipv6"), "no IPv6 forwarding for AP clients");
+        let post: Vec<String> = Ap.post_apply(&cfg("")).iter().map(|s| s.argv.join(" ")).collect();
+        assert!(post.contains(&"sysctl --system".to_string()));
+        let undo: Vec<String> = Ap.post_rollback().iter().map(|s| s.argv.join(" ")).collect();
+        let off = undo.iter().position(|s| s == "sysctl -w net.ipv4.ip_forward=0").unwrap();
+        let reread = undo.iter().position(|s| s == "sysctl --system").unwrap();
+        assert!(off < reread, "re-read sysctl.d after resetting so a vpn module keeps forwarding");
+        let reconnect = Ap.post_rollback();
+        let last = reconnect.last().unwrap();
+        assert!(last.best_effort && last.argv[2] == WIFI_RECONNECT);
+        assert!(WIFI_RECONNECT.contains("modprobe -r \"$m\" && sleep 2 && modprobe \"$m\""));
         assert_eq!(f.iter().filter(|x| x.staging_only).count(), 1);
         assert!(
             f.iter().all(|x| !x.content.contains("00:00:00:00:00:00")),

@@ -1,5 +1,7 @@
 # 硬體對照
 
+**繁體中文** | [English](hardware-matrix.en.md)
+
 | 功能 | Pi 1 / Zero（ARMv6） | **Pi 2B（已驗證）** | Pi 3B | Pi 4B / 5 |
 |---|---|---|---|---|
 | 支援 | ❌ 安裝程式會拒絕 | ✅ armv7 | ✅ armv7／aarch64 | ✅ aarch64 |

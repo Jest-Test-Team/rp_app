@@ -1,5 +1,7 @@
 # 疑難排解
 
+**繁體中文** | [English](troubleshooting.en.md)
+
 ## 快速檢查
 
 | 症狀 | 先檢查 |
@@ -126,7 +128,13 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 | `apply` 在 `apt-get install` 失敗 | apt 每日更新／unattended-upgrades 正持有 dpkg 鎖 | apt 以 `-o DPkg::Lock::Timeout=120` 執行；失敗時尚未安裝任何檔案 |
 | `rp-mcp.service` 啟動失敗（`217/USER`） | 另建的 `rp-mcp` 群組與 `DynamicUser=` 自動配置的同名使用者衝突 | token 群組改名為 `rp-mcp-clients`；舊的 `rp-mcp` 群組需 `groupdel` |
 | `ssh <host> rp-mcp --stdio` 讀不到 agent token | token 原本只有 root 可讀 | token 改為 `0640 root:rp-mcp-clients`；`usermod -aG rp-mcp-clients <user>` 後重新登入 |
+| 接上 Ethernet 後 `ssh <PI_HOST>.local` 偶爾逾時 | mDNS 同時回報 eth0 與 wlan0 兩個位址，連往 wlan0 位址的回應從 eth0 送出 | 改連 eth0 位址；wlan0 改成 AP 後就只剩 eth0 |
 | SSH 顯示 `Permission denied (publickey)` | 已設 `ssh.password_auth = false`，這台電腦沒有被授權的金鑰 | 用有授權的金鑰（`ssh -i <KEY>`）；或接螢幕鍵盤在本機把 `password_auth` 改回 `true` 後 `rpctl apply base` |
+| preflight 顯示 `ssh_lockout … not running over SSH`，但其實在 SSH 上 | sudo 重設環境變數，`SSH_CONNECTION` 不見了 | rpctl 改從上層 process 讀取 `SSH_CONNECTION` |
+| `apply ap` 驗證失敗：`dnsmasq: cannot read {staged:…}` | 只有「整個參數」是 `{staged:…}` 才會被替換，`--conf-file={staged:…}` 沒被替換 | 參數中的 token 一律替換（已修正；失敗時沒有任何變更） |
+| IoT client 拿得到位址與 DNS，但完全上不了網 | ap 模組沒有開啟 IPv4 forwarding（netns 測試自己開了，所以沒抓到） | ap 會寫入 `/etc/sysctl.d/91-rp-ap.conf`；檢查 `cat /proc/sys/net/ipv4/ip_forward` 為 1 |
+| `rpctl rollback ap` 後 AP 檔案還在、wlan0 仍是 unmanaged | rollback 只還原「最後一次」apply 的備份；重新套用過的模組會回到前一版而不是移除 | 每個模組保留套用前的 base 備份，手動 rollback 一律還原到套用前；dead-man 計時器只撤銷最後一次 |
+| AP rollback 後 wlan0 連不回 Wi-Fi（`association took too long`） | rtl8192cu 離開 AP 模式後要重載驅動才能再連線 | rollback 先請 NM 連線，失敗才重載該網卡的驅動再試一次 |
 | `install.sh --host` 卡在 sudo | 遠端沒有 TTY，sudo 無法詢問密碼 | 互動執行時改用 `ssh -t` |
 | 純文字清單的 `not valid!` 被當成網域 `not` | 一行多個字時只取第一個字 | 非 hosts 格式且有多個字的行視為無效（rp-dns 與 `rpctl dns import` 都已修正） |
 

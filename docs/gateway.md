@@ -1,5 +1,7 @@
 # Edge Security Gateway：安裝與操作
 
+**繁體中文** | [English](gateway.en.md)
+
 > 本文所有網路值都是佔位符或文件專用網段（192.0.2.0/24、198.51.100.0/24、203.0.113.0/24），請換成自己的值。
 
 ## 1. 安裝
@@ -45,7 +47,7 @@ sudo rpctl apply <module> --dry-run   # 顯示 diff 與將執行的指令
 sudo rpctl apply <module>
 sudo rpctl confirm                    # 防火牆類變更：在時限內確認，否則自動 rollback
 sudo rpctl status
-sudo rpctl rollback <module>
+sudo rpctl rollback <module>          # 移除模組：還原到第一次套用前（dead-man 計時器只撤銷最後一次套用）
 ```
 
 建議順序：`base` → `dns` → `vpn` → （接好 Ethernet 後）`ap` → `agent`。
@@ -93,6 +95,30 @@ sudo rpctl apply vpn
 sudo rpctl vpn remove-peer <NAME> && sudo rpctl apply vpn   # 撤銷
 ```
 
+### 在手機與電腦上使用
+
+**Tailscale**（不需路由器設定，CGNAT 也可用）
+
+| 裝置 | 步驟 |
+|---|---|
+| iPhone／iPad | App Store 安裝 Tailscale → 登入同一帳號 → 「Exit Node」選這台裝置 |
+| Android | Play 商店安裝 Tailscale → 登入 → 右上選單「Exit node」→ 選這台裝置 |
+| Windows | tailscale.com/download 安裝 → 系統匣圖示 → Exit nodes → 選這台裝置 |
+| macOS | App Store 或 tailscale.com/download 安裝 → 選單列圖示 → Exit Node → 選這台裝置 |
+
+- 第一次需在管理後台（Machines → 這台 → Edit route settings）核准「Use as exit node」
+- 親友：Share 這台機器並勾選「Allow use as an exit node」，對方用自己的帳號登入
+- 驗證：開啟 exit node 後查詢公網 IP，應顯示家裡的 ISP
+
+**WireGuard**（需要公網 IPv4 與路由器轉發 UDP `listen_port`）
+
+| 裝置 | 步驟 |
+|---|---|
+| iPhone／Android | 安裝 WireGuard App →「新增通道 → 掃描 QR code」（`rpctl vpn add-peer` 輸出）→ 開啟 |
+| Windows／macOS | wireguard.com/install 安裝 →「Import tunnel(s) from file」匯入 `.conf` → Activate |
+
+每台裝置各用一個 peer（`rpctl vpn add-peer <NAME> --write`）；QR 與私鑰只顯示一次。
+
 ## 5. DNS 防火牆
 
 ```toml
@@ -126,12 +152,15 @@ interface = "wlan0"
 ssid = "<IOT_SSID>"
 country = "TW"
 subnet = "10.77.0.0/24"
+block_dot = false            # true：拒絕 IoT client 的 DNS-over-TLS／QUIC（853），讓它們回到 DNS 防火牆
 ```
+
+- 853 埠連線一律記錄（`rp-ap-dot`／`rp-ap-doq`）；`block_dot = true` 時改為 reject，手機「私人 DNS」設為自動的會立刻改用一般 DNS；若設成**指定主機名稱**的嚴格模式，該裝置會無法解析 DNS
 
 ```bash
 sudo rpctl ap set-passphrase     # 不回顯；存成 0600，從不出現在設定或備份中
 sudo rpctl apply ap
-sudo rpctl rollback ap           # 交還 wlan0 給 NetworkManager，重新連回原本的 Wi-Fi
+sudo rpctl rollback ap           # 移除 AP（還原到第一次套用前），交還 wlan0 給 NetworkManager 並重新連回原本的 Wi-Fi
 ```
 
 ## 7. Agent 與 MCP
@@ -187,5 +216,7 @@ RP_ALLOW_ROOT=1 sudo -E test/run.sh integration # Linux：含 network namespace 
 RP_E2E_HOST=<USER>@<PI_HOST> test/run.sh e2e    # 真實裝置（非破壞性）
 RP_E2E_APPLY=1 RP_E2E_HOST=… test/run.sh e2e    # 含實際 apply／rollback（需有線管理連線）
 ```
+
+已上線的裝置（`/etc/rp/rp.toml` 已存在）上 e2e 預設跳過；`RP_E2E_ALLOW_IN_USE=1` 只跑唯讀檢查。
 
 測試層級與 tag：`static`、`unit`、`cli`、`integration`、`security`、`installer`、`e2e`、`perf`、`hwsim`、`requires-root`、`requires-pi`。

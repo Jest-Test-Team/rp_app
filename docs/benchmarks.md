@@ -1,5 +1,7 @@
 # 效能與偵測量測
 
+**繁體中文** | [English](benchmarks.en.md)
+
 所有數據都在 **Raspberry Pi 2 Model B Rev 1.1**（4× Cortex-A7、armhf、Raspberry Pi OS trixie、kernel 6.18）上量測，除非另外註明。
 
 ## 加密（openssl speed，單核）
