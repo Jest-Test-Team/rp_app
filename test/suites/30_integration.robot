@@ -16,6 +16,9 @@ ${CFG_DIR}        ${EMPTY}
 Without A Firewall Everything Is Reachable (Control)
     [Documentation]    Proves the isolation tests below are meaningful: with no rules the
     ...                VPN client CAN reach the LAN, the router and the Pi.
+    # A plain router: forwarding on, no rules (Load Firewall sets forwarding from renders).
+    ${f}=    In NS    rp    sysctl    -qw    net.ipv4.ip_forward\=1
+    Should Be Equal As Integers    ${f.rc}    0
     ${s}=    HTTP From    cli    203.0.113.10:8080
     Should Be Equal    ${s}    200
     ${l}=    HTTP From    cli    192.0.2.50:8080

@@ -87,9 +87,10 @@ Create Topology
     Sh    ip    -n    ${NS}cli    route    add    default    via    198.51.100.1
     Sh    ip    -n    ${NS}iot    addr    add    198.51.100.130/25    dev    eth0
     Sh    ip    -n    ${NS}iot    route    add    default    via    198.51.100.129
-    FOR    ${n}    IN    home    rp
-        Sh    ip    netns    exec    ${NS}${n}    sysctl    -qw    net.ipv4.ip_forward\=1
-    END
+    # Only the home router forwards unconditionally. The rp namespace forwards
+    # only if the rendered module sysctl.d files say so (see Load Firewall), so a
+    # module that forgets to enable forwarding fails its internet-access tests.
+    Sh    ip    netns    exec    ${NS}home    sysctl    -qw    net.ipv4.ip_forward\=1
     # Plain servers: an "internet" web server, a LAN web server and an sshd stand-in on the Pi.
     Start Process    ip    netns    exec    ${NS}inet    python3    -u    -m    http.server    8080
     ...    --bind    203.0.113.10    alias=inet-http    stderr=${OUTPUT_DIR}/${NS}inet-http.log
@@ -124,8 +125,15 @@ Destroy Topology
     END
 
 Load Firewall
-    [Documentation]    Replace the rp namespace's ruleset with a rendered file.
+    [Documentation]    Replace the rp namespace's ruleset with a rendered file and apply
+    ...    the IPv4 forwarding setting from the same render's sysctl.d files.
     [Arguments]    ${file}
+    ${dir}=    Evaluate    $file.split('/etc/rp/')[0]
+    ${fwd}=    Evaluate
+    ...    int(any('net.ipv4.ip_forward = 1' in open(p).read() for p in glob.glob($dir + '/etc/sysctl.d/*.conf')))
+    ...    modules=glob
+    ${s}=    In NS    rp    sysctl    -qw    net.ipv4.ip_forward\=${fwd}
+    Should Be Equal As Integers    ${s.rc}    0    msg=sysctl failed: ${s.stdout}
     ${r}=    In NS    rp    nft    -f    ${file}
     Should Be Equal As Integers    ${r.rc}    0    msg=nft load failed: ${r.stdout}
 

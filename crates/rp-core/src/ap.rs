@@ -24,6 +24,9 @@ pub const DNSMASQ_UNIT: &str = "/etc/systemd/system/rp-ap-dnsmasq.service";
 pub const NM_CONF: &str = "/etc/NetworkManager/conf.d/90-rp-ap.conf";
 pub const SNIPPET_PATH: &str = "/etc/rp/nft.d/60-ap.nft";
 pub const CHECK_PATH: &str = "/etc/rp/.check/ap.nft";
+/// IPv4 forwarding for AP clients (no IPv6 is offered to them). Separate from
+/// the vpn module's file so either module can be rolled back on its own.
+pub const SYSCTL_PATH: &str = "/etc/sysctl.d/91-rp-ap.conf";
 
 pub struct Ap;
 
@@ -260,6 +263,7 @@ impl Module for Ap {
             ManagedFile::new(HOSTAPD_UNIT, 0o644, hostapd_unit(cfg)),
             ManagedFile::new(DNSMASQ_UNIT, 0o644, dnsmasq_unit(cfg)),
             ManagedFile::new(NM_CONF, 0o644, nm_conf(cfg)),
+            ManagedFile::new(SYSCTL_PATH, 0o644, format!("# {HEADER}\nnet.ipv4.ip_forward = 1\n")),
             ManagedFile::new(SNIPPET_PATH, 0o600, snip.clone()),
             ManagedFile::check_only(CHECK_PATH, nft::combined(cfg, &snip)),
         ]
@@ -284,6 +288,8 @@ impl Module for Ap {
             Step::best_effort(&["nmcli", "device", "set", iface, "managed", "no"]),
             Step::cmd(&["systemctl", "daemon-reload"]),
             Step::cmd(&["systemctl", "reload-or-restart", "rp-firewall.service"]),
+            // Without forwarding, clients reach only this box (DHCP/DNS), never the internet.
+            Step::cmd(&["sysctl", "--system"]),
             Step::cmd(&["systemctl", "enable", "rp-ap-hostapd.service", "rp-ap-dnsmasq.service"]),
             Step::cmd(&["systemctl", "restart", "rp-ap-hostapd.service"]),
             Step::cmd(&["systemctl", "restart", "rp-ap-dnsmasq.service"]),
@@ -305,6 +311,10 @@ impl Module for Ap {
         vec![
             Step::cmd(&["systemctl", "daemon-reload"]),
             Step::best_effort(&["systemctl", "reload-or-restart", "rp-firewall.service"]),
+            // Removing the sysctl file does not undo the live value; reset it, then
+            // re-read sysctl.d so forwarding stays on if the vpn module still needs it.
+            Step::cmd(&["sysctl", "-w", "net.ipv4.ip_forward=0"]),
+            Step::cmd(&["sysctl", "--system"]),
             // Give the interface back; NM reconnects to the saved network.
             Step::cmd(&["nmcli", "general", "reload", "conf"]),
             Step::best_effort(&["sh", "-c", "for d in $(nmcli -g DEVICE,TYPE device | awk -F: '$2==\"wifi\"{print $1}'); do nmcli device set \"$d\" managed yes; done"]),
@@ -424,7 +434,16 @@ mod tests {
     #[test]
     fn rendered_files_and_requirements() {
         let f = Ap.render(&cfg(""));
-        assert_eq!(f.len(), 7);
+        assert_eq!(f.len(), 8);
+        let sysctl = f.iter().find(|x| x.path == SYSCTL_PATH).expect("forwarding sysctl");
+        assert!(sysctl.content.contains("net.ipv4.ip_forward = 1"), "AP clients need forwarding");
+        assert!(!sysctl.content.contains("ipv6"), "no IPv6 forwarding for AP clients");
+        let post: Vec<String> = Ap.post_apply(&cfg("")).iter().map(|s| s.argv.join(" ")).collect();
+        assert!(post.contains(&"sysctl --system".to_string()));
+        let undo: Vec<String> = Ap.post_rollback().iter().map(|s| s.argv.join(" ")).collect();
+        let off = undo.iter().position(|s| s == "sysctl -w net.ipv4.ip_forward=0").unwrap();
+        let reread = undo.iter().position(|s| s == "sysctl --system").unwrap();
+        assert!(off < reread, "re-read sysctl.d after resetting so a vpn module keeps forwarding");
         assert_eq!(f.iter().filter(|x| x.staging_only).count(), 1);
         assert!(
             f.iter().all(|x| !x.content.contains("00:00:00:00:00:00")),
