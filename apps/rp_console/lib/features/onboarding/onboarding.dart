@@ -9,6 +9,8 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:flutter/material.dart';
 
 import '../../app/app_state.dart';
@@ -48,7 +50,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final hostText = TextEditingController();
   final userText = TextEditingController(text: 'pi');
   final passText = TextEditingController();
-  final nameText = TextEditingController(text: Platform.isAndroid || Platform.isIOS ? 'Phone' : 'Computer');
+  final nameText = TextEditingController(
+    text: !kIsWeb && (Platform.isAndroid || Platform.isIOS) ? 'Phone' : 'Computer',
+  );
   final bootDir = TextEditingController();
   final hostname = TextEditingController(text: 'rp-security');
   final ssid = TextEditingController();
@@ -61,6 +65,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void initState() {
     super.initState();
+    final demo = widget.app.services.demoPairingCode;
+    if (demo != null) {
+      codeText.text = demo;
+      code = PairingCode.parse(demo);
+    }
     if (widget.app.services.desktop) {
       final c = bootfs.candidateBootPartitions();
       if (c.isNotEmpty) bootDir.text = c.first.path;

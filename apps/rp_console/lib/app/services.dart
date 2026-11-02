@@ -24,6 +24,7 @@ class Services {
     Future<ReleaseInfo> Function()? release,
     Future<String?> Function()? latest,
     this.desktop = false,
+    this.demoPairingCode,
   }) : transport = transport ?? ((h, p, pin) => PinnedTransport(host: h, port: p, pin: pin)),
        shell =
            shell ??
@@ -38,6 +39,9 @@ class Services {
   final ShellFactory shell;
   final Future<ReleaseInfo> Function() release;
   final Future<String?> Function() latest;
+
+  /// Demo mode: the simulated device's pairing code (shown and pre-filled).
+  final String? demoPairingCode;
 
   /// Can write SD cards (desktop builds).
   final bool desktop;
