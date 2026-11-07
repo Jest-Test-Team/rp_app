@@ -50,9 +50,119 @@ jobs:
           path: dist/rp-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
+  # Installable test builds of the console app. Both end up in dist/ before
+  # SHA256SUMS, so they are covered by the minisign signature too.
+  android:
+    name: android APK (signed)
+    runs-on: ubuntu-24.04
+    env:
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.9"
+          channel: stable
+          cache: true
+      - name: Version
+        id: v
+        run: bash apps/rp_console/tool/app_version.sh "${{ github.event_name == 'push' && github.ref_name || inputs.tag }}" >> "$GITHUB_OUTPUT"
+      - name: Release keystore
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "RP_ANDROID_KEYSTORE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+      - name: No release keystore
+        if: env.KEYSTORE_B64 == ''
+        run: echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; the APK is signed with the debug key (installable, but not upgradable to a release-signed build)"
+      - name: Build APK
+        working-directory: apps/rp_console
+        env:
+          RP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RP_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RP_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          flutter pub get
+          flutter build apk --release --build-name "${{ steps.v.outputs.name }}" --build-number "${{ github.run_number }}"
+      - name: Verify the signature
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          apk=apps/rp_console/build/app/outputs/flutter-apk/app-release.apk
+          "$apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          if grep -q 'CN=Android Debug' "$RUNNER_TEMP/certs.txt"; then
+            [ -z "$KEYSTORE_B64" ] || { echo "::error::a release keystore is configured but the APK is debug-signed"; exit 1; }
+            suffix=-debug-signed
+          else
+            suffix=
+          fi
+          mkdir -p dist
+          cp "$apk" "dist/rp-security-${{ steps.v.outputs.name }}${suffix}.apk"
+          ls -la dist
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-android
+          path: dist/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS IPA (signed with IOS_* secrets, else unsigned for sideloading)
+    runs-on: macos-15
+    env:
+      P12_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+      PROFILE_B64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+      BUNDLE_ID: com.jesttestteam.rp.rpConsole
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.9"
+          channel: stable
+          cache: true
+      - name: Version
+        id: v
+        run: bash apps/rp_console/tool/app_version.sh "${{ github.event_name == 'push' && github.ref_name || inputs.tag }}" >> "$GITHUB_OUTPUT"
+      - name: Signing identity and profile
+        id: sign
+        if: env.P12_B64 != '' && env.PROFILE_B64 != ''
+        env:
+          P12_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        run: bash apps/rp_console/tool/ios_ci_signing.sh setup
+      - name: Unsigned build (no IOS_* secrets)
+        if: steps.sign.outcome != 'success'
+        run: echo "::notice::No iOS signing secrets: publishing an unsigned IPA. Sign and install it with your Apple ID using Sideloadly or AltStore, or use scripts/ios-device-install.sh with the iPhone attached."
+      - name: Build IPA
+        working-directory: apps/rp_console
+        run: |
+          flutter pub get
+          if [ "${{ steps.sign.outcome }}" = success ]; then
+            flutter build ipa --release --export-options-plist "$RUNNER_TEMP/ExportOptions.plist" \
+              --build-name "${{ steps.v.outputs.name }}" --build-number "${{ github.run_number }}"
+          else
+            flutter build ipa --release --no-codesign \
+              --build-name "${{ steps.v.outputs.name }}" --build-number "${{ github.run_number }}"
+          fi
+      - name: Package and verify
+        run: bash apps/rp_console/tool/ios_ci_signing.sh package "${{ steps.v.outputs.name }}" "${{ steps.sign.outcome == 'success' && 'signed' || 'unsigned' }}"
+      - name: Remove the keychain and profile
+        if: always()
+        run: bash apps/rp_console/tool/ios_ci_signing.sh cleanup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-ios
+          path: dist/*.ipa
+          if-no-files-found: error
+
   assemble:
     name: checksums, SBOM, ${{ (github.event_name == 'push' || inputs.publish) && 'publish' || 'dry run' }}
-    needs: build
+    needs: [build, android, ios]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -64,6 +174,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: pkg-*
+          path: dist
+          merge-multiple: true
+      - name: Console app test builds (APK, IPA)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: app-*
           path: dist
           merge-multiple: true
       - name: SBOM (CycloneDX)

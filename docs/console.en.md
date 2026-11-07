@@ -54,6 +54,20 @@ Releases are signed with minisign. A device only installs a release whose `SHA25
 
 Maintainers: create the key once with `rp-probe release keygen --out-dir keys --password-env MINISIGN_PASSWORD`, commit `keys/minisign.pub` as `deploy/minisign.pub`, and store `minisign.key` and the password as the GitHub secrets `MINISIGN_SECRET_KEY` / `MINISIGN_PASSWORD`. The release workflow refuses to publish without a signature.
 
+## Test installs on phones
+
+Every release (and every manual run of the release workflow) attaches installable test builds, covered by the signed `SHA256SUMS`:
+
+| File | Signed with | Install |
+|---|---|---|
+| `rp-security-X.Y.Z.apk` | The project's Android upload key (repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; the workflow checks the signer with `apksigner`) | Open the file on the phone and allow installs from that app, or `adb install rp-security-X.Y.Z.apk` |
+| `rp-security-X.Y.Z-unsigned.ipa` | Nothing (no paid Apple account yet) | Sign it with your own Apple ID on a Mac using Sideloadly or AltStore (valid 7 days), then trust the developer on the iPhone |
+| `rp-security-X.Y.Z.ipa` | An Apple Distribution certificate + Ad Hoc profile, once `IOS_DIST_CERT_P12_BASE64`, `IOS_DIST_CERT_PASSWORD`, `IOS_PROVISION_PROFILE_BASE64` exist (`scripts/release-signing-secrets.sh`) | Apple Configurator, Xcode › Devices, or `xcrun devicectl device install app --device <id> rp-security-X.Y.Z.ipa`, on iPhones listed in the profile |
+
+With a free Apple ID and the iPhone on a cable, `scripts/ios-device-install.sh --team <TEAMID>` builds, signs (Xcode automatic signing, 7 days) and installs in one step; see `--help`.
+
+The Android upload key lives outside the repository (`~/.config/rp-release/android/`): keep a backup — Android only installs an update over an existing app if it carries the same signature.
+
 ## Develop and test
 
 ```

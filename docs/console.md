@@ -54,6 +54,20 @@ release 以 minisign 簽章。裝置只會安裝 `SHA256SUMS` 簽章能以 `/etc
 
 維護者：以 `rp-probe release keygen --out-dir keys --password-env MINISIGN_PASSWORD` 建立一次金鑰，將 `keys/minisign.pub` 提交為 `deploy/minisign.pub`，並把 `minisign.key` 與密碼存成 GitHub secrets `MINISIGN_SECRET_KEY`／`MINISIGN_PASSWORD`。release workflow 在沒有簽章時拒絕發佈。
 
+## 手機測試安裝
+
+每個 release（以及每次手動執行 release workflow）都會附上可安裝的測試版，並納入已簽章的 `SHA256SUMS`：
+
+| 檔案 | 簽章 | 安裝方式 |
+|---|---|---|
+| `rp-security-X.Y.Z.apk` | 專案的 Android upload key（repository secrets `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`；workflow 以 `apksigner` 檢查簽署者） | 在手機上開啟檔案並允許該 App 安裝，或 `adb install rp-security-X.Y.Z.apk` |
+| `rp-security-X.Y.Z-unsigned.ipa` | 未簽章（尚無付費 Apple 帳號） | 在 Mac 上以 Sideloadly 或 AltStore 用你自己的 Apple ID 簽章（有效 7 天），再於 iPhone 上信任開發者 |
+| `rp-security-X.Y.Z.ipa` | Apple Distribution 憑證 + Ad Hoc profile，待 `IOS_DIST_CERT_P12_BASE64`、`IOS_DIST_CERT_PASSWORD`、`IOS_PROVISION_PROFILE_BASE64` 設定後（`scripts/release-signing-secrets.sh`） | Apple Configurator、Xcode › Devices，或 `xcrun devicectl device install app --device <id> rp-security-X.Y.Z.ipa`，限 profile 中列出的 iPhone |
+
+只有免費 Apple ID 時，用傳輸線接上 iPhone 後執行 `scripts/ios-device-install.sh --team <TEAMID>`，一次完成建置、簽章（Xcode 自動簽章，7 天）與安裝；詳見 `--help`。
+
+Android upload key 存放在 repository 之外（`~/.config/rp-release/android/`）：請備份——Android 只會在簽章相同時以新版覆蓋安裝。
+
 ## 開發與測試
 
 ```

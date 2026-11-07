@@ -1,0 +1,7 @@
+// Copy to Signing.xcconfig (gitignored) for signed device builds on this Mac.
+// The release workflow writes the same file from the IOS_* repository secrets.
+CODE_SIGN_STYLE = Manual
+DEVELOPMENT_TEAM = ABCDE12345
+CODE_SIGN_IDENTITY = Apple Distribution
+CODE_SIGN_IDENTITY[sdk=iphoneos*] = Apple Distribution
+PROVISIONING_PROFILE_SPECIFIER = RP Security Ad Hoc
