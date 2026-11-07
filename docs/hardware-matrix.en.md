@@ -12,6 +12,7 @@
 | DNS firewall | — | ✅ (RSS 4.8 MB) | ✅ | ✅ |
 | IoT AP | — | ✅ needs a separate WAN (eth0) + an AP-capable adapter | ✅ | ✅ |
 | Agent / MCP | — | ✅ | ✅ | ✅ |
+| Console API (v0.2) | — | ✅ capability detection verified on the device; API firewall verified in netns on its kernel (not yet deployed) | ✅ (fixtures) | ✅ (fixtures) |
 
 ## This device (Pi 2B Rev 1.1)
 

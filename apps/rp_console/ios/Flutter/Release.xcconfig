@@ -1,0 +1,4 @@
+#include "Generated.xcconfig"
+// Device signing for release / ad-hoc builds: written by the release workflow
+// from repository secrets, or by hand for local device builds. Never committed.
+#include? "Signing.xcconfig"

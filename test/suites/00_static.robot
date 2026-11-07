@@ -13,7 +13,8 @@ Clippy Reports No Warnings
 Shell Scripts Pass ShellCheck
     Require Tool    shellcheck
     @{scripts}=    List Files In Directory    ${REPO}/scripts    *.sh    absolute=True
-    Run Ok    shellcheck    -x    ${INSTALL_SH}    ${REPO}/test/run.sh    @{scripts}
+    @{tools}=    List Files In Directory    ${REPO}/apps/rp_console/tool    *.sh    absolute=True
+    Run Ok    shellcheck    -x    ${INSTALL_SH}    ${REPO}/test/run.sh    @{scripts}    @{tools}
 
 PowerShell Installer Passes PSScriptAnalyzer
     [Tags]    static    pwsh
@@ -36,3 +37,10 @@ Every Managed File Carries The Ownership Header
         ${t}=    Get File    ${FIXTURES}/golden/${f}
         Should Contain    ${t}    Managed by rpctl
     END
+
+OpenAPI Document Matches rp-api
+    [Documentation]    The app's committed API contract must be what rp-api serves.
+    ${live}=    Run Ok    ${REPO}/target/debug/rp-api    openapi
+    ${committed}=    Get File    ${REPO}/apps/rp_console/api/openapi.json
+    Should Be Equal    ${live.strip()}    ${committed.strip()}
+    ...    msg=apps/rp_console/api/openapi.json is stale: run `rp-api openapi > apps/rp_console/api/openapi.json`

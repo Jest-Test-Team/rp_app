@@ -1,0 +1,26 @@
+{
+  "model": "Raspberry Pi 4 Model B Rev 1.5",
+  "arch": "aarch64",
+  "mem_kb": 3900000,
+  "os": "Debian GNU/Linux 13 (trixie)",
+  "ifaces": [
+    {
+      "name": "eth0",
+      "kind": "ethernet",
+      "carrier": true
+    },
+    {
+      "name": "wlan0",
+      "kind": "wifi",
+      "carrier": true,
+      "ap_mode": true,
+      "bands": [
+        "2.4",
+        "5"
+      ],
+      "wpa3": true
+    }
+  ],
+  "kernel_wireguard": true,
+  "mgmt_if": "eth0"
+}

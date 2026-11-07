@@ -1,0 +1,37 @@
+[package]
+name = "rp-api"
+description = "Console management API (HTTPS, unprivileged); changes go through rp-privd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rp-core = { path = "../rp-core" }
+rp-schema = { path = "../rp-schema" }
+rp-policy = { path = "../rp-policy" }
+rp-privd = { path = "../rp-privd" }
+rp-agent = { path = "../rp-agent" }
+rp-http = { path = "../rp-http" }
+rp-mcp = { path = "../rp-mcp" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand_core.workspace = true
+ipnet.workspace = true
+axum.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tower.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true
+utoipa.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true

@@ -6,7 +6,7 @@
 
 ## 1. 安裝
 
-> GitHub Release 發佈（推 tag）之前，預設的 release 下載會 404；請先用 `--from-source`。
+> GitHub Release 已發佈（最新：`v0.1.0`，armv7／aarch64／x86_64，附 `SHA256SUMS`、SBOM 與 build provenance）。`--from-source` 則改為編譯目前的分支。
 
 ### 在 Pi 上直接安裝
 
@@ -218,5 +218,7 @@ RP_E2E_APPLY=1 RP_E2E_HOST=… test/run.sh e2e    # 含實際 apply／rollback�
 ```
 
 已上線的裝置（`/etc/rp/rp.toml` 已存在）上 e2e 預設跳過；`RP_E2E_ALLOW_IN_USE=1` 只跑唯讀檢查。
+
+SSH 金鑰：`RP_E2E_KEY=<私鑰檔>`（預設 `~/.ssh/id_ed25519`）；有 passphrase 的金鑰請先 `ssh-add`，再設 `RP_E2E_KEY=agent`。sudo 密碼用 `RP_E2E_SUDO_PASSWORD`。
 
 測試層級與 tag：`static`、`unit`、`cli`、`integration`、`security`、`installer`、`e2e`、`perf`、`hwsim`、`requires-root`、`requires-pi`。

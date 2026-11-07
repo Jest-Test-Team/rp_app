@@ -6,6 +6,8 @@
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
+pub mod capability;
+
 /// Root of `rp.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +32,102 @@ pub struct Config {
     /// MCP server exposing agent tools to AI clients, behind rp-policy.
     #[serde(default)]
     pub mcp: Option<Mcp>,
+    /// Management API for the console app (rp-api + rp-privd).
+    #[serde(default)]
+    pub api: Option<Api>,
+    /// Typed firewall rules on top of the baseline (no raw nftables).
+    #[serde(default)]
+    pub firewall: Option<Firewall>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Firewall {
+    #[serde(default)]
+    pub rules: Vec<FwRule>,
+}
+
+/// Where traffic comes from or goes to. `lan` and `wan` share the uplink
+/// interface and are told apart by `device.lan_cidrs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Zone {
+    Lan,
+    Wan,
+    Iot,
+    Vpn,
+    /// This device itself (input).
+    Device,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Proto {
+    #[default]
+    Any,
+    Tcp,
+    Udp,
+    Icmp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FwAction {
+    Accept,
+    Drop,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FwRule {
+    /// Shown in the app; letters, digits, space, '-', '_' (1-40).
+    pub name: String,
+    pub from: Zone,
+    pub to: Zone,
+    /// Only these destination networks inside `to` (empty = the whole zone).
+    #[serde(default)]
+    pub dest: Vec<IpNet>,
+    #[serde(default)]
+    pub proto: Proto,
+    /// Destination ports (tcp / udp only; empty = all).
+    #[serde(default)]
+    pub ports: Vec<u16>,
+    pub action: FwAction,
+    #[serde(default)]
+    pub log: bool,
+}
+
+/// The console management API. rp-api is unprivileged; changes go through
+/// rp-privd and need an admin signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Api {
+    #[serde(default = "default_api_listen")]
+    pub listen: std::net::SocketAddr,
+    /// Also allow the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48). The WAN never is.
+    #[serde(default = "default_true")]
+    pub allow_tailnet: bool,
+    /// Lifetime of a read session created with an admin signature.
+    #[serde(default = "default_session_minutes")]
+    pub session_minutes: u32,
+}
+
+impl Default for Api {
+    fn default() -> Self {
+        Self {
+            listen: default_api_listen(),
+            allow_tailnet: true,
+            session_minutes: default_session_minutes(),
+        }
+    }
+}
+
+fn default_api_listen() -> std::net::SocketAddr {
+    "0.0.0.0:8443".parse().unwrap()
+}
+fn default_session_minutes() -> u32 {
+    15
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

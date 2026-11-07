@@ -1,6 +1,7 @@
 //! rpctl — configure, apply and roll back the rp edge security gateway.
 //!
-//! Exit codes: 0 ok · 1 error · 2 preflight failed · 3 invalid config.
+//! Exit codes: 0 ok · 1 error · 2 preflight failed · 3 invalid config ·
+//! 4 revision conflict or another change in progress.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -50,6 +51,15 @@ enum Cmd {
     Check,
     /// Check that the system is safe to apply a module to.
     Preflight { module: String },
+    /// What this hardware can run (per module, with reasons). Always JSON.
+    Capabilities {
+        /// Management client address: its route decides the management link.
+        #[arg(long)]
+        peer: Option<std::net::IpAddr>,
+        /// Evaluate a hardware-facts JSON file instead of this system (testing).
+        #[arg(long)]
+        facts: Option<PathBuf>,
+    },
     /// Print (or write to --out) the files a module manages.
     Render {
         module: String,
@@ -107,6 +117,202 @@ enum Cmd {
     /// Audit log tools.
     #[command(subcommand)]
     Audit(AuditCmd),
+    /// Revision-checked configuration changes with automatic rollback (what
+    /// the console app uses).
+    #[command(subcommand)]
+    Changeset(ChangesetCmd),
+    /// Store a named secret (ap_passphrase, tailscale_auth_key) root-only, from stdin.
+    #[command(subcommand)]
+    Secret(SecretCmd),
+    /// Pair the console app: open a one-time pairing code (QR).
+    #[command(subcommand)]
+    Pairing(PairingCmd),
+    /// Console admins (paired app installations).
+    #[command(subcommand)]
+    Admins(AdminsCmd),
+    /// Write a first config for the network this device is on.
+    Init {
+        /// Detect the uplink and LAN (required: say you mean it).
+        #[arg(long)]
+        auto: bool,
+        /// Replace an existing config (a backup is kept).
+        #[arg(long)]
+        force: bool,
+        /// Print instead of writing.
+        #[arg(long)]
+        print: bool,
+    },
+    /// Prepare a freshly flashed SD card (boot partition).
+    #[command(subcommand)]
+    Bootfs(BootfsCmd),
+    /// Signed software updates (all binaries switch together, automatic switch-back).
+    #[command(subcommand)]
+    Update(UpdateCmd),
+    /// Get this device ready for the console app (idempotent): write a config
+    /// if there is none, enable [agent] and [api], apply base, agent and api,
+    /// and open pairing when no app is paired yet.
+    Setup {
+        /// Minutes the pairing code stays valid.
+        #[arg(long, default_value_t = 30)]
+        pairing_minutes: u32,
+        /// Do not open pairing (a secret was placed on the SD card).
+        #[arg(long)]
+        no_pairing: bool,
+        /// Do not apt-get install missing packages.
+        #[arg(long)]
+        no_packages: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // parsed once per process
+enum BootfsCmd {
+    /// Print the files for a provisioning spec (JSON) as {"name": "content"} —
+    /// deterministic, for golden tests shared with the app.
+    #[command(hide = true)]
+    Render {
+        #[arg(long)]
+        spec: PathBuf,
+    },
+    /// Write first-boot files: the device installs rp and waits to be paired.
+    Write {
+        /// Mounted boot partition (contains cmdline.txt and meta-data).
+        #[arg(long)]
+        dir: PathBuf,
+        /// Release to install, e.g. v0.2.0.
+        #[arg(long)]
+        tag: String,
+        /// SHA-256 of that release's install.sh (see its SHA256SUMS).
+        #[arg(long)]
+        install_sha256: String,
+        #[arg(long, default_value = "rp-security")]
+        hostname: String,
+        #[arg(long, default_value = rp_core::provision::DEFAULT_REPO)]
+        repo: String,
+        /// Create this admin user (key login only).
+        #[arg(long, requires = "ssh_key_file")]
+        admin_user: Option<String>,
+        #[arg(long, requires = "admin_user")]
+        ssh_key_file: Option<PathBuf>,
+        /// Join this Wi-Fi network (password read from stdin).
+        #[arg(long, requires = "wifi_country")]
+        wifi_ssid: Option<String>,
+        #[arg(long)]
+        wifi_country: Option<String>,
+        #[arg(long)]
+        timezone: Option<String>,
+        #[arg(long)]
+        no_qr: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// Download, verify (minisign + SHA-256), self-test and switch to a release.
+    Install {
+        #[arg(long)]
+        tag: String,
+        /// Release download base (https://…/releases/download or file:///dir).
+        #[arg(long, default_value = rp_core::update::DEFAULT_BASE)]
+        base_url: String,
+        #[arg(long)]
+        target: Option<String>,
+        /// Verify only; switch nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Seconds to wait before checking the restarted services.
+        #[arg(long, default_value_t = 5)]
+        settle_secs: u64,
+    },
+    /// Switch back to the previous release.
+    Rollback {
+        #[arg(long, default_value_t = 5)]
+        settle_secs: u64,
+    },
+    /// Current and previous release, and history.
+    Status,
+}
+
+#[derive(Subcommand)]
+enum PairingCmd {
+    /// Create a one-time pairing secret and show it as a QR code for the app.
+    New {
+        /// Minutes the code stays valid.
+        #[arg(long, default_value_t = 15)]
+        minutes: u32,
+        /// Host name or address the app should connect to (default: <hostname>.local).
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        no_qr: bool,
+    },
+    /// Close an open pairing code.
+    Close,
+}
+
+#[derive(Subcommand)]
+enum AdminsCmd {
+    List,
+    /// Revoke an admin (e.g. a lost phone).
+    Revoke {
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ChangesetCmd {
+    /// Current configuration revision.
+    Revision,
+    /// Create a change set from a JSON patch of dotted keys.
+    Create {
+        module: String,
+        #[arg(long)]
+        expected_revision: u64,
+        /// JSON object, e.g. '{"ap.block_dot": true}'.
+        #[arg(long)]
+        patch: String,
+    },
+    /// Run preflight checks for a change set.
+    Preflight {
+        id: String,
+        /// Management client address (must stay allowed).
+        #[arg(long)]
+        peer: Option<std::net::IpAddr>,
+    },
+    /// Apply a preflighted change set and arm the rollback timer.
+    Apply {
+        id: String,
+        /// Seconds to confirm before the device rolls back by itself.
+        #[arg(long, default_value_t = rp_core::changeset::DEFAULT_CONFIRM_SECS)]
+        confirm_secs: u32,
+        #[arg(long)]
+        no_packages: bool,
+    },
+    /// Keep an applied change set.
+    Confirm {
+        id: String,
+    },
+    /// Undo the latest applied change set.
+    Rollback {
+        id: String,
+    },
+    /// Called by the rollback timer.
+    #[command(hide = true)]
+    Expire {
+        id: String,
+    },
+    Show {
+        id: String,
+    },
+    List,
+}
+
+#[derive(Subcommand)]
+enum SecretCmd {
+    /// Read the value from stdin (one line) and store it with mode 600.
+    Set { name: String },
+    /// Show which secrets are set (never their values).
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -237,6 +443,18 @@ fn print_checks(checks: &[preflight::Check], json: bool) {
 
 fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
     let target = Target { root: cli.root.clone(), runner };
+    // Real changes share one lock with change sets (the app) so they can't interleave.
+    // The dead-man timer's rollback waits for the lock instead of giving up.
+    use rp_core::changeset::Lock;
+    let _lock = match &cli.cmd {
+        Cmd::Rollback { auto: true, .. } => Some(Lock::wait(&target)),
+        Cmd::Apply { dry_run: false, .. } | Cmd::Confirm | Cmd::Rollback { .. } => {
+            Some(Lock::acquire(&target))
+        }
+        _ => None,
+    }
+    .transpose()
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     match &cli.cmd {
         Cmd::Modules => {
             for m in MODULES {
@@ -266,6 +484,17 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             if !preflight::passed(&checks) {
                 return Ok(ExitCode::from(EXIT_PREFLIGHT));
             }
+        }
+        Cmd::Capabilities { peer, facts } => {
+            let hw = match facts {
+                Some(p) => serde_json::from_str(&std::fs::read_to_string(p)?)
+                    .with_context(|| format!("invalid facts file {}", p.display()))?,
+                None => {
+                    let cfg = rp_core::config::load(&cli.config).ok();
+                    rp_core::capabilities::gather(&target, cfg.as_ref(), *peer)
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&rp_core::capabilities::evaluate(&hw))?);
         }
         Cmd::Render { module: name, out } => {
             module(name)?;
@@ -435,6 +664,230 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             println!("passphrase saved to {} (mode 600)", a.passphrase_file);
             println!("apply or re-apply: sudo rpctl apply ap   (hostapd re-reads it on restart)");
         }
+        Cmd::Changeset(c) => return changeset_cmd(cli, c, &target),
+        Cmd::Secret(SecretCmd::Set { name }) => {
+            let cfg = rp_core::config::load(&cli.config).ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            let value = line.trim_end_matches(['\r', '\n']);
+            let fp = rp_core::secrets::set(&cli.root, cfg.as_ref(), name, value)?;
+            println!("{name} stored (fingerprint {fp})");
+        }
+        Cmd::Secret(SecretCmd::Status) => {
+            let cfg = rp_core::config::load(&cli.config).ok();
+            for n in rp_core::secrets::NAMES {
+                let set = rp_core::secrets::is_set(&cli.root, cfg.as_ref(), n);
+                println!("{n:<20} {}", if set { "set" } else { "not set" });
+            }
+        }
+        Cmd::Pairing(PairingCmd::New { minutes, host, no_qr }) => {
+            anyhow::ensure!((1..=1440).contains(minutes), "--minutes must be 1-1440");
+            let dev = rp_privd::device_id(&cli.root)?;
+            let cert = rp_privd::cert_sha256(&cli.root)
+                .context("rp-api has no TLS certificate yet: apply the api module first (sudo rpctl apply api)")?;
+            let secret = rp_policy::pairing::open(
+                &under_root(&cli.root, rp_privd::PAIRING),
+                rp_core::changeset::now(),
+                Some(i64::from(*minutes) * 60),
+            )?;
+            let cfg = rp_core::config::load(&cli.config).ok();
+            let port = cfg.and_then(|c| c.api).map(|a| a.listen.port()).unwrap_or(8443);
+            let host = host.clone().unwrap_or_else(|| {
+                let h = std::fs::read_to_string(under_root(&cli.root, "/etc/hostname"))
+                    .unwrap_or_default();
+                format!("{}.local", h.trim())
+            });
+            let payload = serde_json::json!({
+                "v": 1, "host": host, "port": port, "device": dev, "secret": secret, "cert": cert,
+            })
+            .to_string();
+            if cli.json {
+                println!("{payload}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            if !no_qr {
+                let code = qrcode::QrCode::new(payload.as_bytes())?;
+                println!(
+                    "{}",
+                    code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build()
+                );
+            }
+            println!("Scan with the RP Security app (Add device > Pair with code), or enter:");
+            println!("  host   {host}:{port}");
+            println!("  code   {secret}");
+            println!("  device {dev}");
+            println!(
+                "Valid for {minutes} minute(s), one use. Close early: sudo rpctl pairing close"
+            );
+        }
+        Cmd::Init { auto, force, print } => {
+            anyhow::ensure!(*auto, "pass --auto to detect the network and write a config");
+            let path = &cli.config;
+            if path.exists() && !force && !print {
+                println!("{} exists; nothing to do (use --force to replace it)", path.display());
+                return Ok(ExitCode::SUCCESS);
+            }
+            let d = rp_core::init::detect(&target).map_err(anyhow::Error::msg)?;
+            let text = rp_core::init::render(&d);
+            rp_core::config::parse(&text)?;
+            if *print {
+                print!("{text}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            if path.exists() {
+                std::fs::copy(path, path.with_extension("toml.bak-init"))?;
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(path, &text)?;
+            println!(
+                "wrote {} (uplink {}, LAN {})",
+                path.display(),
+                d.wan_if,
+                d.lan_cidrs.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        Cmd::Bootfs(BootfsCmd::Render { spec }) => {
+            let s: rp_core::provision::Spec =
+                serde_json::from_str(&std::fs::read_to_string(spec)?)?;
+            let files =
+                rp_core::provision::files(&s).map_err(|e| anyhow::anyhow!("{}", e.join("; ")))?;
+            let m: serde_json::Map<String, serde_json::Value> =
+                files.into_iter().map(|(k, v)| (k, serde_json::Value::String(v))).collect();
+            println!("{}", serde_json::to_string_pretty(&m)?);
+        }
+        Cmd::Bootfs(BootfsCmd::Write {
+            dir,
+            tag,
+            install_sha256,
+            hostname,
+            repo,
+            admin_user,
+            ssh_key_file,
+            wifi_ssid,
+            wifi_country,
+            timezone,
+            no_qr,
+        }) => {
+            use rp_core::provision as pv;
+            anyhow::ensure!(
+                dir.join("cmdline.txt").exists() && dir.join("meta-data").exists(),
+                "{} is not a freshly flashed Raspberry Pi OS boot partition (no cmdline.txt / meta-data)",
+                dir.display()
+            );
+            let admin = match (admin_user, ssh_key_file) {
+                (Some(u), Some(f)) => {
+                    Some((u.clone(), std::fs::read_to_string(f)?.trim().to_string()))
+                }
+                _ => None,
+            };
+            let wifi = match wifi_ssid {
+                Some(ssid) => {
+                    let mut pw = String::new();
+                    std::io::stdin().read_line(&mut pw)?;
+                    Some(pv::Wifi {
+                        ssid: ssid.clone(),
+                        password: pw.trim_end_matches(['\r', '\n']).to_string(),
+                        country: wifi_country.clone().unwrap_or_default(),
+                    })
+                }
+                None => None,
+            };
+            let spec = pv::Spec {
+                hostname: hostname.clone(),
+                tag: tag.clone(),
+                install_sha256: install_sha256.to_lowercase(),
+                repo: repo.clone(),
+                pairing_secret: rp_policy::pairing::new_secret(),
+                instance_id: format!("rp-{}", rp_core::changeset::now()),
+                admin,
+                wifi,
+                timezone: timezone.clone(),
+            };
+            let files = pv::files(&spec).map_err(|e| anyhow::anyhow!("{}", e.join("; ")))?;
+            for (name, content) in &files {
+                let p = dir.join(name);
+                std::fs::write(&p, content)?;
+            }
+            let meta = std::fs::read_to_string(dir.join("meta-data")).unwrap_or_default();
+            std::fs::write(dir.join("meta-data"), pv::meta_data(&meta, &spec.instance_id))?;
+            let qr = pv::pairing_qr(&spec, 8443);
+            if cli.json {
+                println!("{qr}");
+            } else {
+                if !no_qr {
+                    let code = qrcode::QrCode::new(qr.as_bytes())?;
+                    println!(
+                        "{}",
+                        code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build()
+                    );
+                }
+                println!("Card ready: {} file(s) written to {}", files.len() + 1, dir.display());
+                println!("Boot the device on your network, then pair in the app with this code:");
+                println!("  host {}.local:8443", spec.hostname);
+                println!("  code {}", spec.pairing_secret);
+            }
+        }
+        Cmd::Update(c) => {
+            use rp_core::update as up;
+            let _lock =
+                rp_core::changeset::Lock::acquire(&target).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let out = match c {
+                UpdateCmd::Install { tag, base_url, target: triple, dry_run, settle_secs } => {
+                    let o = up::Options {
+                        tag: tag.clone(),
+                        base_url: base_url.clone(),
+                        target: triple.clone(),
+                        config: cli.config.clone(),
+                        settle: std::time::Duration::from_secs(*settle_secs),
+                        dry_run: *dry_run,
+                    };
+                    serde_json::to_value(up::install(&target, &o)?)?
+                }
+                UpdateCmd::Rollback { settle_secs } => serde_json::to_value(up::rollback(
+                    &target,
+                    std::time::Duration::from_secs(*settle_secs),
+                )?)?,
+                UpdateCmd::Status => {
+                    let mut v = serde_json::to_value(up::load_state(&target))?;
+                    v["live"] = serde_json::json!(up::live_tag(&target));
+                    v
+                }
+            };
+            println!(
+                "{}",
+                if cli.json { out.to_string() } else { serde_json::to_string_pretty(&out)? }
+            );
+        }
+        Cmd::Setup { pairing_minutes, no_pairing, no_packages } => {
+            return setup(cli, &target, *pairing_minutes, *no_pairing, *no_packages);
+        }
+        Cmd::Pairing(PairingCmd::Close) => {
+            let p = under_root(&cli.root, rp_privd::PAIRING);
+            if p.exists() {
+                std::fs::remove_file(&p)?;
+                println!("pairing closed");
+            } else {
+                println!("pairing was not open");
+            }
+        }
+        Cmd::Admins(c) => {
+            let p = under_root(&cli.root, rp_privd::ADMINS);
+            let mut admins = rp_policy::admin::Admins::load(&p).map_err(anyhow::Error::msg)?;
+            match c {
+                AdminsCmd::List => {
+                    for a in admins.active() {
+                        println!("{}  {:<24} added {}", a.id, a.name, a.added_at);
+                    }
+                }
+                AdminsCmd::Revoke { id } => {
+                    anyhow::ensure!(admins.revoke(id), "no active admin '{id}'");
+                    admins.save(&p)?;
+                    println!("revoked {id}");
+                }
+            }
+        }
         Cmd::Mcp(c) => return mcp_cmd(cli, c),
         Cmd::Dns(c) => return dns_cmd(cli, c, runner),
         Cmd::Actions => {
@@ -467,43 +920,15 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 Ok(c) => c,
                 Err(code) => return Ok(code),
             };
-            let store = action_store(&cfg, &cli.root);
-            let audit =
-                rp_policy::audit::Audit::open(&agent_state(&cfg, &cli.root).join("audit.jsonl"))?;
             let admin =
                 format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
-            let pending = store.get(id)?;
-            if !approve {
-                store.decide(id, false, &admin)?;
-                audit.record(
-                    &admin,
-                    &pending.tool,
-                    &pending.args,
-                    "denied",
-                    &format!("id={id}"),
-                )?;
-                println!("denied {id}: {}", pending.summary);
-                return Ok(ExitCode::SUCCESS);
+            let a = rp_agent::admin_ops::decide(&cfg, &cli.root, id, approve, &admin, runner)
+                .map_err(anyhow::Error::msg)?;
+            if approve {
+                println!("approved and applied {id}: {} (expires automatically)", a.summary);
+            } else {
+                println!("denied {id}: {}", a.summary);
             }
-            // The stored request is data: validate it again and build the exact command.
-            let argv = rp_agent::actions::command(&cfg, &pending.tool, &pending.args)
-                .map_err(|e| anyhow::anyhow!("request no longer valid: {e}"))?;
-            let a = store.decide(id, true, &admin)?;
-            audit.record(&admin, &a.tool, &a.args, "approved", &format!("id={id}"))?;
-            let out = runner.run(&argv)?;
-            let ok = out.ok();
-            store.finish(id, ok, if ok { "applied" } else { out.stderr.trim() })?;
-            audit.record(
-                &admin,
-                &a.tool,
-                &a.args,
-                if ok { "executed" } else { "error" },
-                &format!("id={id}"),
-            )?;
-            if !ok {
-                anyhow::bail!("applying {id} failed: {}", out.stderr.trim());
-            }
-            println!("approved and applied {id}: {} (expires automatically)", a.summary);
         }
         Cmd::QuarantineRestore => {
             let Ok(cfg) = rp_core::config::load(&cli.config) else { return Ok(ExitCode::SUCCESS) };
@@ -533,6 +958,7 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
             if let Some(m) = &cfg.mcp {
                 logs.push(under_root(&cli.root, &m.audit_log));
             }
+            logs.push(under_root(&cli.root, rp_privd::AUDIT));
             let mut bad = false;
             for l in logs {
                 if !l.exists() {
@@ -644,6 +1070,125 @@ fn peers_array(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::Array
 
 /// Edit the config preserving comments/formatting; keeps a timestamped backup
 /// and refuses to write a result that fails validation.
+fn setup(
+    cli: &Cli,
+    t: &Target,
+    pairing_minutes: u32,
+    no_pairing: bool,
+    no_packages: bool,
+) -> Result<ExitCode> {
+    let mut report = serde_json::Map::new();
+    let say = |m: &str| {
+        if !cli.json {
+            println!("{m}");
+        }
+    };
+    // 1. A config.
+    if !cli.config.exists() {
+        let d = rp_core::init::detect(t).map_err(anyhow::Error::msg)?;
+        let text = rp_core::init::render(&d);
+        rp_core::config::parse(&text)?;
+        if let Some(dir) = cli.config.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&cli.config, text)?;
+        say(&format!("wrote {} for uplink {}", cli.config.display(), d.wan_if));
+        report.insert("config_written".into(), true.into());
+    } else {
+        report.insert("config_written".into(), false.into());
+    }
+    // 2. The sections the console needs (an existing v0.1 config has neither).
+    let cfg = rp_core::config::load(&cli.config)?;
+    let mut added = vec![];
+    if cfg.agent.is_none() {
+        added.push("agent");
+    }
+    if cfg.api.is_none() {
+        added.push("api");
+    }
+    if !added.is_empty() {
+        edit_config(&cli.config, |doc| {
+            for sect in &added {
+                doc[*sect] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+            Ok(())
+        })?;
+        say(&format!("enabled [{}] in {}", added.join("], ["), cli.config.display()));
+    }
+    report.insert("sections_added".into(), serde_json::json!(added));
+    // 3. Apply. Locally there is no session to lose; over SSH, preflight's
+    // lockout check already proved the session stays allowed (these modules
+    // only add allow rules), so no confirm timer is armed.
+    let cfg = rp_core::config::load(&cli.config)?;
+    let mut applied = serde_json::Map::new();
+    for name in ["base", "agent", "api"] {
+        let m = module(name)?;
+        let facts = preflight::gather(&cfg, t);
+        let checks = preflight::evaluate(&cfg, name, &facts, false);
+        if !preflight::passed(&checks) {
+            if !cli.json {
+                print_checks(&checks, false);
+            }
+            let failed: Vec<_> = checks.iter().filter(|c| c.status == Status::Fail).collect();
+            report.insert("failed_module".into(), name.into());
+            report.insert("checks".into(), serde_json::to_value(failed)?);
+            if cli.json {
+                println!("{}", serde_json::Value::Object(report));
+            }
+            eprintln!("setup stopped: preflight for {name} failed; nothing else was changed");
+            return Ok(ExitCode::from(EXIT_PREFLIGHT));
+        }
+        let _lock = rp_core::changeset::Lock::acquire(t).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let opts = ApplyOptions {
+            dry_run: false,
+            install_packages: !no_packages,
+            dead_man_secs: None,
+            rpctl_argv: self_argv(cli)?,
+        };
+        let rep = apply::apply(m.as_ref(), &cfg, t, &opts)?;
+        applied.insert(name.into(), serde_json::json!(rep.changes.len()));
+        say(&format!(
+            "{name}: {}",
+            if rep.changes.is_empty() {
+                "up to date".into()
+            } else {
+                format!("applied {} file(s)", rep.changes.len())
+            }
+        ));
+    }
+    report.insert("applied".into(), serde_json::Value::Object(applied));
+    // 4. Pairing.
+    let admins = rp_policy::admin::Admins::load(&under_root(&cli.root, rp_privd::ADMINS))
+        .unwrap_or_default();
+    let paired = admins.active().next().is_some();
+    report.insert("paired".into(), paired.into());
+    let pairing_file = under_root(&cli.root, rp_privd::PAIRING);
+    if !no_pairing && !paired && !pairing_file.exists() {
+        anyhow::ensure!((1..=1440).contains(&pairing_minutes), "--pairing-minutes must be 1-1440");
+        let dev = rp_privd::device_id(&cli.root)?;
+        let secret = rp_policy::pairing::open(
+            &pairing_file,
+            rp_core::changeset::now(),
+            Some(i64::from(pairing_minutes) * 60),
+        )?;
+        let host =
+            std::fs::read_to_string(under_root(&cli.root, "/etc/hostname")).unwrap_or_default();
+        let port = cfg.api.as_ref().map(|a| a.listen.port()).unwrap_or(8443);
+        let p = serde_json::json!({"v": 1, "host": format!("{}.local", host.trim()), "port": port,
+            "device": dev, "secret": secret, "cert": rp_privd::cert_sha256(&cli.root)});
+        if !cli.json {
+            println!("pairing open for {pairing_minutes} min; code {secret}");
+        }
+        report.insert("pairing".into(), p);
+    } else {
+        report.insert("pairing".into(), serde_json::Value::Null);
+    }
+    if cli.json {
+        println!("{}", serde_json::Value::Object(report));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn edit_config(
     path: &Path,
     f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,
@@ -830,55 +1375,25 @@ fn dns_cmd(cli: &Cli, c: &DnsCmd, runner: &dyn Runner) -> Result<ExitCode> {
 }
 
 fn mcp_cmd(cli: &Cli, c: &McpCmd) -> Result<ExitCode> {
-    use rp_policy::auth::{hash_token, new_token, Client, Clients};
     let cfg = match load_config(&cli.config) {
         Ok(c) => c,
         Err(code) => return Ok(code),
     };
-    let m = cfg.mcp.as_ref().context("no [mcp] section in the config")?;
-    let path = under_root(&cli.root, &m.clients_file);
-    let mut clients = if path.exists() && std::fs::metadata(&path)?.len() > 0 {
-        Clients::load(&path).map_err(anyhow::Error::msg)?
-    } else {
-        Clients::default()
-    };
+    cfg.mcp.as_ref().context("no [mcp] section in the config")?;
+    let clients = rp_agent::admin_ops::load_clients(&cfg, &cli.root).map_err(anyhow::Error::msg)?;
     match c {
         McpCmd::AddClient { name, cap } => {
-            anyhow::ensure!(
-                !name.is_empty()
-                    && name.len() <= 32
-                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-                "client name must be 1-32 letters, digits, '-' or '_'"
-            );
-            anyhow::ensure!(
-                !clients.clients.iter().any(|c| &c.name == name),
-                "client '{name}' exists"
-            );
-            let mut caps = std::collections::BTreeSet::new();
-            for c in cap.split(',').map(str::trim).filter(|c| !c.is_empty()) {
-                caps.insert(match c {
-                    "read" => rp_policy::Capability::Read,
-                    "active" => rp_policy::Capability::Active,
-                    "privileged" => rp_policy::Capability::Privileged,
-                    other => anyhow::bail!("unknown capability '{other}'"),
-                });
-            }
-            let token = new_token();
-            clients.clients.push(Client {
-                name: name.clone(),
-                sha256: hash_token(&token),
-                capabilities: caps,
-            });
-            write_secret(&path, &clients.to_toml())?;
+            let caps: Vec<String> =
+                cap.split(',').map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+            let token = rp_agent::admin_ops::mcp_add_client(&cfg, &cli.root, name, &caps)
+                .map_err(anyhow::Error::msg)?;
             println!("client '{name}' created. Token (shown ONCE, store it in your MCP client):");
             println!("{token}");
             println!("restart to load it: sudo systemctl restart rp-mcp");
         }
         McpCmd::RemoveClient { name } => {
-            let before = clients.clients.len();
-            clients.clients.retain(|c| &c.name != name);
-            anyhow::ensure!(clients.clients.len() < before, "no client named '{name}'");
-            write_secret(&path, &clients.to_toml())?;
+            rp_agent::admin_ops::mcp_remove_client(&cfg, &cli.root, name)
+                .map_err(anyhow::Error::msg)?;
             println!("revoked '{name}' — restart to apply: sudo systemctl restart rp-mcp");
         }
         McpCmd::Clients => {
@@ -892,6 +1407,91 @@ fn mcp_cmd(cli: &Cli, c: &McpCmd) -> Result<ExitCode> {
 }
 
 /// Write a secret atomically with mode 600 from the start (never world-readable).
+fn changeset_cmd(cli: &Cli, c: &ChangesetCmd, t: &Target) -> Result<ExitCode> {
+    use rp_core::changeset as cs;
+    let by = format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
+    let show = |x: &cs::ChangeSet| -> Result<()> {
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&x.public())?);
+        } else {
+            println!("{} {:<8} {:?} (base revision {})", x.id, x.module, x.status, x.base_revision);
+            for k in &x.checks {
+                println!("  [{:?}] {:<16} {}", k.status, k.name, k.detail);
+            }
+            for k in &x.verification {
+                println!("  verify [{:?}] {:<14} {}", k.status, k.name, k.detail);
+            }
+            if let Some(e) = &x.error {
+                println!("  error: {e}");
+            }
+            if let Some(d) = x.deadline {
+                println!("  confirm before unix time {d} (rpctl changeset confirm {})", x.id);
+            }
+        }
+        Ok(())
+    };
+    let res = match c {
+        ChangesetCmd::Revision => {
+            println!("{}", cs::revision(t, &cli.config)?);
+            return Ok(ExitCode::SUCCESS);
+        }
+        ChangesetCmd::Create { module, expected_revision, patch } => {
+            let p: serde_json::Value =
+                serde_json::from_str(patch).context("--patch is not JSON")?;
+            let p = p.as_object().cloned().context("--patch must be a JSON object")?;
+            cs::create(t, &cli.config, module, *expected_revision, p, &by).inspect(|x| {
+                if !cli.json {
+                    print!("{}", x.config_diff);
+                }
+            })
+        }
+        ChangesetCmd::Preflight { id, peer } => cs::preflight(t, &cli.config, id, *peer),
+        ChangesetCmd::Apply { id, confirm_secs, no_packages } => cs::apply_cs(
+            t,
+            &cli.config,
+            id,
+            &cs::CsApplyOptions {
+                confirm_secs: *confirm_secs,
+                rpctl_argv: self_argv(cli)?,
+                install_packages: !no_packages,
+            },
+        ),
+        ChangesetCmd::Confirm { id } => cs::confirm(t, &cli.config, id),
+        ChangesetCmd::Rollback { id } => cs::rollback(t, &cli.config, id),
+        ChangesetCmd::Expire { id } => cs::expire(t, &cli.config, id),
+        ChangesetCmd::Show { id } => cs::get(t, &cli.config, id),
+        ChangesetCmd::List => {
+            let all = cs::list(t, &cli.config);
+            if cli.json {
+                let v: Vec<_> = all.iter().map(|x| x.public()).collect();
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                for x in all {
+                    println!("{} {:<8} {:?}", x.id, x.module, x.status);
+                }
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+    };
+    match res {
+        Ok(x) => {
+            show(&x)?;
+            let bad = matches!(x.status, cs::CsStatus::Failed)
+                || (matches!(c, ChangesetCmd::Preflight { .. })
+                    && x.status != cs::CsStatus::Preflighted);
+            Ok(if bad { ExitCode::from(EXIT_PREFLIGHT) } else { ExitCode::SUCCESS })
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(match e {
+                cs::CsError::Invalid(_) | cs::CsError::Patch(_) => EXIT_CONFIG,
+                cs::CsError::Conflict { .. } | cs::CsError::Busy => 4,
+                _ => 1,
+            }))
+        }
+    }
+}
+
 fn write_secret(path: &Path, content: &str) -> Result<()> {
     use std::io::Write;
     #[cfg(unix)]

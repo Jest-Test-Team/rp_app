@@ -15,6 +15,8 @@ Deployment status and to-dos for this device: [status.en.md](status.en.md).
 | [setup.en.md](setup.en.md) | Flashing the SD card, first-boot Wi-Fi / SSH configuration, logging in |
 | [scripts.en.md](scripts.en.md) | What each flashing script does and its safety checks |
 | [troubleshooting.en.md](troubleshooting.en.md) | Known problems, root causes and diagnostics |
+| [console.en.md](console.en.md) | **v0.2 console app**: adding a device (SD card, SSH, code), change sets, updates |
+| [api.en.md](api.en.md) | Console API: transport, signed envelopes, pairing, change set keys |
 | [gateway.en.md](gateway.en.md) | Edge Security Gateway: install, modules, MCP, tests |
 | [architecture.en.md](architecture.en.md) | Components, data plane vs control plane, composable firewall, apply and approval flows |
 | [threat-model.en.md](threat-model.en.md) | Attackers, mitigations with their tests, known limitations |

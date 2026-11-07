@@ -135,6 +135,7 @@ $(brew --prefix e2fsprogs)/sbin/debugfs -R "cat /etc/cloud/cloud.cfg" .cache/roo
 | IoT client 拿得到位址與 DNS，但完全上不了網 | ap 模組沒有開啟 IPv4 forwarding（netns 測試自己開了，所以沒抓到） | ap 會寫入 `/etc/sysctl.d/91-rp-ap.conf`；檢查 `cat /proc/sys/net/ipv4/ip_forward` 為 1 |
 | `rpctl rollback ap` 後 AP 檔案還在、wlan0 仍是 unmanaged | rollback 只還原「最後一次」apply 的備份；重新套用過的模組會回到前一版而不是移除 | 每個模組保留套用前的 base 備份，手動 rollback 一律還原到套用前；dead-man 計時器只撤銷最後一次 |
 | AP rollback 後 wlan0 連不回 Wi-Fi（`association took too long`） | rtl8192cu 離開 AP 模式後要重載驅動才能再連線 | rollback 先請 NM 連線，失敗才重載該網卡的驅動再試一次 |
+| 改了設定後某個服務重啟就起不來（`unknown field …`） | 只更新了部分 binary：舊版 daemon 不認得新版設定選項 | 一律用 `install.sh` 一次部署全部 binary；e2e「Installed Daemons Accept The Live Config」會抓到 |
 | `install.sh --host` 卡在 sudo | 遠端沒有 TTY，sudo 無法詢問密碼 | 互動執行時改用 `ssh -t` |
 | 純文字清單的 `not valid!` 被當成網域 `not` | 一行多個字時只取第一個字 | 非 hosts 格式且有多個字的行視為無效（rp-dns 與 `rpctl dns import` 都已修正） |
 
