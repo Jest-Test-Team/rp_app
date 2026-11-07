@@ -44,12 +44,24 @@ Preflight Passes For Base Over The Current Session
     Should Contain    ${out}    current SSH session is inside ssh allow-list
 
 Dry Run Changes Nothing On The Device
-    ${before}=    As Root On Device    nft list ruleset | sha256sum
+    # Only rp's own table, stateless (-s): other tables (e.g. Tailscale's
+    # iptables-nft rules) carry live packet counters that change between reads.
+    ${before}=    As Root On Device    nft -s list table inet rp 2>/dev/null | sha256sum
     ${out}=    As Root On Device    rpctl --config ${CFG} apply base --dry-run
     Should Match Regexp    ${out}    dry run:|already up to date
-    ${after}=    As Root On Device    nft list ruleset | sha256sum
+    ${after}=    As Root On Device    nft -s list table inet rp 2>/dev/null | sha256sum
     Should Be Equal    ${before}    ${after}
     IF    not ${IN_USE}    As Root On Device    test ! -e /etc/rp/nftables.nft
+
+Installed Daemons Accept The Live Config
+    [Documentation]    Catches version drift: a config option added in a newer release
+    ...    (e.g. ap.block_dot) that an older, still-running daemon would reject on its
+    ...    next restart. Deploy all binaries together (install.sh does).
+    Skip If    not ${IN_USE}    fresh device: no live config yet
+    ${dns}=    As Root On Device    rp-dns --config ${CFG} check
+    Should Contain    ${dns}    dns config OK
+    As Root On Device    rp-agent --config ${CFG} snapshot health >/dev/null
+    As Root On Device    rpctl --config ${CFG} check
 
 Applied Modules Are Running (Device In Use)
     [Documentation]    Only meaningful against a configured device (RP_E2E_ALLOW_IN_USE=1).

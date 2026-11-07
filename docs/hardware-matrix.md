@@ -12,6 +12,7 @@
 | DNS 防火牆 | — | ✅（RSS 4.8 MB） | ✅ | ✅ |
 | IoT AP | — | ✅ 需要獨立的 WAN（eth0）+ 支援 AP 的網卡 | ✅ | ✅ |
 | Agent／MCP | — | ✅ | ✅ | ✅ |
+| 管理 API（v0.2） | — | ✅ 能力偵測已在裝置上驗證；API 防火牆已在其 kernel 的 netns 驗證（尚未部署） | ✅（fixture） | ✅（fixture） |
 
 ## 這台裝置的實測（Pi 2B Rev 1.1）
 

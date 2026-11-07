@@ -3,6 +3,8 @@ Documentation     SSH helpers for end-to-end tests against a real device.
 ...               Configure with environment variables (never commit their values):
 ...                 RP_E2E_HOST        user@host of the device (required)
 ...                 RP_E2E_PASSWORD    SSH password (omit to use your SSH key / agent)
+...                 RP_E2E_KEY         private key file (default ~/.ssh/id_ed25519), or
+...                                    "agent" to use only ssh-agent (for a passphrase-protected key)
 ...                 RP_E2E_SUDO_PASSWORD  sudo password if sudo is not passwordless
 Library           SSHLibrary    timeout=60s
 Resource          common.resource
@@ -11,6 +13,7 @@ Resource          common.resource
 ${E2E_HOST}       %{RP_E2E_HOST=}
 ${E2E_PASSWORD}   %{RP_E2E_PASSWORD=}
 ${SUDO_PASSWORD}  %{RP_E2E_SUDO_PASSWORD=}
+${E2E_KEY}        %{RP_E2E_KEY=%{HOME}/.ssh/id_ed25519}
 
 *** Keywords ***
 Open Device Connection
@@ -19,8 +22,11 @@ Open Device Connection
     Open Connection    ${host}    alias=device
     IF    '${E2E_PASSWORD}' != ''
         Login    ${user}    ${E2E_PASSWORD}
+    ELSE IF    '${E2E_KEY}' == 'agent'
+        # Passphrase-protected key loaded in ssh-agent (e.g. from the macOS keychain).
+        Login    ${user}    ${EMPTY}    allow_agent=True
     ELSE
-        Login With Public Key    ${user}    %{HOME}/.ssh/id_ed25519
+        Login With Public Key    ${user}    ${E2E_KEY}    allow_agent=True
     END
 
 On Device

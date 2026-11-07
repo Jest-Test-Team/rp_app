@@ -1,0 +1,24 @@
+[package]
+name = "rp-privd"
+description = "Root helper for the console API: typed, admin-signed operations only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rp-core = { path = "../rp-core" }
+rp-schema = { path = "../rp-schema" }
+rp-policy = { path = "../rp-policy" }
+rp-agent = { path = "../rp-agent" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true

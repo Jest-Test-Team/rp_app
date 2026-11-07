@@ -1,0 +1,11 @@
+{
+  "hostname": "rp-garage",
+  "tag": "v0.2.0-rc.1",
+  "install_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "repo": "Jest-Test-Team/rp_app",
+  "pairing_secret": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+  "instance_id": "rp-1793500001",
+  "admin": ["admin", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyOnlyForTests test@example"],
+  "wifi": {"ssid": "Example \"Home\": Wi-Fi #2", "password": "p@ss: w0rd'\"\\x", "country": "tw"},
+  "timezone": "Asia/Taipei"
+}

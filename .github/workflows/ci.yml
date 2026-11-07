@@ -115,6 +115,12 @@ jobs:
           cargo install cargo-zigbuild --locked --version 0.24.0
       - name: Package
         run: bash deploy/install.sh --package-only dist --target ${{ matrix.target }}
+      - name: Binary size budget (the console API must stay small on a Pi 2B)
+        run: |
+          f=target/${{ matrix.target }}/release/rp-api
+          size=$(stat -c %s "$f")
+          echo "rp-api: $size bytes"
+          test "$size" -le 8388608
       - uses: actions/upload-artifact@v4
         with:
           name: rp-${{ matrix.target }}

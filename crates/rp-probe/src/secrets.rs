@@ -113,8 +113,29 @@ pub fn scan_text(file: &str, text: &str, values: &[(String, String)]) -> Vec<Fin
     out
 }
 
-const SKIP_DIRS: &[&str] = &[".git", "target", ".venv", ".cache", "results", "node_modules"];
-const SKIP_FILES: &[&str] = &["local.env", "Cargo.lock"];
+// Generated / build output (gitignored): Flutter and Gradle caches carry
+// absolute paths of the build machine, not project content.
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    ".venv",
+    ".cache",
+    "results",
+    "node_modules",
+    ".dart_tool",
+    "build",
+    "ephemeral",
+    "Pods",
+    ".gradle",
+    ".symlinks",
+];
+const SKIP_FILES: &[&str] = &[
+    "local.env",
+    "Cargo.lock",
+    ".flutter-plugins-dependencies",
+    "Generated.xcconfig",
+    "flutter_export_environment.sh",
+];
 
 pub fn walk(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

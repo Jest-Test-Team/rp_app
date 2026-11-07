@@ -1,0 +1,91 @@
+name: app
+
+on:
+  push:
+    paths: ["apps/**", "crates/**", "test/**", ".github/workflows/app.yml"]
+  pull_request:
+    paths: ["apps/**", "crates/**", "test/**", ".github/workflows/app.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.47.9"
+
+jobs:
+  test:
+    name: app tests (static, unit, widget, contract, security)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Robot app suites (no platform builds)
+        run: bash test/run.sh app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: robot-app
+          path: test/results/
+          retention-days: 14
+
+  android-linux:
+    name: build android + linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Linux desktop build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Robot build suite (Android APK, Linux)
+        run: bash test/run.sh build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rp-console-android-debug
+          path: apps/rp_console/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
+
+  apple:
+    name: build ios (no codesign) + macos
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Robot build suite (iOS, macOS)
+        run: bash test/run.sh build
+
+  windows:
+    name: build windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: flutter build windows
+        working-directory: apps/rp_console
+        run: |
+          flutter pub get
+          flutter build windows --debug

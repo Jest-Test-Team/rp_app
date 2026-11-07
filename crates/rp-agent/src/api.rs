@@ -90,6 +90,14 @@ fn route(st: &State, req: &Request) -> Response {
             let action = req.query_param("action").filter(|a| a == "blocked" || a == "suspicious");
             Response::json(200, &collect::dns_events(ctx, since, action.as_deref(), limit))
         }
+        ("GET", "/v1/dns/stats") => {
+            let since = req
+                .query_param("since_mins")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1440i64)
+                .clamp(1, 10_080);
+            Response::json(200, &collect::dns_stats(ctx, since))
+        }
         ("GET", "/v1/actions") => {
             let list: Vec<Value> =
                 st.store.list().iter().map(|a| serde_json::to_value(a).unwrap()).collect();

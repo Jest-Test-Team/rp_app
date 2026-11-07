@@ -6,7 +6,7 @@
 
 ## 1. Install
 
-> Until a GitHub Release is published (by pushing a tag), the default release download returns 404; use `--from-source` first.
+> Releases are published on GitHub (latest: `v0.1.0`, armv7 / aarch64 / x86_64, with `SHA256SUMS`, SBOM and build provenance). `--from-source` builds the current branch instead.
 
 ### Directly on the Pi
 
@@ -218,5 +218,7 @@ RP_E2E_APPLY=1 RP_E2E_HOST=… test/run.sh e2e    # includes real apply / rollba
 ```
 
 On a device that is already in use (`/etc/rp/rp.toml` exists) e2e skips by default; `RP_E2E_ALLOW_IN_USE=1` runs only the read-only checks.
+
+SSH key: `RP_E2E_KEY=<private key file>` (default `~/.ssh/id_ed25519`); for a passphrase-protected key run `ssh-add` first and set `RP_E2E_KEY=agent`. The sudo password goes in `RP_E2E_SUDO_PASSWORD`.
 
 Test levels and tags: `static`, `unit`, `cli`, `integration`, `security`, `installer`, `e2e`, `perf`, `hwsim`, `requires-root`, `requires-pi`.

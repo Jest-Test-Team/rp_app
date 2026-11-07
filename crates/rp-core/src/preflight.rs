@@ -12,7 +12,7 @@ use crate::apply::Target;
 use crate::config::ssh_allow;
 use crate::files::under_root;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     Pass,
@@ -20,7 +20,7 @@ pub enum Status {
     Fail,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Check {
     pub name: String,
     pub status: Status,
@@ -28,7 +28,7 @@ pub struct Check {
 }
 
 impl Check {
-    fn new(name: &str, status: Status, detail: impl Into<String>) -> Self {
+    pub fn new(name: &str, status: Status, detail: impl Into<String>) -> Self {
         Self { name: name.into(), status, detail: detail.into() }
     }
 }
@@ -121,7 +121,12 @@ pub fn gather(cfg: &Config, t: &Target) -> Facts {
             .is_some_and(|p| crate::ap::valid_passphrase(&p));
         f.ap_capable =
             run_stdout(t, &["nmcli", "-g", "WIFI-PROPERTIES.AP", "device", "show", &a.interface])
-                .map(|o| o.trim() == "yes");
+                .map(|o| o.trim() == "yes")
+                // No NetworkManager: ask the driver (same logic as capabilities).
+                .or_else(|| {
+                    let hw = crate::capabilities::gather(t, Some(cfg), None);
+                    hw.ifaces.into_iter().find(|i| i.name == a.interface).and_then(|i| i.ap_mode)
+                });
     }
     f.authorized_keys = key_files.iter().any(|p| {
         fs::read_to_string(p)

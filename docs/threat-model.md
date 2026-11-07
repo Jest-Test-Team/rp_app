@@ -31,6 +31,21 @@
 | 竄改者 | 修改或刪除稽核紀錄 | hash-chain JSONL；`rpctl audit verify` 可指出被修改或刪除的那一行；多個寫入者使用檔案鎖 | `40_security`、`rp-policy` 單元測試 |
 | 管理者自己 | 套用錯誤規則而被鎖在外面 | preflight 檢查目前 SSH 來源；`nft -c` 先驗證；dead-man 計時器自動 rollback | `20_cli`、`60_e2e`（destructive） |
 
+## 管理 App 與管理 API（v0.2）
+
+RP Security Console（Flutter App）透過 `rp-api` 管理裝置。`rp-api` 永遠不是 root：所有變更都經由 `rp-privd`——一個 socket 啟動的 root 輔助程式，只接受經管理員金鑰簽章的型別化操作。
+
+| 攻擊者 | 攻擊 | 對策 | 測試 |
+|---|---|---|---|
+| 偷走裝有 App 的手機 | 使用已配對的 App | 管理員金鑰在平台金鑰庫，需要解鎖手機；可由另一位管理員或 `sudo rpctl admins revoke` 撤銷 | `41_api_security` |
+| 取得 rp-api 控制權 | 修改設定或核准動作 | rp-api 沒有權限；rp-privd 檢查呼叫者 uid、管理員 Ed25519 簽章、device id、一次性 nonce、最多 5 分鐘的期限，並自行重新驗證變更 | `42_privd_security` |
+| LAN 上的惡意裝置 | 搶先配對（裝置沒有螢幕） | 沒有開放的配對時間窗：配對需要 32 bytes 一次性秘密（寫入 SD 卡或由 `sudo rpctl pairing new` 顯示），雙方以 HMAC 證明；多次失敗會鎖定配對 | `36_pairing` |
+| 中間人 | 假冒裝置 | 配對證明涵蓋裝置 TLS 憑證指紋；App pin 該憑證，拒絕其他憑證 | `36_pairing`、App contract tests |
+| 重放 | 重送截獲的簽章請求 | 簽章涵蓋整個 payload；nonce 持久保存、重複即拒絕；過期即拒絕 | `41_api_security` |
+| MCP client | 拿 token 打管理 API | MCP token 與管理員 session 是不同身分；rp-api 只接受以管理員簽章建立的 session | `41_api_security` |
+| App 送出錯誤變更 | 讓裝置斷網 | 每個 changeset 都啟動裝置本地的回復計時器；套用後裝置自我檢查；只有送達裝置的簽章 confirm 才保留變更 | `35_api_integration` |
+| 網際網路 | 連到管理 API | rp-api 只允許 `device.lan_cidrs` 與（可選）tailnet；WAN 一律丟棄 | `20_cli` golden、`41_api_security` |
+
 ## 已知限制
 
 - DNS 防火牆只對使用本裝置作為 DNS 的用戶端有效。DoH 可以繞過；DoT／DoQ 預設只記錄，AP 上可用 `ap.block_dot` 阻擋。

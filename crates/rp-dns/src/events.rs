@@ -166,9 +166,97 @@ pub fn query(
     rows.collect()
 }
 
+/// Aggregates for a dashboard: totals per action, block rate, top domains.
+pub fn stats(path: &Path, since: i64, top: u32) -> rusqlite::Result<serde_json::Value> {
+    use serde_json::json;
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut by_action = serde_json::Map::new();
+    let mut total = 0i64;
+    {
+        let mut st =
+            conn.prepare("SELECT action, COUNT(*) FROM events WHERE ts >= ?1 GROUP BY action")?;
+        let rows =
+            st.query_map(params![since], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (a, n) = row?;
+            total += n;
+            by_action.insert(a, json!(n));
+        }
+    }
+    let top_q = |filter: &str| -> rusqlite::Result<Vec<serde_json::Value>> {
+        let sql = format!(
+            "SELECT qname, COUNT(*) AS n FROM events WHERE ts >= ?1 {filter}
+             GROUP BY qname ORDER BY n DESC, qname LIMIT ?2"
+        );
+        let mut st = conn.prepare(&sql)?;
+        let rows = st.query_map(params![since, top], |r| {
+            Ok(json!({"domain": r.get::<_, String>(0)?, "count": r.get::<_, i64>(1)?}))
+        })?;
+        rows.collect()
+    };
+    let top_domains = top_q("")?;
+    let top_blocked = top_q("AND action = 'blocked'")?;
+    let mut clients = Vec::new();
+    {
+        let mut st = conn.prepare(
+            "SELECT client, COUNT(*) AS n, SUM(action = 'blocked') FROM events WHERE ts >= ?1
+             GROUP BY client ORDER BY n DESC LIMIT ?2",
+        )?;
+        let rows = st.query_map(params![since, top], |r| {
+            Ok(json!({"client": r.get::<_, String>(0)?, "count": r.get::<_, i64>(1)?,
+                      "blocked": r.get::<_, i64>(2)?}))
+        })?;
+        for r in rows {
+            clients.push(r?);
+        }
+    }
+    let blocked = by_action.get("blocked").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rate = if total > 0 { blocked as f64 / total as f64 } else { 0.0 };
+    Ok(json!({
+        "total": total,
+        "by_action": by_action,
+        "blocked": blocked,
+        "block_rate": (rate * 10_000.0).round() / 10_000.0,
+        "top_domains": top_domains,
+        "top_blocked": top_blocked,
+        "top_clients": clients,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stats_aggregate_by_action_domain_and_client() {
+        let dir = std::env::temp_dir().join(format!("rp-dns-stats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = dir.join("events.sqlite");
+        let conn = open(&db).unwrap();
+        let ins = |q: &str, a: &str, c: &str| {
+            conn.execute(
+                "INSERT INTO events (ts, client, qname, qtype, action, reason, score) VALUES (?1, ?2, ?3, 'A', ?4, '', 0)",
+                params![now_secs(), c, q, a],
+            )
+            .unwrap();
+        };
+        for _ in 0..3 {
+            ins("ads.example", "blocked", "192.0.2.7");
+        }
+        ins("www.example", "allowed", "192.0.2.7");
+        ins("www.example", "allowed", "192.0.2.8");
+        ins("x1y2.example", "suspicious", "192.0.2.8");
+        let s = stats(&db, 0, 5).unwrap();
+        assert_eq!(s["total"], 6);
+        assert_eq!(s["blocked"], 3);
+        assert_eq!(s["block_rate"], 0.5);
+        assert_eq!(s["top_domains"][0]["domain"], "ads.example");
+        assert_eq!(s["top_blocked"].as_array().unwrap().len(), 1);
+        assert_eq!(s["top_clients"][0]["client"], "192.0.2.7");
+        assert_eq!(s["top_clients"][0]["blocked"], 3);
+        assert_eq!(stats(&db, now_secs() + 10, 5).unwrap()["total"], 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn ev(qname: &str, action: &str) -> Event {
         Event {
