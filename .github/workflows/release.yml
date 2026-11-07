@@ -5,6 +5,10 @@ name: release
 on:
   push:
     tags: ["v*.*.*"]
+  # Dry run (artifacts only, never publishes: publishing needs a tag push or
+  # publish=true) when the release pipeline or the app changes.
+  pull_request:
+    paths: [".github/workflows/release.yml", "apps/rp_console/**", "deploy/**"]
   workflow_dispatch:
     inputs:
       publish:
