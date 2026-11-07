@@ -83,7 +83,9 @@ jobs:
           echo "RP_ANDROID_KEYSTORE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
       - name: No release keystore
         if: env.KEYSTORE_B64 == ''
-        run: echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; the APK is signed with the debug key (installable, but not upgradable to a release-signed build)"
+        run: >-
+          echo "::warning::ANDROID_KEYSTORE_BASE64 is not set, so the APK is signed with the debug key
+          (installable, but not upgradable to a release-signed build)"
       - name: Build APK
         working-directory: apps/rp_console
         env:
@@ -141,7 +143,9 @@ jobs:
         run: bash apps/rp_console/tool/ios_ci_signing.sh setup
       - name: Unsigned build (no IOS_* secrets)
         if: steps.sign.outcome != 'success'
-        run: echo "::notice::No iOS signing secrets: publishing an unsigned IPA. Sign and install it with your Apple ID using Sideloadly or AltStore, or use scripts/ios-device-install.sh with the iPhone attached."
+        run: >-
+          echo "::notice::No iOS signing secrets, so this IPA is unsigned. Sign and install it with
+          your Apple ID using Sideloadly or AltStore, or use scripts/ios-device-install.sh with the iPhone attached."
       - name: Build IPA
         working-directory: apps/rp_console
         run: |
