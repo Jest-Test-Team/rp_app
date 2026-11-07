@@ -12,11 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Create a GitHub Release (otherwise dry run: artifacts only)"
+        description: "Create a GitHub Release (otherwise dry run: artifacts only). Checked first: the tag must exist on this commit and match the version."
         type: boolean
         default: false
       tag:
-        description: "Tag to release when publish=true (e.g. v0.1.0)"
+        description: "Existing tag vX.Y.Z to publish (= workspace version; run the workflow from that tag). Leave empty for a dry run."
         type: string
         default: ""
 
@@ -27,8 +27,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Decide in seconds whether this run publishes, and refuse a publish that
+  # would only fail (or ship the wrong code) after every build has run.
+  preflight:
+    name: preflight (${{ github.event_name }})
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+      tag: ${{ steps.check.outputs.tag }}
+      mode: ${{ steps.check.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the release inputs
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PUBLISH_INPUT: ${{ inputs.publish && 'true' || 'false' }}
+          TAG_INPUT: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          HAS_SIGNING_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' && 'true' || 'false' }}
+        run: |
+          tag=$([ "$EVENT" = push ] && echo "$REF_NAME" || echo "$TAG_INPUT")
+          tag=${tag// /}
+          export TAG_SHA="" RELEASE_EXISTS=false
+          if [ -n "$tag" ]; then
+            git fetch -q --force --tags origin
+            TAG_SHA=$(git rev-parse -q --verify "refs/tags/$tag^{commit}" || true)
+            gh release view "$tag" >/dev/null 2>&1 && RELEASE_EXISTS=true
+          fi
+          CARGO_VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          export CARGO_VERSION
+          bash deploy/release-preflight.sh | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: build ${{ matrix.target }}
+    needs: preflight
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
@@ -58,6 +95,7 @@ jobs:
   # SHA256SUMS, so they are covered by the minisign signature too.
   android:
     name: android APK (signed)
+    needs: preflight
     runs-on: ubuntu-24.04
     env:
       KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -74,7 +112,7 @@ jobs:
           cache: true
       - name: Version
         id: v
-        run: bash apps/rp_console/tool/app_version.sh "${{ github.event_name == 'push' && github.ref_name || inputs.tag }}" >> "$GITHUB_OUTPUT"
+        run: bash apps/rp_console/tool/app_version.sh "${{ needs.preflight.outputs.tag }}" >> "$GITHUB_OUTPUT"
       - name: Release keystore
         if: env.KEYSTORE_B64 != ''
         run: |
@@ -120,6 +158,7 @@ jobs:
 
   ios:
     name: iOS IPA (signed with IOS_* secrets, else unsigned for sideloading)
+    needs: preflight
     runs-on: macos-15
     env:
       P12_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
@@ -134,7 +173,7 @@ jobs:
           cache: true
       - name: Version
         id: v
-        run: bash apps/rp_console/tool/app_version.sh "${{ github.event_name == 'push' && github.ref_name || inputs.tag }}" >> "$GITHUB_OUTPUT"
+        run: bash apps/rp_console/tool/app_version.sh "${{ needs.preflight.outputs.tag }}" >> "$GITHUB_OUTPUT"
       - name: Signing identity and profile
         id: sign
         if: env.P12_B64 != '' && env.PROFILE_B64 != ''
@@ -169,8 +208,8 @@ jobs:
           if-no-files-found: error
 
   assemble:
-    name: checksums, SBOM, ${{ (github.event_name == 'push' || inputs.publish) && 'publish' || 'dry run' }}
-    needs: [build, android, ios]
+    name: checksums, SBOM, ${{ needs.preflight.outputs.mode }}
+    needs: [preflight, build, android, ios]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -218,7 +257,7 @@ jobs:
           test -f deploy/minisign.pub && cargo run -q --release -p rp-probe -- release verify \
             --public-key-file deploy/minisign.pub --file dist/SHA256SUMS
       - name: Build provenance attestation
-        if: github.event_name == 'push' || inputs.publish
+        if: needs.preflight.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: dist/rp-*.tar.gz
@@ -227,10 +266,10 @@ jobs:
           name: release-assets
           path: dist/
       - name: Publish GitHub Release
-        if: github.event_name == 'push' || inputs.publish
+        if: needs.preflight.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          TAG: ${{ needs.preflight.outputs.tag }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid tag '$TAG'"; exit 1; }
           # Devices refuse unsigned updates; so does the release.
