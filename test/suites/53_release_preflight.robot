@@ -69,6 +69,19 @@ Dry Runs Never Publish And Ignore A Bad Tag
     Should Contain    ${r}    publish=false
     Should Contain    ${r}    mode=dry run
 
+The Workflow Step Does Not Swallow A Refusal
+    [Documentation]    Regression: `script | tee` without pipefail took tee's exit status, so a
+    ...                refused publish passed preflight and the whole build ran.
+    ${wf}=    Get File    ${REPO}/.github/workflows/release.yml
+    ${step}=    Evaluate    $wf[$wf.index('Check the release inputs'):$wf.index('build:', $wf.index('Check the release inputs'))]
+    Should Contain    ${step}    set -o pipefail
+    ${pf}=    Evaluate    $step.index('set -o pipefail')
+    ${call}=    Evaluate    $step.index('release-preflight.sh |')
+    Should Be True    ${pf} < ${call}    msg=pipefail must be set before the piped call
+    # And the shell really fails the step that way:
+    ${r}=    Run Process    bash    -e    -c    set -o pipefail; false | tee /dev/null
+    Should Not Be Equal As Integers    ${r.rc}    0
+
 *** Keywords ***
 Preflight
     [Documentation]    Run the script with defaults (version 0.2.0, key set, no tag, no release).

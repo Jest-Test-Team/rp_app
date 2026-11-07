@@ -61,6 +61,8 @@ jobs:
           fi
           CARGO_VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
           export CARGO_VERSION
+          # pipefail: without it the step takes tee's status and a refusal passes.
+          set -o pipefail
           bash deploy/release-preflight.sh | tee -a "$GITHUB_OUTPUT"
 
   build:
