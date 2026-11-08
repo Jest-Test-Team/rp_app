@@ -95,12 +95,12 @@ void main() {
   });
 
   testWidgets('"Not now" is remembered: the prompt is not shown again', (t) async {
-    final h = await paired(t);
+    await paired(t);
     await tapKey(t, 'vpn-pick-later');
     expect(find.byKey(const Key('vpn-prompt')), findsNothing);
     await t.pageBack();
     await settle(t);
-    await tapKey(t, 'device-${kDevice}');
+    await tapKey(t, 'device-$kDevice');
     expect(find.byKey(const Key('vpn-prompt')), findsNothing);
   });
 }
