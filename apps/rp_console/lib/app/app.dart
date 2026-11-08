@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../features/devices/home.dart';
+import '../features/devices/vpn_gate.dart';
 import 'app_state.dart';
 import 'strings.dart';
 
@@ -32,7 +33,10 @@ class RpApp extends StatelessWidget {
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
         ],
-        home: HomeScreen(app: state),
+        home: VpnGate(
+          vpn: state.services.vpn,
+          child: HomeScreen(app: state),
+        ),
       ),
     );
   }

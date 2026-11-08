@@ -25,6 +25,9 @@ class ApiException implements Exception {
 }
 
 /// Raised when the device presents a certificate other than the pinned one.
+/// The device could not be reached on this path (test doubles implement it).
+abstract interface class Unreachable implements Exception {}
+
 class PinMismatch implements Exception {
   PinMismatch(this.seen);
   final String? seen;

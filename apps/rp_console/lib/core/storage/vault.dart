@@ -54,6 +54,7 @@ class PairedDevice {
     required this.certSha256,
     required this.adminId,
     required this.addedAt,
+    this.vpnHosts = const [],
   });
 
   final String deviceId;
@@ -64,6 +65,10 @@ class PairedDevice {
   final String adminId;
   final int addedAt;
 
+  /// The device's VPN addresses (Tailscale name and IPs, WireGuard address),
+  /// learned from the device; used away from home or with an exit node.
+  final List<String> vpnHosts;
+
   Map<String, Object> toJson() => {
     'device_id': deviceId,
     'name': name,
@@ -72,6 +77,7 @@ class PairedDevice {
     'cert_sha256': certSha256,
     'admin_id': adminId,
     'added_at': addedAt,
+    if (vpnHosts.isNotEmpty) 'vpn_hosts': vpnHosts,
   };
 
   static PairedDevice fromJson(Map<String, Object?> j) => PairedDevice(
@@ -82,9 +88,10 @@ class PairedDevice {
     certSha256: j['cert_sha256'] as String,
     adminId: j['admin_id'] as String,
     addedAt: j['added_at'] as int,
+    vpnHosts: j['vpn_hosts'] is List ? (j['vpn_hosts'] as List).whereType<String>().toList() : const [],
   );
 
-  PairedDevice copyWith({String? name, String? host, int? port}) => PairedDevice(
+  PairedDevice copyWith({String? name, String? host, int? port, List<String>? vpnHosts}) => PairedDevice(
     deviceId: deviceId,
     name: name ?? this.name,
     host: host ?? this.host,
@@ -92,6 +99,7 @@ class PairedDevice {
     certSha256: certSha256,
     adminId: adminId,
     addedAt: addedAt,
+    vpnHosts: vpnHosts ?? this.vpnHosts,
   );
 }
 

@@ -58,6 +58,45 @@ class AppState extends ChangeNotifier {
     await load();
   }
 
+  /// The device's VPN addresses from `/v1/vpn/status` (one mode or both):
+  /// Tailscale IPv4 first, then its MagicDNS name, then the WireGuard address.
+  static List<String> vpnHostsFrom(Map<String, Object?> st) {
+    Map<String, Object?> part(String mode) {
+      final nested = st[mode];
+      if (nested is Map) return nested.cast<String, Object?>();
+      return st['mode'] == mode ? st : const {};
+    }
+
+    final ts = part('tailscale'), wg = part('wireguard');
+    final addrs = (ts['addresses'] is List ? ts['addresses']! as List : const []).whereType<String>().toList()
+      ..sort((a, b) => (a.contains(':') ? 1 : 0) - (b.contains(':') ? 1 : 0));
+    return [
+      ...addrs.where((a) => !a.contains(':')),
+      if (ts['dns_name'] is String && (ts['dns_name']! as String).isNotEmpty) ts['dns_name']! as String,
+      if (wg['address'] is String) wg['address']! as String,
+    ];
+  }
+
+  /// Remember how to reach [d] over the VPN (learned while it is reachable).
+  Future<void> learnVpnHosts(PairedDevice d, RpClient c) async {
+    final hosts = vpnHostsFrom(await c.vpnStatus());
+    if (hosts.isEmpty) return;
+    await setVpnHosts(d, {...hosts, ...d.vpnHosts}.toList());
+  }
+
+  /// Set the VPN addresses (also typed in by the user); the next connection
+  /// uses them.
+  Future<void> setVpnHosts(PairedDevice d, List<String> hosts) async {
+    final cur = devices.firstWhere((x) => x.deviceId == d.deviceId, orElse: () => d);
+    if (cur.vpnHosts.length == hosts.length && cur.vpnHosts.every(hosts.contains)) return;
+    await services.vault.saveDevice(cur.copyWith(vpnHosts: hosts));
+    devices = await services.vault.devices();
+    notifyListeners();
+  }
+
+  /// Drop the cached connection (e.g. after new addresses were added).
+  void reconnect(PairedDevice d) => _clients.remove(d.deviceId);
+
   Future<void> forget(PairedDevice d) async {
     await services.vault.removeDevice(d.deviceId);
     _clients.remove(d.deviceId);
