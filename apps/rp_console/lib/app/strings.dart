@@ -7,6 +7,10 @@ const supportedLocales = [Locale('en'), Locale('zh', 'TW')];
 
 const Map<String, String> _en = {
   'app.title': 'RP Security',
+  'lang.title': 'Language',
+  'lang.system': 'Phone setting',
+  'set.cert': 'Certificate (SHA-256)',
+  'set.deviceid': 'Device ID',
   'home.empty.title': 'No device yet',
   'home.empty.body': 'Add a Raspberry Pi to protect your network: DNS firewall, IoT Wi-Fi, VPN and MCP.',
   'home.add': 'Add Raspberry Pi',
@@ -241,6 +245,10 @@ const Map<String, String> _en = {
 
 const Map<String, String> _zh = {
   'app.title': 'RP Security',
+  'lang.title': '語言',
+  'lang.system': '跟隨手機',
+  'set.cert': '憑證（SHA-256）',
+  'set.deviceid': '裝置 ID',
   'home.empty.title': '尚未加入裝置',
   'home.empty.body': '加入一台 Raspberry Pi 來保護你的網路：DNS 防火牆、IoT Wi-Fi、VPN 與 MCP。',
   'home.add': '加入 Raspberry Pi',

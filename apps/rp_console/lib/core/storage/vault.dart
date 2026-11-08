@@ -101,6 +101,7 @@ class Vault {
   final SecureStore store;
   static const _keyName = 'rp.admin_key.v1';
   static const _devicesName = 'rp.devices.v1';
+  static const _prefsName = 'rp.prefs.v1';
   AdminKey? _cached;
 
   /// The installation's admin key, created on first use.
@@ -135,10 +136,29 @@ class Vault {
     await store.write(_devicesName, jsonEncode([for (final x in all) x.toJson()]));
   }
 
+  /// App preferences (language, prompts already shown). Not secret, but kept
+  /// with the rest of the app's state.
+  Future<Map<String, Object?>> prefs() async {
+    final t = await store.read(_prefsName);
+    final v = t == null ? null : jsonDecode(t);
+    return v is Map ? v.cast<String, Object?>() : {};
+  }
+
+  Future<void> setPref(String key, Object? value) async {
+    final p = await prefs();
+    if (value == null) {
+      p.remove(key);
+    } else {
+      p[key] = value;
+    }
+    await store.write(_prefsName, jsonEncode(p));
+  }
+
   /// Forget everything (sign-out of the app).
   Future<void> wipe() async {
     _cached = null;
     await store.delete(_keyName);
     await store.delete(_devicesName);
+    await store.delete(_prefsName);
   }
 }
