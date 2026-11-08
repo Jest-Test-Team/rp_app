@@ -84,6 +84,13 @@ pub struct FwRule {
     /// Shown in the app; letters, digits, space, '-', '_' (1-40).
     pub name: String,
     pub from: Zone,
+    /// Only these sources inside `from` (one device = a /32 or /128; empty = the whole zone).
+    #[serde(default)]
+    pub src: Vec<IpNet>,
+    /// Only these devices inside `from`, by MAC address (Wi-Fi / Ethernet zones;
+    /// survives a changed IP address).
+    #[serde(default)]
+    pub src_mac: Vec<String>,
     pub to: Zone,
     /// Only these destination networks inside `to` (empty = the whole zone).
     #[serde(default)]
