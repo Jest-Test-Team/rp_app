@@ -728,6 +728,47 @@
         ]
       }
     },
+    "/v1/dns/feeds/update": {
+      "post": {
+        "tags": [
+          "observe"
+        ],
+        "summary": "Download the DNS threat-intelligence feeds now (signed `update_dns_feeds`).",
+        "operationId": "dns_feeds_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedEnvelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/dns/stats": {
       "get": {
         "tags": [
@@ -1047,6 +1088,62 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/tools/{name}/run": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Run an MCP tool from the console (session). Reads return their data;\n`block_device` / `isolate_client` only create a pending request that must\nstill be approved with a signed `approve`.",
+        "operationId": "mcp_run",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }

@@ -11,6 +11,7 @@ use rp_core::files::under_root;
 use rp_schema::{Config, VpnMode};
 use serde_json::{json, Value};
 
+#[derive(Clone)]
 pub struct Ctx {
     pub root: PathBuf,
     pub cfg: Config,
@@ -307,49 +308,59 @@ fn run_with_timeout(argv: &[&str]) -> Option<String> {
     Some(out)
 }
 
+fn wireguard_status(w: &rp_schema::WireGuard) -> Value {
+    let names: BTreeMap<&str, &str> =
+        w.peers.iter().map(|p| (p.public_key.as_str(), p.name.as_str())).collect();
+    let dump = run_with_timeout(&["wg", "show", &w.interface, "dump"]);
+    let peers: Vec<Value> = dump
+        .as_deref()
+        .unwrap_or("")
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() >= 7).then(|| {
+                json!({
+                    "name": names.get(f[0]).copied().unwrap_or("unknown"),
+                    "latest_handshake": f[4].parse::<i64>().unwrap_or(0),
+                    "rx_bytes": f[5].parse::<u64>().unwrap_or(0),
+                    "tx_bytes": f[6].parse::<u64>().unwrap_or(0),
+                })
+            })
+        })
+        .collect();
+    json!({"mode": "wireguard", "available": dump.is_some(), "peers": peers})
+}
+
+fn tailscale_status() -> Value {
+    let st = run_with_timeout(&["tailscale", "status", "--json"])
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    match st {
+        Some(s) => json!({
+            "mode": "tailscale", "available": true,
+            "backend_state": s["BackendState"],
+            "peers": s["Peer"].as_object().map(|p| p.len()).unwrap_or(0),
+        }),
+        None => json!({"mode": "tailscale", "available": false}),
+    }
+}
+
+/// VPN state. One mode: that mode's fields at the top level (as before).
+/// Both: `mode = "both"`, plus a `tailscale` and a `wireguard` object.
 pub fn vpn(ctx: &Ctx) -> Value {
     let Some(v) = &ctx.cfg.vpn else { return json!({"configured": false}) };
-    match v.mode {
-        VpnMode::Wireguard => {
-            let names: BTreeMap<&str, &str> = v
-                .wireguard
-                .peers
-                .iter()
-                .map(|p| (p.public_key.as_str(), p.name.as_str()))
-                .collect();
-            let dump = run_with_timeout(&["wg", "show", &v.wireguard.interface, "dump"]);
-            let peers: Vec<Value> = dump
-                .as_deref()
-                .unwrap_or("")
-                .lines()
-                .skip(1)
-                .filter_map(|l| {
-                    let f: Vec<&str> = l.split('\t').collect();
-                    (f.len() >= 7).then(|| {
-                        json!({
-                            "name": names.get(f[0]).copied().unwrap_or("unknown"),
-                            "latest_handshake": f[4].parse::<i64>().unwrap_or(0),
-                            "rx_bytes": f[5].parse::<u64>().unwrap_or(0),
-                            "tx_bytes": f[6].parse::<u64>().unwrap_or(0),
-                        })
-                    })
-                })
-                .collect();
-            json!({"configured": true, "mode": "wireguard", "available": dump.is_some(), "peers": peers})
+    let mut out = match v.mode {
+        VpnMode::Wireguard => wireguard_status(&v.wireguard),
+        VpnMode::Tailscale => tailscale_status(),
+        VpnMode::Both => {
+            let (t, w) = (tailscale_status(), wireguard_status(&v.wireguard));
+            json!({"mode": "both",
+                   "available": t["available"] == true || w["available"] == true,
+                   "tailscale": t, "wireguard": w})
         }
-        VpnMode::Tailscale => {
-            let st = run_with_timeout(&["tailscale", "status", "--json"])
-                .and_then(|t| serde_json::from_str::<Value>(&t).ok());
-            match st {
-                Some(s) => json!({
-                    "configured": true, "mode": "tailscale", "available": true,
-                    "backend_state": s["BackendState"],
-                    "peers": s["Peer"].as_object().map(|p| p.len()).unwrap_or(0),
-                }),
-                None => json!({"configured": true, "mode": "tailscale", "available": false}),
-            }
-        }
-    }
+    };
+    out["configured"] = json!(true);
+    out
 }
 
 /// Connection-tracking flows (metadata only: addresses, ports, byte counts).
@@ -414,21 +425,38 @@ pub fn dns_events(ctx: &Ctx, since_mins: i64, action: Option<&str>, limit: u32) 
     }
 }
 
+/// The feed catalogue, which feeds are on, and the last update's result.
+pub fn dns_feeds(ctx: &Ctx, d: &rp_schema::Dns) -> Value {
+    let status = rp_dns::feeds::read_status(&ctx.path(rp_core::dns_feeds::FEED_DIR));
+    let catalog: Vec<Value> = rp_core::dns_feeds::FEEDS
+        .iter()
+        .map(|f| {
+            json!({"id": f.id, "name": f.name, "homepage": f.homepage, "license": f.license,
+                   "blocks": f.blocks, "approx_entries": f.approx_entries, "balanced": f.balanced})
+        })
+        .collect();
+    json!({"enabled": d.feeds, "catalog": catalog, "updated_at": status["updated_at"],
+           "status": status["feeds"]})
+}
+
 pub fn dns_stats(ctx: &Ctx, since_mins: i64) -> Value {
     let Some(d) = &ctx.cfg.dns else { return json!({"configured": false}) };
     let db = ctx.path(&d.events_db);
-    if !Path::new(&db).exists() {
-        return json!({"configured": true, "total": 0, "blocked": 0, "block_rate": 0.0,
-                      "top_domains": [], "top_blocked": [], "top_clients": []});
-    }
-    match rp_dns::events::stats(&db, now() - since_mins * 60, 10) {
-        Ok(mut v) => {
-            v["configured"] = json!(true);
-            v["since_mins"] = json!(since_mins);
-            v
+    let mut v = if !Path::new(&db).exists() {
+        json!({"configured": true, "total": 0, "blocked": 0, "block_rate": 0.0,
+               "top_domains": [], "top_blocked": [], "top_clients": []})
+    } else {
+        match rp_dns::events::stats(&db, now() - since_mins * 60, 10) {
+            Ok(mut v) => {
+                v["configured"] = json!(true);
+                v["since_mins"] = json!(since_mins);
+                v
+            }
+            Err(e) => json!({"configured": true, "error": e.to_string()}),
         }
-        Err(e) => json!({"configured": true, "error": e.to_string()}),
-    }
+    };
+    v["feeds"] = dns_feeds(ctx, d);
+    v
 }
 
 #[cfg(test)]

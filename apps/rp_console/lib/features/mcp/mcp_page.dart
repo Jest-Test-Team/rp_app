@@ -10,6 +10,7 @@ import '../../core/api/client.dart';
 import '../../core/api/models.dart';
 import '../../core/api/transport.dart';
 import '../../widgets/common.dart';
+import 'tool_runner.dart';
 
 class McpPage extends StatelessWidget {
   const McpPage({super.key, required this.client});
@@ -29,8 +30,8 @@ class McpPage extends StatelessWidget {
           child: ListView(
             children: [
               ApprovalQueue(client: client, actions: d.$3, onChanged: reload),
+              _Tools(client: client, tools: d.$1, onRequested: reload),
               _Clients(client: client, data: d.$2, onChanged: reload),
-              _Tools(tools: d.$1),
               _Audit(audit: d.$4),
               const _Guide(),
             ],
@@ -135,6 +136,7 @@ class _Clients extends StatelessWidget {
         tooltip: s('mcp.addclient'),
       ),
       children: [
+        Text(s('mcp.clients.hint'), style: Theme.of(context).textTheme.bodySmall),
         for (final c in asList(data['clients']).map(asMap))
           ListTile(
             key: Key('mcp-client-${c['name']}'),
@@ -218,16 +220,20 @@ class TokenDialog extends StatelessWidget {
 }
 
 class _Tools extends StatelessWidget {
-  const _Tools({required this.tools});
+  const _Tools({required this.client, required this.tools, required this.onRequested});
+  final RpClient client;
   final Map<String, Object?> tools;
+  final VoidCallback onRequested;
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
     return Section(
       title: s('mcp.tools'),
       children: [
+        Text(s('mcp.tools.hint'), style: Theme.of(context).textTheme.bodySmall),
         for (final t in asList(tools['tools']).map(asMap))
           ListTile(
+            key: Key('tool-${t['name']}'),
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(switch (str(t['tier'])) {
@@ -235,8 +241,16 @@ class _Tools extends StatelessWidget {
               'active' => Icons.radar,
               _ => Icons.visibility_outlined,
             }),
-            title: Text(str(t['name'])),
-            subtitle: Text('${s('mcp.tier.${str(t['tier'])}')} · ${str(t['description'])}'),
+            title: Text(s('tool.name.${str(t['name'])}', {}, str(t['name']))),
+            subtitle: Text(
+              '${s('mcp.tier.${str(t['tier'])}')} · ${s('tool.desc.${str(t['name'])}', {}, str(t['description']))}',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ToolRunnerPage(client: client, tool: t, onRequested: onRequested),
+              ),
+            ),
           ),
       ],
     );

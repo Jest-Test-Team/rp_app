@@ -5,6 +5,10 @@ import '../../core/api/client.dart';
 import '../../core/api/models.dart';
 import '../../widgets/change_sheet.dart';
 import '../../widgets/common.dart';
+import 'feeds_section.dart';
+
+/// The recommended feeds (rp_core::dns_feeds::balanced; a test keeps them equal).
+const kBalancedFeeds = ['stevenblack', 'urlhaus', 'phishing_army'];
 
 final _domain = RegExp(r'^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$');
 
@@ -31,6 +35,7 @@ class DnsPage extends StatelessWidget {
               _EnableDns(client: client, onDone: reload)
             else ...[
               _Stats(stats: d.$2),
+              if (d.$2['feeds'] is Map) FeedsSection(client: client, feeds: asMap(d.$2['feeds']), onSaved: reload),
               _Rules(client: client, cfg: cfg, onSaved: reload),
               _Events(events: d.$3),
             ],
@@ -51,6 +56,7 @@ class _EnableDns extends StatefulWidget {
 
 class _EnableDnsState extends State<_EnableDns> {
   final up = TextEditingController(text: '1.1.1.1:53, 9.9.9.9:53');
+  bool feeds = true;
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
@@ -60,14 +66,24 @@ class _EnableDnsState extends State<_EnableDns> {
         TextField(
           key: const Key('dns-upstreams'),
           controller: up,
-          decoration: const InputDecoration(labelText: 'Upstream DNS'),
+          decoration: InputDecoration(labelText: s('dns.upstreams'), helperText: s('dns.upstreams.body')),
+        ),
+        SwitchListTile(
+          key: const Key('dns-enable-feeds'),
+          contentPadding: EdgeInsets.zero,
+          value: feeds,
+          onChanged: (v) => setState(() => feeds = v),
+          title: Text(s('feeds.enable')),
+          subtitle: Text(s('feeds.enable.body')),
         ),
         const SizedBox(height: 12),
         FilledButton(
           key: const Key('dns-enable'),
           onPressed: () async {
             final ups = up.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-            if (await showChange(context, widget.client, 'dns', {'dns.upstreams': ups})) widget.onDone();
+            // Public threat feeds on by default (the recommended set).
+            final patch = <String, Object?>{'dns.upstreams': ups, if (feeds) 'dns.feeds': kBalancedFeeds};
+            if (await showChange(context, widget.client, 'dns', patch)) widget.onDone();
           },
           child: Text(s('change.apply')),
         ),

@@ -38,6 +38,9 @@ void main() {
     expect(m, contains('android:usesCleartextTraffic="false"'));
     expect(m, contains('android:allowBackup="false"'));
     expect(m, contains('android.permission.INTERNET'));
+    // Camera for the pairing QR only, and optional (no camera → paste the code).
+    expect(m, contains('android.permission.CAMERA'));
+    expect(m, contains('android:name="android.hardware.camera" android:required="false"'));
     expect(m, contains('CHANGE_WIFI_MULTICAST_STATE'));
     expect(read('android/app/src/main/res/xml/data_extraction_rules.xml'), contains('<cloud-backup>'));
   });
@@ -45,6 +48,7 @@ void main() {
   test('iOS / macOS: local network purpose, Bonjour type, network entitlements', () {
     final p = read('ios/Runner/Info.plist');
     expect(p, contains('NSLocalNetworkUsageDescription'));
+    expect(p, contains('NSCameraUsageDescription'));
     expect(p, contains('<string>_rp-security._tcp</string>'));
     for (final e in ['macos/Runner/DebugProfile.entitlements', 'macos/Runner/Release.entitlements']) {
       final s = read(e);

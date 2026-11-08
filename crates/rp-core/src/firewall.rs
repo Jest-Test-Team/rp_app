@@ -54,6 +54,44 @@ pub fn validate_rules(cfg: &Config, rules: &[FwRule]) -> Vec<String> {
         if r.from == r.to && r.to != Zone::Device {
             e.push(format!("{at}: from and to are the same zone"));
         }
+        if matches!((r.from, r.to), (Zone::Lan, Zone::Wan) | (Zone::Wan, Zone::Lan)) {
+            e.push(format!(
+                "{at}: home network <-> internet traffic goes through your router, not this device, \
+                 so the rule would never match (it can filter the IoT Wi-Fi and VPN users)"
+            ));
+        }
+        for n in &r.src {
+            if n.network() != n.addr() {
+                e.push(format!("{at}: src {n} has host bits set"));
+            }
+            if n.prefix_len() == 0 {
+                e.push(format!("{at}: src {n} covers everything (leave src empty instead)"));
+            }
+            let inside = match r.from {
+                Zone::Lan => Some(cfg.device.lan_cidrs.iter().any(|l| l.contains(n))),
+                Zone::Iot => cfg.ap.as_ref().map(|a| IpNet::V4(a.subnet).contains(n)),
+                _ => None,
+            };
+            if inside == Some(false) {
+                e.push(format!("{at}: src {n} is not inside the '{}' zone", zone_name(r.from)));
+            }
+        }
+        if r.src.len() + r.src_mac.len() > 16 {
+            e.push(format!("{at}: at most 16 source devices"));
+        }
+        for m in &r.src_mac {
+            if !valid_mac(m) {
+                e.push(format!("{at}: '{m}' is not a MAC address (aa:bb:cc:dd:ee:ff)"));
+            }
+        }
+        if !r.src_mac.is_empty() && !matches!(r.from, Zone::Lan | Zone::Iot) {
+            e.push(format!(
+                "{at}: MAC addresses only identify devices on the home network or IoT Wi-Fi"
+            ));
+        }
+        if !r.src.is_empty() && !r.dest.is_empty() && families(r).is_empty() {
+            e.push(format!("{at}: src and dest are different IP versions"));
+        }
         if !r.ports.is_empty() && !matches!(r.proto, Proto::Tcp | Proto::Udp) {
             e.push(format!("{at}: ports need proto tcp or udp"));
         }
@@ -87,6 +125,40 @@ pub fn validate_rules(cfg: &Config, rules: &[FwRule]) -> Vec<String> {
     e
 }
 
+fn zone_name(z: Zone) -> &'static str {
+    match z {
+        Zone::Lan => "lan",
+        Zone::Wan => "wan",
+        Zone::Iot => "iot",
+        Zone::Vpn => "vpn",
+        Zone::Device => "device",
+    }
+}
+
+pub fn valid_mac(m: &str) -> bool {
+    let parts: Vec<&str> = m.split(':').collect();
+    parts.len() == 6
+        && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Address families the rule renders for (None = family-neutral).
+fn families(r: &FwRule) -> Vec<Option<u8>> {
+    let fam_based = |z: Zone| matches!(z, Zone::Lan | Zone::Wan);
+    if !(fam_based(r.from) || fam_based(r.to) || !r.dest.is_empty() || !r.src.is_empty()) {
+        return vec![None];
+    }
+    let (d4, d6) = split_families(&r.dest);
+    let (s4, s6) = split_families(&r.src);
+    let mut f = vec![];
+    if (r.dest.is_empty() || !d4.is_empty()) && (r.src.is_empty() || !s4.is_empty()) {
+        f.push(Some(4));
+    }
+    if (r.dest.is_empty() || !d6.is_empty()) && (r.src.is_empty() || !s6.is_empty()) {
+        f.push(Some(6));
+    }
+    f
+}
+
 /// Interface / address matches for a zone. `dir` is "i" (from) or "o" (to).
 fn zone_match(cfg: &Config, z: Zone, dir: char, fam: Option<u8>) -> Option<String> {
     let wan = &cfg.device.wan_if;
@@ -100,33 +172,35 @@ fn zone_match(cfg: &Config, z: Zone, dir: char, fam: Option<u8>) -> Option<Strin
         Zone::Lan => fam_set("lan4", "lan6", ""),
         Zone::Wan => fam_set("lan4", "lan6", "!= "),
         Zone::Iot => format!("{ifx} \"{}\"", cfg.ap.as_ref()?.interface),
-        Zone::Vpn => format!("{ifx} \"{}\"", crate::vpn::vpn_if(cfg)),
+        Zone::Vpn => crate::vpn::vpn_if_match(cfg, ifx),
         Zone::Device => String::new(),
     })
 }
 
 fn rule_lines(cfg: &Config, r: &FwRule) -> Vec<String> {
-    // lan/wan matches are per address family; others are family-neutral.
-    let fam_based = |z: Zone| matches!(z, Zone::Lan | Zone::Wan);
+    // lan/wan matches and address lists are per address family.
     let (d4, d6) = split_families(&r.dest);
-    let families: Vec<Option<u8>> = if fam_based(r.from) || fam_based(r.to) || !r.dest.is_empty() {
-        let mut f = vec![];
-        if r.dest.is_empty() || !d4.is_empty() {
-            f.push(Some(4));
-        }
-        if r.dest.is_empty() || !d6.is_empty() {
-            f.push(Some(6));
-        }
-        f
-    } else {
-        vec![None]
-    };
+    let (s4, s6) = split_families(&r.src);
     let mut out = vec![];
-    for fam in families {
+    for fam in families(r) {
         let mut m: Vec<String> = vec![];
         let f = fam.or(Some(4));
         if let Some(x) = zone_match(cfg, r.from, 'i', f).filter(|x| !x.is_empty()) {
             m.push(x);
+        }
+        let srcs: &[IpNet] = match fam {
+            Some(4) => &s4,
+            Some(6) => &s6,
+            _ => &[],
+        };
+        if !srcs.is_empty() {
+            let list: Vec<String> = srcs.iter().map(|n| n.to_string()).collect();
+            let k = if fam == Some(6) { "ip6" } else { "ip" };
+            m.push(format!("{k} saddr {{ {} }}", list.join(", ")));
+        }
+        if !r.src_mac.is_empty() {
+            let list: Vec<String> = r.src_mac.iter().map(|x| x.to_ascii_lowercase()).collect();
+            m.push(format!("ether saddr {{ {} }}", list.join(", ")));
         }
         if let Some(x) = zone_match(cfg, r.to, 'o', f).filter(|x| !x.is_empty()) {
             m.push(x);
@@ -306,6 +380,35 @@ mod tests {
             let e = cfg(&format!("[[firewall.rules]]\nname = \"x\"\nfrom = \"lan\"\nto = \"device\"\n{bad}\naction = \"drop\"\n")).unwrap_err();
             assert!(e.contains("cannot be blocked") || e.contains("explicit ports"), "{bad}: {e}");
         }
+    }
+
+    #[test]
+    fn one_device_by_ip_or_mac() {
+        let c = cfg("[[firewall.rules]]\nname = \"Pause plug\"\nfrom = \"iot\"\nsrc = [\"198.51.100.150/32\"]\nsrc_mac = [\"02:AA:BB:CC:DD:01\"]\nto = \"wan\"\naction = \"drop\"\n").unwrap();
+        let s = snippet(&c);
+        assert!(
+            s.contains("iifname \"wlan0\" ip saddr { 198.51.100.150/32 } ether saddr { 02:aa:bb:cc:dd:01 } oifname \"eth0\" ip daddr != @lan4 drop"),
+            "{s}"
+        );
+        assert!(!s.contains("ip6 saddr"), "an IPv4 device gets no IPv6 rule");
+        for (rule, want) in [
+            ("from = \"iot\"\nsrc = [\"192.0.2.10/32\"]\nto = \"wan\"", "not inside the 'iot' zone"),
+            ("from = \"iot\"\nsrc_mac = [\"02:aa:bb\"]\nto = \"wan\"", "not a MAC address"),
+            ("from = \"iot\"\nsrc = [\"198.51.100.150/24\"]\nto = \"wan\"", "host bits"),
+            ("from = \"iot\"\nsrc = [\"198.51.100.150/32\"]\nto = \"lan\"\ndest = [\"2001:db8:1::5/128\"]", "different IP versions"),
+        ] {
+            let e = cfg(&format!("[[firewall.rules]]\nname = \"x\"\n{rule}\naction = \"drop\"\n")).unwrap_err();
+            assert!(e.contains(want), "{rule}: {e}");
+        }
+    }
+
+    #[test]
+    fn home_network_to_internet_is_refused_it_never_passes_here() {
+        let e = cfg(
+            "[[firewall.rules]]\nname = \"x\"\nfrom = \"lan\"\nto = \"wan\"\naction = \"drop\"\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("goes through your router"), "{e}");
     }
 
     #[test]

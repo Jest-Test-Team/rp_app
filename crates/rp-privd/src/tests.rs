@@ -432,3 +432,20 @@ fn uninstall_needs_the_device_id_and_forgets_admins() {
     assert_eq!(d.call(Request::Info {}).result["paired"], false);
     assert_eq!(code(&d.signed(&key(1), 3, json!({"op": "session"}))), "unauthorized");
 }
+
+#[test]
+fn dns_feed_update_is_signed_and_runs_in_the_background() {
+    let d = Dev::new("feeds");
+    d.pair(&key(1));
+    let r = d.signed(&key(1), 1, json!({"op": "update_dns_feeds"}));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.result["started"], true);
+    assert!(d
+        .runner
+        .calls()
+        .iter()
+        .any(|c| c == "systemctl start --no-block rp-dns-feeds.service"));
+    // Nothing else can be smuggled in.
+    let r = d.signed(&key(1), 2, json!({"op": "update_dns_feeds", "url": "https://evil.example"}));
+    assert!(!r.ok);
+}

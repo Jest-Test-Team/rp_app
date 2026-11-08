@@ -1,0 +1,9 @@
+# Test fixture.
+[device]
+wan_if = "eth0"
+lan_cidrs = ["192.0.2.0/24"]
+
+[dns]
+upstreams = ["1.1.1.1:53"]
+blocklists = ["/etc/rp/dns/blocklist.txt"]
+feeds = ["stevenblack", "urlhaus", "phishing_army"]

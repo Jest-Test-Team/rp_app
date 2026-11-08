@@ -43,6 +43,21 @@ pub trait Backend: Send + Sync + 'static {
 /// Reads observation data from rp-agent (`/v1/health`, ...).
 pub trait Observer: Send + Sync + 'static {
     fn get(&self, path_and_query: &str) -> Result<Value, String>;
+    /// Any agent request on behalf of `principal` (console tool runs: scans
+    /// and privileged *requests*, which still need a signed approval).
+    fn call(
+        &self,
+        method: &str,
+        path: &str,
+        principal: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, String> {
+        let _ = principal;
+        match (method, body) {
+            ("GET", None) => self.get(path),
+            _ => Err(format!("{method} {path} is not supported here")),
+        }
+    }
 }
 
 pub struct SocketBackend(pub std::path::PathBuf);
@@ -76,6 +91,33 @@ impl Observer for AgentObserver {
             Ok(body)
         } else {
             Err(format!("agent returned {status}"))
+        }
+    }
+
+    fn call(
+        &self,
+        method: &str,
+        path: &str,
+        principal: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, String> {
+        let token =
+            std::fs::read_to_string(&self.token_file).map_err(|e| format!("agent token: {e}"))?;
+        let (status, v) = self.rt.block_on(rp_http::request_with_headers(
+            &self.addr,
+            method,
+            path,
+            Some(token.trim()),
+            &[("X-RP-Principal", principal)],
+            body,
+        ))?;
+        match status {
+            200..=299 => Ok(v),
+            _ => Err(v["error"]
+                .as_str()
+                .or(v["message"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("agent returned {status}"))),
         }
     }
 }
@@ -673,6 +715,40 @@ async fn mcp_tools(_a: Authed) -> ApiResult {
     Ok(Json(json!({"tools": tools})))
 }
 
+/// Run an MCP tool from the console (session). Reads return their data;
+/// `block_device` / `isolate_client` only create a pending request that must
+/// still be approved with a signed `approve`.
+#[utoipa::path(post, path = "/v1/mcp/tools/{name}/run", tag = "mcp", params(("name" = String, Path)),
+    request_body = Object, responses((status = 200, body = Object), (status = 400, body = ApiError)), security(("session" = [])))]
+async fn mcp_run(
+    State(st): St,
+    a: Authed,
+    Path(name): Path<String>,
+    Body(args): Body<Value>,
+) -> ApiResult {
+    let bad = |m: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid", m);
+    let tool = rp_mcp::tools::find(&name).ok_or_else(|| bad(format!("unknown tool '{name}'")))?;
+    let args = rp_mcp::tools::check_args(tool, &args).map_err(|e| bad(e.0))?;
+    let (method, path, body) = rp_mcp::tools::agent_request(&name, &args)
+        .ok_or_else(|| bad(format!("'{name}' cannot be run from the console")))?;
+    let who: String = format!("console-{}", a.name)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || "-_.@".contains(c) { c } else { '_' })
+        .take(64)
+        .collect();
+    let o = st.observer.clone();
+    let r = tokio::task::spawn_blocking(move || o.call(method, &path, &who, body.as_ref()))
+        .await
+        .map_err(|_| {
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "task failed")
+    })?;
+    match r {
+        Ok(v) => Ok(Json(json!({"tool": name, "tier": tool.capability.as_str(),
+            "result": rp_mcp::tools::sanitize(v)}))),
+        Err(e) => Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "unavailable", e)),
+    }
+}
+
 /// MCP clients (names and capabilities).
 #[utoipa::path(get, path = "/v1/mcp/clients", tag = "mcp", responses((status = 200, body = Object)), security(("session" = [])))]
 async fn mcp_clients(State(st): St, _a: Authed) -> ApiResult {
@@ -813,6 +889,18 @@ async fn update_rollback(
     signed(&st, peer, env).await
 }
 
+/// Download the DNS threat-intelligence feeds now (signed `update_dns_feeds`).
+#[utoipa::path(post, path = "/v1/dns/feeds/update", tag = "observe", request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 503, body = ApiError)))]
+async fn dns_feeds_update(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "update_dns_feeds", &[])?;
+    signed(&st, peer, env).await
+}
+
 /// Remove every module and forget all admins (signed `uninstall`).
 #[utoipa::path(post, path = "/v1/uninstall", tag = "update", request_body = SignedEnvelope,
     responses((status = 200, body = Object), (status = 400, body = ApiError)))]
@@ -850,8 +938,8 @@ impl utoipa::Modify for SecurityAddon {
          description = "Local-first management API of an RP Security device. Reads need a session; every change is an admin-signed envelope verified on the device by rp-privd."),
     paths(info, pair, pairing_open, session, logout, me, capabilities, status, modules, config, module_config,
           list_changesets, get_changeset, create_changeset, cs_preflight, cs_apply, cs_confirm, cs_rollback,
-          set_secret, admins, revoke_admin, actions, approve, deny, mcp_tools, mcp_clients, mcp_add, mcp_remove,
-          health, inventory, ap_clients, vpn_status, dns_events, dns_stats, flows, firewall_rules, audit,
+          set_secret, admins, revoke_admin, actions, approve, deny, mcp_tools, mcp_run, mcp_clients, mcp_add, mcp_remove,
+          health, inventory, ap_clients, vpn_status, dns_events, dns_stats, dns_feeds_update, flows, firewall_rules, audit,
           update_status, update_install, update_rollback, uninstall, openapi_json),
     components(schemas(SignedEnvelope, PairRequest, ApiError)),
     modifiers(&SecurityAddon),
@@ -884,6 +972,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/v1/actions/{id}/approve", post(approve))
         .route("/v1/actions/{id}/deny", post(deny))
         .route("/v1/mcp/tools", get(mcp_tools))
+        .route("/v1/mcp/tools/{name}/run", post(mcp_run))
         .route("/v1/mcp/clients", get(mcp_clients).post(mcp_add))
         .route("/v1/mcp/clients/{name}", delete(mcp_remove))
         .route("/v1/health", get(health))
@@ -892,6 +981,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/v1/vpn/status", get(vpn_status))
         .route("/v1/dns/events", get(dns_events))
         .route("/v1/dns/stats", get(dns_stats))
+        .route("/v1/dns/feeds/update", post(dns_feeds_update))
         .route("/v1/flows", get(flows))
         .route("/v1/firewall/rules", get(firewall_rules))
         .route("/v1/audit/events", get(audit))

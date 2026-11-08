@@ -22,7 +22,9 @@ The wizard has six steps. Pick one of three paths:
 |---|---|---|
 | New SD card (desktop app) | A card freshly flashed with Raspberry Pi OS Lite by Raspberry Pi Imager, **without** OS customisation | The app writes `user-data` / `network-config` (cloud-init) and a separate one-time `rp-pairing.toml` to the boot partition. On first boot the device moves the secret to `/etc/rp`, shreds it on the card, downloads the release installer (its SHA-256 pinned) and runs `rpctl setup`. |
 | Already running (SSH) | A Pi on your network you can log in to | One SSH session: the host key is shown first; the password is used once and only written to `sudo -S`, never stored; the installer is SHA-256 checked; `rpctl setup --json` returns the pairing code over the same channel. |
-| Pairing code | `sudo rpctl pairing new` on the device, or another phone (Settings › Add phone) | Paste the QR text or type the 64-character code and the address. |
+| Pairing code | `sudo rpctl pairing new` on the device, another phone (Settings › Add phone), or the desktop app after it wrote an SD card | **Scan QR code** (Android / iOS camera), or paste the QR text / type the 64-character code and the address. |
+
+The Pi has no screen, so a pairing QR code is only ever shown by a terminal (`sudo rpctl pairing new` over SSH prints it), by an already paired phone, or by the desktop app at the end of writing an SD card. The pairing-code step explains this under *Where do I get a QR code?*.
 
 Then: find the device (mDNS `_rp-security._tcp`) → pair (both sides prove the code with HMAC, the device's proof covers its TLS certificate, the app pins it) → what this hardware can run (reasons in words: e.g. "Wi-Fi is how you reach this device") → verify.
 
@@ -40,13 +42,13 @@ Every change in the app is a **change set**:
 
 | Screen | What you can do |
 |---|---|
-| Overview | Health (CPU, memory, temperature, under-voltage), modules and why one is unavailable |
-| DNS firewall | Statistics, block / allow lists, suspicious-name blocking, recent events |
+| Overview | Health (CPU load 1/5/15 min and clock, free memory, temperature, under-voltage, disk, uptime; alerts in words), modules and why one is unavailable |
+| DNS firewall | Statistics, **threat-intelligence lists** (public, open source, updated daily by the Pi: StevenBlack, URLhaus, Phishing Army recommended; HaGeZi optional; a failed download keeps yesterday's list; *Update now*), block / allow lists, suspicious-name blocking, recent events |
 | IoT Wi-Fi | SSID, password (stored as a secret on the device, never in the change), country, channel, network, DoT blocking, connected devices |
-| Firewall | Zone rules `lan / wan / iot / vpn → … / device`; they take effect before module rules; nothing that would cut off management can be saved |
-| VPN | Tailscale (auth key as a secret) or WireGuard; WireGuard keys are generated in the app and the client config is shown once as a QR code |
-| MCP | Approve or deny privileged requests (signed by you), clients (token shown once), tools by tier, audit chain |
-| Settings | Paired apps (revoke a lost phone), add another phone, software update, remove RP Security from the device |
+| Firewall | **Quick protections** (pause a device's internet, stop Telnet, force the DNS firewall, let a smart device or VPN users reach one home device) and rules in plain words (Smart-home Wi-Fi, VPN users, Home network, Internet, This Raspberry Pi; services such as Websites or File sharing), optionally for **picked devices** (by MAC). They take effect before module rules; nothing that would cut off management can be saved, and home network ↔ internet rules are explained instead (that traffic goes through the router) |
+| VPN | Tailscale (auth key as a secret), WireGuard, or **both side by side** (same isolation: internet yes, home network no). The first time a device is opened the app asks whether to use a VPN. WireGuard needs the public address (the app can fill in this network's public IP) and **UDP 51820 forwarded on the router**; keys are generated in the app and the client config is shown once as a QR code |
+| MCP | **Run any tool from the app** (form from its parameters, readable result); privileged tools only create a request you approve on the same screen (signed by you). Clients for AI assistants (token shown once), audit chain |
+| Settings | **Language** (phone / English / 繁體中文; also on the home screen), paired apps (revoke a lost phone), add another phone, software update, remove RP Security from the device |
 
 ## Software updates
 

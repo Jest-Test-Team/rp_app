@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_state.dart';
 import '../../app/strings.dart';
 import '../../core/storage/vault.dart';
+import '../../widgets/language.dart';
 import '../onboarding/onboarding.dart';
 import 'device_screen.dart';
 
@@ -28,7 +29,10 @@ class HomeScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: app,
       builder: (context, _) => Scaffold(
-        appBar: AppBar(title: Text(s('app.title'))),
+        appBar: AppBar(
+          title: Text(s('app.title')),
+          actions: [LanguageButton(app: app)],
+        ),
         floatingActionButton: app.devices.isEmpty
             ? null
             : FloatingActionButton.extended(

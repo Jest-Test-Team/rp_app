@@ -102,7 +102,7 @@ enum Cmd {
     /// MCP client management.
     #[command(subcommand)]
     Mcp(McpCmd),
-    /// Manage the DNS blocklist file (the first entry of dns.blocklists).
+    /// DNS firewall lists: the blocklist file (first entry of dns.blocklists) and the threat-intelligence feeds.
     #[command(subcommand)]
     Dns(DnsCmd),
     /// List privileged action requests.
@@ -367,6 +367,14 @@ enum DnsCmd {
         #[arg(long)]
         no_reload: bool,
     },
+    /// Download the enabled threat-intelligence feeds (dns.feeds); run daily
+    /// by rp-dns-feeds.timer. A failed download keeps the previous list.
+    UpdateFeeds {
+        #[arg(long)]
+        no_reload: bool,
+    },
+    /// The feed catalogue and the status of the last update.
+    Feeds,
 }
 
 #[derive(Subcommand)]
@@ -1019,8 +1027,8 @@ fn add_peer(
     qr: bool,
 ) -> Result<rp_schema::WgPeer> {
     use rp_core::wg;
-    let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode == rp_schema::VpnMode::Wireguard) else {
-        anyhow::bail!("vpn.mode must be \"wireguard\" to add peers");
+    let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode.wireguard()) else {
+        anyhow::bail!("vpn.mode must be \"wireguard\" or \"both\" to add peers");
     };
     if v.wireguard.endpoint.is_none() {
         anyhow::bail!("set vpn.wireguard.endpoint (public host:port) first");
@@ -1242,6 +1250,8 @@ fn dns_cmd(cli: &Cli, c: &DnsCmd, runner: &dyn Runner) -> Result<ExitCode> {
     let file_arg = match c {
         DnsCmd::List { file } | DnsCmd::Block { file, .. } | DnsCmd::Unblock { file, .. } => file,
         DnsCmd::Import { file, .. } => file,
+        DnsCmd::UpdateFeeds { no_reload } => return update_feeds(cli, d, runner, !no_reload),
+        DnsCmd::Feeds => return show_feeds(cli, d),
     };
     let path = match file_arg {
         Some(f) => under_root(&cli.root, &f.display().to_string()),
@@ -1348,6 +1358,7 @@ fn dns_cmd(cli: &Cli, c: &DnsCmd, runner: &dyn Runner) -> Result<ExitCode> {
                 format!("imported {added} new domain(s), skipped {skipped} invalid line(s)"),
             )
         }
+        DnsCmd::UpdateFeeds { .. } | DnsCmd::Feeds => unreachable!("handled above"),
     };
     if changed {
         if let Some(dir) = path.parent() {
@@ -1371,6 +1382,90 @@ fn dns_cmd(cli: &Cli, c: &DnsCmd, runner: &dyn Runner) -> Result<ExitCode> {
             _ => println!("note: could not reload rp-dns (run: sudo systemctl reload rp-dns)"),
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn feed_dir(cli: &Cli) -> PathBuf {
+    under_root(&cli.root, rp_core::dns_feeds::FEED_DIR)
+}
+
+fn update_feeds(
+    cli: &Cli,
+    d: &rp_schema::Dns,
+    runner: &dyn Runner,
+    reload: bool,
+) -> Result<ExitCode> {
+    let fetch = |url: &str, dest: &std::path::Path| -> Result<(), String> {
+        if !url.starts_with("https://") {
+            return Err("only https:// feeds are fetched".into());
+        }
+        let argv: Vec<String> = [
+            "curl",
+            "-fsSL",
+            "--proto",
+            "=https",
+            "--max-time",
+            "300",
+            "--max-filesize",
+            &rp_core::dns_feeds::MAX_BYTES.to_string(),
+            "-o",
+            &dest.display().to_string(),
+            url,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        match runner.run(&argv) {
+            Ok(o) if o.ok() => Ok(()),
+            Ok(o) => Err(format!("download failed: {}", o.stderr.trim())),
+            Err(e) => Err(format!("download failed: {e}")),
+        }
+    };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+    let (status, changed) = rp_dns::feeds::update(&feed_dir(cli), &d.feeds, &fetch, now);
+    if d.feeds.is_empty() {
+        println!("no feeds enabled (dns.feeds is empty)");
+    }
+    for s in &status {
+        match &s.error {
+            None => println!("{:<16} {:>7} domains  updated", s.id, s.entries),
+            Some(e) => println!("{:<16} {:>7} domains  NOT updated: {e}", s.id, s.entries),
+        }
+    }
+    if changed && reload {
+        let argv: Vec<String> =
+            ["systemctl", "reload", "rp-dns.service"].iter().map(|s| s.to_string()).collect();
+        match runner.run(&argv) {
+            Ok(o) if o.ok() => println!("rp-dns reloaded"),
+            _ => println!("note: could not reload rp-dns (run: sudo systemctl reload rp-dns)"),
+        }
+    }
+    Ok(if status.iter().any(|s| s.error.is_some()) { ExitCode::FAILURE } else { ExitCode::SUCCESS })
+}
+
+fn show_feeds(cli: &Cli, d: &rp_schema::Dns) -> Result<ExitCode> {
+    let st = rp_dns::feeds::read_status(&feed_dir(cli));
+    for f in rp_core::dns_feeds::FEEDS {
+        let on = d.feeds.iter().any(|x| x == f.id);
+        let s = st["feeds"].as_array().into_iter().flatten().find(|x| x["id"] == f.id);
+        let state = match s {
+            Some(s) if s["error"].is_string() => format!("error: {}", s["error"].as_str().unwrap()),
+            Some(s) => format!("{} domains", s["entries"]),
+            None if on => "not downloaded yet".into(),
+            None => String::new(),
+        };
+        println!(
+            "[{}] {:<16} {} — {}  {state}",
+            if on { "x" } else { " " },
+            f.id,
+            f.name,
+            f.blocks
+        );
+    }
+    println!(
+        "\nEnable with a change set on dns.feeds (the app's DNS tab), e.g. {:?}",
+        rp_core::dns_feeds::balanced()
+    );
     Ok(ExitCode::SUCCESS)
 }
 

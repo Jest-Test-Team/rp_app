@@ -178,11 +178,11 @@ impl FakeDevice {
         let now = self.now();
         Ok(match p {
             "/v1/health" => json!({
+                "load": [0.21, 0.18, 0.15], "mem_total_kb": 944_000, "mem_available_kb": 624_640,
+                "temperature_c": 47.2, "under_voltage": false, "cpu_mhz": 900, "cpu_max_mhz": 900,
+                "disk_used_percent": 31, "ntp_synchronized": true, "uptime_s": 86_400.0,
+                "modules": {"base": {"installed": true}, "dns": {"installed": true}},
                 "status": "ok", "alerts": [],
-                "cpu": {"load1": 0.21, "cores": 4}, "memory": {"total_mb": 920, "available_mb": 610},
-                "temperature_c": 47.2, "under_voltage": false, "throttled": false,
-                "disk": {"root_used_pct": 31}, "clock_synced": true, "uptime_secs": 86_400,
-                "services": {"rp-dns": "active", "rp-agent": "active", "rp-api": "active"},
             }),
             "/v1/inventory" => json!({"devices": [
                 {"ip": "192.0.2.20", "mac": "02:00:00:00:00:20", "iface": "eth0", "state": "REACHABLE", "hostname": "laptop", "first_seen": now - 900_000, "new": false},
@@ -204,8 +204,20 @@ impl FakeDevice {
                 "by_action": {"allowed": 1290, "blocked": 212, "suspicious": 18},
                 "top_domains": [{"domain": "www.example", "count": 300}],
                 "top_blocked": [{"domain": "telemetry.example", "count": 120}],
-                "top_clients": [{"client": "198.51.100.150", "count": 700, "blocked": 150}]})
+                "top_clients": [{"client": "198.51.100.150", "count": 700, "blocked": 150}],
+                "feeds": {
+                    "enabled": ["stevenblack"],
+                    "catalog": rp_core::dns_feeds::FEEDS.iter().map(|f| json!({"id": f.id, "name": f.name,
+                        "homepage": f.homepage, "license": f.license, "blocks": f.blocks,
+                        "approx_entries": f.approx_entries, "balanced": f.balanced})).collect::<Vec<_>>(),
+                    "updated_at": now - 3_600,
+                    "status": [{"id": "stevenblack", "entries": 78_000, "updated_at": now - 3_600, "error": null, "ok": true}],
+                }})
             }
+            "/v1/arp" => {
+                json!({"entries": [{"ip": "192.0.2.20", "mac": "02:00:00:00:00:20", "iface": "eth0", "state": "REACHABLE"}]})
+            }
+            "/v1/usb" => json!({"devices": []}),
             "/v1/actions" => {
                 let store = rp_policy::approvals::Store::new(&under_root(
                     &self.root,
@@ -225,12 +237,16 @@ impl FakeDevice {
     /// Create a pending privileged request, as an MCP client would (validated
     /// by the same rules rp-agent applies).
     pub fn request_action(&self, tool: &str, args: Value) -> Result<String, String> {
+        self.request_action_as("mcp:claude", tool, args)
+    }
+
+    pub fn request_action_as(&self, who: &str, tool: &str, args: Value) -> Result<String, String> {
         let cfg = rp_core::config::load(&self.config).map_err(|e| e.to_string())?;
         let plan = rp_agent::actions::plan(&cfg, tool, &args).map_err(|e| e.0)?;
         let store =
             rp_policy::approvals::Store::new(&under_root(&self.root, "/var/lib/rp/agent/actions"));
         let a = store
-            .request("mcp:claude", plan.tool, plan.args, plan.summary, plan.ttl_minutes, 15)
+            .request(who, plan.tool, plan.args, plan.summary, plan.ttl_minutes, 15)
             .map_err(|e| e.to_string())?;
         Ok(a.id)
     }
@@ -254,5 +270,25 @@ impl crate::Backend for FakeBackend {
 impl crate::Observer for FakeBackend {
     fn get(&self, path: &str) -> Result<Value, String> {
         self.0.observe(path)
+    }
+
+    fn call(
+        &self,
+        method: &str,
+        path: &str,
+        principal: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, String> {
+        match (method, path.split('?').next().unwrap_or("")) {
+            ("GET", p) => self.0.observe(p),
+            ("POST", "/v1/scan") => Ok(json!({"scanned": 254, "found": 3})),
+            ("POST", "/v1/actions") => {
+                let b = body.cloned().unwrap_or_default();
+                let tool = b["tool"].as_str().unwrap_or("");
+                let id = self.0.request_action_as(principal, tool, b["args"].clone())?;
+                Ok(json!({"id": id, "status": "pending"}))
+            }
+            (m, p) => Err(format!("fake device has no {m} {p}")),
+        }
     }
 }

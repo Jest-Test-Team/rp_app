@@ -32,6 +32,52 @@ void main() {
     expect(find.text('Healthy'), findsOneWidget);
     expect(find.byKey(const Key('health-power')), findsOneWidget);
     expect(find.byKey(const Key('cap-dns')), findsOneWidget);
+    // The agent's real keys: load average, memory in kB (shown in MB).
+    expect(find.text('0.21 · 0.18 · 0.15'), findsOneWidget);
+    expect(find.text('610 / 922 MB'), findsOneWidget);
+    expect(find.text('1 d 0 h'), findsOneWidget);
+  });
+
+  testWidgets('overview names alerts in plain words', (t) async {
+    await onDevice(
+      t,
+      'Overview',
+      prep: (d) => d.healthAlerts = [
+        {'level': 'critical', 'kind': 'under_voltage', 'detail': 'use a 5V/2.5A supply'},
+      ],
+    );
+    expect(find.text('Power supply too weak'), findsOneWidget);
+    expect(find.text('use a 5V/2.5A supply'), findsOneWidget);
+  });
+
+  testWidgets('MCP: run a tool and read the result; a privileged tool only queues a request', (t) async {
+    final h = await onDevice(t, 'MCP');
+    await tapKey(t, 'tool-get_device_inventory');
+    expect(find.byKey(const Key('tool-result')), findsOneWidget);
+    expect(find.text('plug'), findsOneWidget);
+    expect(find.text('2 devices'), findsOneWidget);
+    await t.pageBack();
+    await settle(t);
+
+    await tapKey(t, 'tool-block_device');
+    await tapKey(t, 'tool-run');
+    expect(find.byKey(const Key('tool-error')), findsOneWidget); // IP is required
+    await enter(t, 'arg-ip', '198.51.100.150');
+    await enter(t, 'arg-ttl_minutes', '9999');
+    await tapKey(t, 'tool-run');
+    expect(find.byKey(const Key('tool-error')), findsOneWidget); // out of range
+    expect(h.device.actions, isEmpty);
+    await enter(t, 'arg-ttl_minutes', '30');
+    await tapKey(t, 'tool-run');
+    expect(find.text('Request created'), findsOneWidget);
+    final run = h.device.calls.lastWhere((c) => c.path == '/v1/mcp/tools/block_device/run');
+    expect(run.body, {'ip': '198.51.100.150', 'ttl_minutes': 30});
+    expect(run.token, isNotNull);
+    expect(h.device.actions.single['status'], 'pending');
+    await t.pageBack();
+    await settle(t);
+    // The request waits in the queue for a signed approval.
+    expect(find.byKey(Key('approve-${h.device.actions.single['id']}')), findsOneWidget);
   });
 
   testWidgets('DNS: invalid domains are refused; a valid block goes through the change sheet', (t) async {
@@ -85,29 +131,60 @@ void main() {
     expect(find.byKey(const Key('ap-save')), findsNothing);
   });
 
-  testWidgets('Firewall: rule dialog validates; rules are saved through a change set', (t) async {
+  testWidgets('Firewall: rule dialog validates in words; rules are saved through a change set', (t) async {
     final h = await onDevice(t, 'Firewall');
     expect(find.textContaining('Management access'), findsOneWidget);
     await tapKey(t, 'fw-add');
     await enter(t, 'fw-name', 'bad;name');
     await tapKey(t, 'fw-ok');
     expect(find.byKey(const Key('fw-error')), findsOneWidget);
-    await enter(t, 'fw-name', 'No IoT to NAS');
-    await enter(t, 'fw-ports', '445, 139');
+    await enter(t, 'fw-name', 'No IoT file sharing');
+    await tapKey(t, 'fw-service');
+    await tapKey(t, 'fw-service-files');
     await tapKey(t, 'fw-ok');
-    expect(find.text('No IoT to NAS'), findsOneWidget);
+    expect(find.text('No IoT file sharing'), findsOneWidget);
+    expect(find.text('Block · Smart-home Wi-Fi → Internet · File sharing (SMB 445, 139)'), findsOneWidget);
     await tapKey(t, 'fw-save');
     await applySheet(t);
     final rules = (h.device.config['firewall'] as Map)['rules'] as List;
     expect(rules.single, {
-      'name': 'No IoT to NAS',
+      'name': 'No IoT file sharing',
       'from': 'iot',
-      'to': 'lan',
+      'to': 'wan',
       'proto': 'tcp',
       'ports': [445, 139],
       'action': 'drop',
       'log': false,
     });
+  });
+
+  testWidgets('Firewall: home network to internet is explained, not saved', (t) async {
+    await onDevice(t, 'Firewall');
+    await tapKey(t, 'fw-add');
+    await enter(t, 'fw-name', 'x');
+    await tapKey(t, 'fw-from');
+    await tapKey(t, 'fw-from-lan');
+    await tapKey(t, 'fw-ok');
+    expect(find.textContaining('goes through your router'), findsOneWidget);
+  });
+
+  testWidgets('Firewall: templates — pause a picked device, block Telnet', (t) async {
+    final h = await onDevice(t, 'Firewall');
+    expect(find.byKey(const Key('fw-tpl-vpn_nas')), findsNothing, reason: 'no VPN configured');
+    await tapKey(t, 'fw-tpl-pause');
+    await tapKey(t, 'fw-tpl-ok');
+    expect(find.text('Pick a device'), findsWidgets, reason: 'a device is required');
+    await tapKey(t, 'fw-pick-02:00:00:00:00:01');
+    await tapKey(t, 'fw-tpl-ok');
+    expect(find.text('Block · Smart-home Wi-Fi (plug) → Internet · Everything'), findsOneWidget);
+    await tapKey(t, 'fw-tpl-telnet');
+    await tapKey(t, 'fw-tpl-ok');
+    await tapKey(t, 'fw-save');
+    await applySheet(t);
+    final rules = ((h.device.config['firewall'] as Map)['rules'] as List).cast<Map<String, Object?>>();
+    expect(rules.map((r) => r['name']), ['Pause plug', 'No Telnet from smart devices']);
+    expect(rules.first['src_mac'], ['02:00:00:00:00:01']);
+    expect(rules.last['ports'], [23, 2323]);
   });
 
   testWidgets('MCP: approve a pending request; a new client token is shown once', (t) async {

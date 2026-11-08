@@ -17,19 +17,23 @@ class RpApp extends StatelessWidget {
       useMaterial3: true,
       inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
     );
-    return MaterialApp(
-      title: 'RP Security',
-      debugShowCheckedModeBanner: false,
-      theme: theme(Brightness.light),
-      darkTheme: theme(Brightness.dark),
-      locale: locale,
-      supportedLocales: supportedLocales,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      home: HomeScreen(app: state),
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) => MaterialApp(
+        title: 'RP Security',
+        debugShowCheckedModeBanner: false,
+        theme: theme(Brightness.light),
+        darkTheme: theme(Brightness.dark),
+        // An explicit locale (tests) wins; otherwise the user's choice, else the system's.
+        locale: locale ?? state.locale,
+        supportedLocales: supportedLocales,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: HomeScreen(app: state),
+      ),
     );
   }
 }

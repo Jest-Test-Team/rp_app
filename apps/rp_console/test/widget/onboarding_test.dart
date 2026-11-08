@@ -75,6 +75,37 @@ void main() {
     expect(find.byKey(const Key('onb-error')), findsOneWidget);
   });
 
+  testWidgets('pair by scanning the QR code with the camera', (t) async {
+    var scans = 0;
+    final h = Harness(
+      scanQr: (_) async {
+        scans++;
+        return qr();
+      },
+    );
+    await h.start(t);
+    await tapKey(t, 'home-add-first');
+    await tapKey(t, 'path-code');
+    await tapKey(t, 'onb-next');
+    await tapKey(t, 'scan-qr');
+    expect(scans, 1);
+    expect(t.widget<TextField>(find.byKey(const Key('code-field'))).controller!.text, qr());
+    await tapKey(t, 'onb-next');
+    await tapKey(t, 'pair-button');
+    expect(find.byKey(const Key('paired-ok')), findsOneWidget);
+  });
+
+  testWidgets('without a camera scanner the code is pasted, and the app says where QR codes come from', (t) async {
+    final h = Harness();
+    await h.start(t);
+    await tapKey(t, 'home-add-first');
+    await tapKey(t, 'path-code');
+    await tapKey(t, 'onb-next');
+    expect(find.byKey(const Key('scan-qr')), findsNothing);
+    await tapKey(t, 'qr-where');
+    expect(find.text('sudo rpctl pairing new'), findsOneWidget);
+  });
+
   testWidgets('the SD-card path is desktop only', (t) async {
     final h = Harness();
     await h.start(t);

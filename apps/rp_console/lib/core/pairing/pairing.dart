@@ -47,6 +47,10 @@ class PairingCode {
 
   /// Parse the QR JSON (`{"v":1,"host":..,"port":..,"secret":..}`) or a bare
   /// 64-hex code typed by hand (then `host` must be given).
+  /// The QR / text form [parse] accepts (as `rpctl pairing new` prints it).
+  String toQrText() =>
+      jsonEncode({'v': 1, 'host': host, 'port': port, 'secret': secret, 'device': ?device, 'cert': ?cert});
+
   static PairingCode parse(String text, {String? host, int port = 8443}) {
     final t = text.trim();
     if (_hex64.hasMatch(t)) {

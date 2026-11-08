@@ -150,6 +150,45 @@ pub fn check_args(tool: &Tool, args: &Value) -> Result<Map<String, Value>, ToolE
     Ok(args)
 }
 
+/// The rp-agent request behind a tool (method, path with query, body), for
+/// arguments already checked by [`check_args`]. Shared by the MCP server and
+/// the console's "run tool" endpoint, so both call the agent the same way.
+pub fn agent_request(
+    name: &str,
+    args: &Map<String, Value>,
+) -> Option<(&'static str, String, Option<Value>)> {
+    let get_i = |k: &str, d: i64| args.get(k).and_then(Value::as_i64).unwrap_or(d);
+    let get = |p: &str| Some(("GET", p.to_string(), None));
+    match name {
+        "get_system_health" => get("/v1/health"),
+        "get_device_inventory" => get("/v1/inventory"),
+        "inspect_arp_table" => get("/v1/arp"),
+        "inspect_usb" => get("/v1/usb"),
+        "get_vpn_status" => get("/v1/vpn"),
+        "query_dns_events" => {
+            let mut q = format!(
+                "/v1/dns/events?since_mins={}&limit={}",
+                get_i("since_minutes", 60),
+                get_i("limit", 100)
+            );
+            if let Some(a) = args.get("action").and_then(Value::as_str) {
+                q.push_str(&format!("&action={a}"));
+            }
+            Some(("GET", q, None))
+        }
+        "get_flows" => Some(("GET", format!("/v1/flows?limit={}", get_i("limit", 200)), None)),
+        "get_audit_log" => Some(("GET", format!("/v1/audit?limit={}", get_i("limit", 50)), None)),
+        "list_pending_actions" => get("/v1/actions"),
+        "scan_network" => Some(("POST", "/v1/scan".into(), Some(Value::Object(args.clone())))),
+        "block_device" | "isolate_client" => Some((
+            "POST",
+            "/v1/actions".into(),
+            Some(json!({"tool": name, "args": Value::Object(args.clone())})),
+        )),
+        _ => None,
+    }
+}
+
 /// Recursively strip control characters and cap string length in agent output.
 pub fn sanitize(v: Value) -> Value {
     match v {
@@ -228,51 +267,9 @@ impl Dispatcher {
                 return Err(e);
             }
         };
-        let get_i = |k: &str, d: i64| args.get(k).and_then(Value::as_i64).unwrap_or(d);
-        let result = match name {
-            "get_system_health" => self.agent("GET", "/v1/health", &who.name, None).await,
-            "get_device_inventory" => self.agent("GET", "/v1/inventory", &who.name, None).await,
-            "inspect_arp_table" => self.agent("GET", "/v1/arp", &who.name, None).await,
-            "inspect_usb" => self.agent("GET", "/v1/usb", &who.name, None).await,
-            "get_vpn_status" => self.agent("GET", "/v1/vpn", &who.name, None).await,
-            "query_dns_events" => {
-                let mut q = format!(
-                    "/v1/dns/events?since_mins={}&limit={}",
-                    get_i("since_minutes", 60),
-                    get_i("limit", 100)
-                );
-                if let Some(a) = args.get("action").and_then(Value::as_str) {
-                    q.push_str(&format!("&action={a}"));
-                }
-                self.agent("GET", &q, &who.name, None).await
-            }
-            "get_flows" => {
-                self.agent(
-                    "GET",
-                    &format!("/v1/flows?limit={}", get_i("limit", 200)),
-                    &who.name,
-                    None,
-                )
-                .await
-            }
-            "get_audit_log" => {
-                self.agent(
-                    "GET",
-                    &format!("/v1/audit?limit={}", get_i("limit", 50)),
-                    &who.name,
-                    None,
-                )
-                .await
-            }
-            "list_pending_actions" => self.agent("GET", "/v1/actions", &who.name, None).await,
-            "scan_network" => {
-                self.agent("POST", "/v1/scan", &who.name, Some(&Value::Object(args.clone()))).await
-            }
-            "block_device" | "isolate_client" => {
-                let body = json!({"tool": name, "args": Value::Object(args.clone())});
-                self.agent("POST", "/v1/actions", &who.name, Some(&body)).await
-            }
-            _ => Err(err("not implemented")),
+        let result = match agent_request(name, &args) {
+            Some((method, path, body)) => self.agent(method, &path, &who.name, body.as_ref()).await,
+            None => Err(err("not implemented")),
         };
         let decision = match (&result, tool.capability) {
             (Ok(_), Capability::Privileged) => "pending",
@@ -307,6 +304,20 @@ async fn rp_http_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_tool_maps_to_an_agent_request() {
+        for t in TOOLS {
+            let args =
+                check_args(t, &json!({"mac": "02:00:00:00:00:01", "minutes": 30, "reason": "x"}))
+                    .or_else(|_| check_args(t, &json!({})))
+                    .unwrap_or_default();
+            assert!(agent_request(t.name, &args).is_some(), "{} has no agent request", t.name);
+        }
+        let (m, p, b) = agent_request("block_device", &Map::new()).unwrap();
+        assert_eq!((m, p.as_str()), ("POST", "/v1/actions"));
+        assert_eq!(b.unwrap()["tool"], "block_device");
+    }
 
     #[test]
     fn catalogue_is_consistent() {

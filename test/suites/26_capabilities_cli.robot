@@ -16,7 +16,7 @@ Pi 2B With Ethernet And An AP Adapter Can Run Every Module
     END
     Should Be Equal    ${c['modules']['ap']['options']}    ${{ ['wlan0'] }}
     Should Be Equal    ${c['modules']['ap']['notes']}    ${{ ['wpa2_only'] }}
-    Should Be Equal    ${c['modules']['vpn']['options']}    ${{ ['tailscale', 'wireguard'] }}
+    Should Be Equal    ${c['modules']['vpn']['options']}    ${{ ['tailscale', 'wireguard', 'both'] }}
 
 No Wi-Fi Disables Only The Access Point
     ${c}=    Capabilities For    no-wifi

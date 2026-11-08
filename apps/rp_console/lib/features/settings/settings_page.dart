@@ -9,6 +9,7 @@ import '../../core/api/client.dart';
 import '../../core/api/models.dart';
 import '../../core/storage/vault.dart';
 import '../../widgets/common.dart';
+import '../../widgets/language.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.app, required this.device, required this.client});
@@ -64,6 +65,10 @@ class SettingsPage extends StatelessWidget {
       builder: (context, admins, reload) => ListView(
         children: [
           Section(
+            title: s('lang.title'),
+            children: [LanguageSetting(app: app)],
+          ),
+          Section(
             title: s('set.admins'),
             children: [
               for (final a in admins)
@@ -98,12 +103,12 @@ class SettingsPage extends StatelessWidget {
             children: [
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Certificate (SHA-256)'),
+                title: Text(s('set.cert')),
                 subtitle: SelectableText(device.certSha256),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Device ID'),
+                title: Text(s('set.deviceid')),
                 subtitle: SelectableText(device.deviceId),
               ),
               TextButton.icon(
