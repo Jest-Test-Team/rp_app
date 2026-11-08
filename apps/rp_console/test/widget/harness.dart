@@ -13,13 +13,14 @@ import 'package:rp_console/core/storage/vault.dart';
 import '../support/fakes.dart';
 
 class Harness {
-  Harness({FakeDevice? device, this.desktop = false, FakeShell? shell})
+  Harness({FakeDevice? device, this.desktop = false, FakeShell? shell, this.scanQr})
     : device = device ?? FakeDevice(),
       shell = shell ?? FakeShell([]);
 
   final FakeDevice device;
   final bool desktop;
   final FakeShell shell;
+  final Future<String?> Function(BuildContext)? scanQr;
   final store = MemoryStore();
   String? latestRelease = 'v0.2.1';
   late final Services services = Services(
@@ -33,6 +34,7 @@ class Harness {
     release: () async => ReleaseInfo('v0.2.0', 'a' * 64),
     latest: () async => latestRelease,
     desktop: desktop,
+    scanQr: scanQr,
   );
   late final AppState state = AppState(services);
 

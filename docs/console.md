@@ -22,7 +22,9 @@ App（Flutter）──HTTPS，釘選憑證──▶ rp-api（無特權，只開�
 |---|---|---|
 | 新的 SD 卡（桌面版 App） | 剛用 Raspberry Pi Imager 燒錄 Raspberry Pi OS Lite、**沒有**使用 OS 自訂設定的 SD 卡 | App 把 `user-data`／`network-config`（cloud-init）與獨立的一次性 `rp-pairing.toml` 寫入開機分割區。首次開機時，裝置把秘密移到 `/etc/rp`、在卡上 shred、下載（SHA-256 已釘選的）release 安裝程式並執行 `rpctl setup`。 |
 | 已經在執行（SSH） | 已在你的網路上、你能登入的 Pi | 一次 SSH 連線：先顯示主機金鑰；密碼只用一次且只寫給 `sudo -S`，不會儲存；安裝程式檢查 SHA-256；`rpctl setup --json` 透過同一條連線回傳配對碼。 |
-| 配對碼 | 裝置上的 `sudo rpctl pairing new`，或另一支手機（設定 › 加入手機） | 貼上 QR 內容，或輸入 64 字元配對碼與位址。 |
+| 配對碼 | 裝置上的 `sudo rpctl pairing new`、另一支已配對手機（設定 › 加入手機），或桌面版 App 寫完 SD 卡後 | **掃描 QR code**（Android / iOS 相機），或貼上 QR 內容／輸入 64 字元配對碼與位址。 |
+
+Pi 沒有螢幕，所以配對 QR code 只會出現在：終端機（透過 SSH 執行 `sudo rpctl pairing new` 會印出）、已配對的手機，或桌面版 App 寫完 SD 卡的最後一步。配對碼步驟中的「QR code 從哪裡來？」也有說明。
 
 接著：尋找裝置（mDNS `_rp-security._tcp`）→ 配對（雙方以 HMAC 證明配對碼，裝置的證明涵蓋其 TLS 憑證，App 將其釘選）→ 這台硬體能做什麼（以文字說明原因，例如「你目前是透過 Wi-Fi 連到這台裝置」）→ 驗證。
 

@@ -10,6 +10,7 @@ import 'app/services.dart';
 import 'core/discovery/discovery.dart';
 import 'core/storage/vault.dart';
 import 'demo/demo_device.dart';
+import 'features/onboarding/qr_scanner.dart';
 
 /// Demo mode: a simulated device inside the app, nothing stored, no network.
 /// Always on in a browser (which cannot pin certificates, use mDNS or SSH);
@@ -37,6 +38,7 @@ Future<void> main() async {
       vault: Vault(PlatformSecureStore()),
       discoverer: MdnsDiscoverer(),
       desktop: Platform.isMacOS || Platform.isLinux || Platform.isWindows,
+      scanQr: Platform.isAndroid || Platform.isIOS ? scanPairingQr : null,
     );
   }
   final state = AppState(services);

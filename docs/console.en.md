@@ -22,7 +22,9 @@ The wizard has six steps. Pick one of three paths:
 |---|---|---|
 | New SD card (desktop app) | A card freshly flashed with Raspberry Pi OS Lite by Raspberry Pi Imager, **without** OS customisation | The app writes `user-data` / `network-config` (cloud-init) and a separate one-time `rp-pairing.toml` to the boot partition. On first boot the device moves the secret to `/etc/rp`, shreds it on the card, downloads the release installer (its SHA-256 pinned) and runs `rpctl setup`. |
 | Already running (SSH) | A Pi on your network you can log in to | One SSH session: the host key is shown first; the password is used once and only written to `sudo -S`, never stored; the installer is SHA-256 checked; `rpctl setup --json` returns the pairing code over the same channel. |
-| Pairing code | `sudo rpctl pairing new` on the device, or another phone (Settings › Add phone) | Paste the QR text or type the 64-character code and the address. |
+| Pairing code | `sudo rpctl pairing new` on the device, another phone (Settings › Add phone), or the desktop app after it wrote an SD card | **Scan QR code** (Android / iOS camera), or paste the QR text / type the 64-character code and the address. |
+
+The Pi has no screen, so a pairing QR code is only ever shown by a terminal (`sudo rpctl pairing new` over SSH prints it), by an already paired phone, or by the desktop app at the end of writing an SD card. The pairing-code step explains this under *Where do I get a QR code?*.
 
 Then: find the device (mDNS `_rp-security._tcp`) → pair (both sides prove the code with HMAC, the device's proof covers its TLS certificate, the app pins it) → what this hardware can run (reasons in words: e.g. "Wi-Fi is how you reach this device") → verify.
 

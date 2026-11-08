@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/app_state.dart';
 import '../../app/strings.dart';
@@ -402,6 +403,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         onPressed: busy ? null : _writeCard,
         child: Text(s('onb.card.write')),
       ),
+      if (code != null) ...[
+        const SizedBox(height: 16),
+        Text(s('onb.card.qr')),
+        const SizedBox(height: 8),
+        Center(
+          child: QrImageView(
+            key: const Key('card-qr'),
+            data: code!.toQrText(),
+            size: 220,
+            backgroundColor: Colors.white,
+          ),
+        ),
+      ],
     ],
   );
 
@@ -419,9 +433,28 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     ],
   );
 
+  Future<void> _scanQr() async {
+    final scan = widget.app.services.scanQr;
+    if (scan == null) return;
+    final text = await scan(context);
+    if (text == null || !mounted) return;
+    codeText.text = text;
+    _parseCode();
+  }
+
   Widget _codeStep() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      if (widget.app.services.scanQr != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: FilledButton.icon(
+            key: const Key('scan-qr'),
+            onPressed: _scanQr,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: Text(s('onb.scan.button')),
+          ),
+        ),
       Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: TextField(
@@ -436,6 +469,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ),
       _field(hostText, s('onb.code.host'), 'host-field', onChanged: (_) => _parseCode()),
       if (code != null) ListTile(leading: const Icon(Icons.check), title: Text('${code!.host}:${code!.port}')),
+      const SizedBox(height: 8),
+      // Where a QR code comes from: the Pi has no screen.
+      ExpansionTile(
+        key: const Key('qr-where'),
+        tilePadding: EdgeInsets.zero,
+        leading: const Icon(Icons.help_outline),
+        title: Text(s('onb.qr.where')),
+        children: [
+          Align(alignment: Alignment.centerLeft, child: Text(s('onb.qr.where.body'))),
+          const SizedBox(height: 8),
+          const SelectableText('sudo rpctl pairing new', style: TextStyle(fontFamily: 'monospace')),
+        ],
+      ),
     ],
   );
 

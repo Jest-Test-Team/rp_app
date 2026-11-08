@@ -23,6 +23,12 @@ void main() {
     expect(c.cert, 'ab' * 32);
   });
 
+  test('the QR text round-trips (shown after writing an SD card)', () {
+    final c = PairingCode(host: 'rp.local', port: 8443, secret: 'ab' * 32);
+    final back = PairingCode.parse(c.toQrText());
+    expect((back.host, back.port, back.secret), ('rp.local', 8443, 'ab' * 32));
+  });
+
   test('a bare code needs an address', () {
     expect(() => PairingCode.parse(secret), throwsFormatException);
     final c = PairingCode.parse(' $secret ', host: '192.0.2.10');
