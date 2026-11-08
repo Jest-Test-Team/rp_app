@@ -102,7 +102,18 @@ pub fn snippet(cfg: &Config) -> String {
         [p] => p.to_string(),
         many => format!("{{ {} }}", many.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")),
     };
-    let _ = write!(s, "\n\tchain mod_input {{\n\t\tudp dport {ports} accept\n\t}}\n");
+    let _ = write!(s, "\n\tchain mod_input {{\n\t\tudp dport {ports} accept\n");
+    // The console app over WireGuard (the tailnet is allowed by the api module).
+    if let (Some(api), true) = (&cfg.api, v.mode.wireguard()) {
+        let _ = writeln!(
+            s,
+            "\t\tiifname \"{}\" ip saddr {} tcp dport {} accept",
+            v.wireguard.interface,
+            v.wireguard.subnet,
+            api.listen.port()
+        );
+    }
+    s.push_str("\t}\n");
 
     s.push_str("\n\tchain mod_forward {\n");
     let _ = writeln!(s, "\t\t{vif} oifname \"{wan}\" ip daddr @vpn_allow4 accept");
@@ -464,6 +475,19 @@ mod tests {
         assert!(drop4 < accept);
         assert!(s.contains("ip saddr 100.64.0.0/10 masquerade"));
         assert!(s.contains("ip saddr 10.88.0.0/24 masquerade"));
+    }
+
+    #[test]
+    fn the_console_app_reaches_the_api_over_wireguard() {
+        let c = cfg("[api]\n[vpn]\nmode = \"both\"\n");
+        assert!(snippet(&c).contains("iifname \"wg0\" ip saddr 10.88.0.0/24 tcp dport 8443 accept"));
+        assert!(crate::api::snippet(&c)
+            .contains("iifname \"wg0\" ip saddr 10.88.0.0/24 tcp dport 8443 accept"));
+        let nets = crate::changeset::mgmt_networks(&c);
+        assert!(nets.iter().any(|n| n.to_string() == "10.88.0.0/24"));
+        assert!(nets.iter().any(|n| n.to_string() == "100.64.0.0/10"));
+        let ts = cfg("[api]\n[vpn]\nmode = \"tailscale\"\n");
+        assert!(!snippet(&ts).contains("8443"), "no WireGuard, no extra rule");
     }
 
     #[test]

@@ -40,6 +40,14 @@ pub fn snippet(cfg: &Config) -> String {
         let _ = writeln!(s, "\t\ttcp dport {port} ip saddr {} accept", crate::vpn::TS_V4);
         let _ = writeln!(s, "\t\ttcp dport {port} ip6 saddr {} accept", crate::vpn::TS_V6);
     }
+    if let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode.wireguard()) {
+        let w = &v.wireguard;
+        let _ = writeln!(
+            s,
+            "\t\tiifname \"{}\" ip saddr {} tcp dport {port} accept",
+            w.interface, w.subnet
+        );
+    }
     s.push_str("\t}\n}\n");
     s
 }

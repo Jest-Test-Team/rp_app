@@ -110,6 +110,20 @@ async fn main() -> Result<()> {
             rp_core::changeset::mgmt_networks(&cfg),
             api.session_minutes,
         );
+        // Follow config changes (e.g. WireGuard enabled later): the networks
+        // the app may connect from are re-read every 30 s.
+        {
+            let st = st.clone();
+            let path = cli.config.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    if let Ok(cfg) = rp_core::config::load(&path) {
+                        *st.allowed.write().unwrap() = rp_core::changeset::mgmt_networks(&cfg);
+                    }
+                }
+            });
+        }
         (st, cli.listen.unwrap_or(api.listen), cli.state_dir.join("tls"), None, PathBuf::from("/"))
     };
 
