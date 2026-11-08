@@ -187,6 +187,9 @@ class RpClient {
   Future<Map<String, Object?>> installUpdate(String tag) =>
       _signed('POST', '/v1/update', {'op': 'install_update', 'tag': tag});
 
+  /// Download the enabled DNS threat-intelligence feeds now (background).
+  Future<Map<String, Object?>> updateDnsFeeds() => _signed('POST', '/v1/dns/feeds/update', {'op': 'update_dns_feeds'});
+
   Future<Map<String, Object?>> rollbackUpdate() => _signed('POST', '/v1/update/rollback', {'op': 'rollback_update'});
 
   /// Remove every module and forget all admins. Irreversible from the app.

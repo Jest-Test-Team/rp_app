@@ -86,6 +86,57 @@ class FakeDevice implements Transport {
   };
   final actions = <Map<String, Object?>>[];
   List<Map<String, Object?>> healthAlerts = [];
+  int feedUpdates = 0;
+  int? feedsUpdatedAt;
+  Set<String> feedFails = {};
+  static List<String> asStrings(Object? v) => v is List ? v.whereType<String>().toList() : [];
+  static const feedCatalog = [
+    {
+      'id': 'stevenblack',
+      'name': 'StevenBlack unified hosts',
+      'blocks': 'ads, trackers and known malware domains',
+      'license': 'MIT',
+      'homepage': 'https://github.com/StevenBlack/hosts',
+      'approx_entries': 80000,
+      'balanced': true,
+    },
+    {
+      'id': 'urlhaus',
+      'name': 'URLhaus malware domains (abuse.ch)',
+      'blocks': 'sites currently spreading malware',
+      'license': 'CC0 (data) / MIT (list)',
+      'homepage': 'https://urlhaus.abuse.ch/',
+      'approx_entries': 20000,
+      'balanced': true,
+    },
+    {
+      'id': 'phishing_army',
+      'name': 'Phishing Army',
+      'blocks': 'phishing and scam sites',
+      'license': 'CC BY-NC 4.0 (free for personal use)',
+      'homepage': 'https://phishing.army/',
+      'approx_entries': 150000,
+      'balanced': true,
+    },
+    {
+      'id': 'hagezi_tif_mini',
+      'name': 'HaGeZi Threat Intelligence (mini)',
+      'blocks': 'malware, phishing, scam and C2',
+      'license': 'GPL-3.0',
+      'homepage': 'https://github.com/hagezi/dns-blocklists',
+      'approx_entries': 190000,
+      'balanced': false,
+    },
+    {
+      'id': 'hagezi_light',
+      'name': 'HaGeZi Light',
+      'blocks': 'ads, trackers and telemetry',
+      'license': 'GPL-3.0',
+      'homepage': 'https://github.com/hagezi/dns-blocklists',
+      'approx_entries': 160000,
+      'balanced': false,
+    },
+  ];
   final mcpClients = <Map<String, Object?>>[];
   String? preflightFail;
   String live = 'v0.2.0';
@@ -215,6 +266,7 @@ class FakeDevice implements Transport {
       };
     }
     if (p == '/v1/dns/stats') {
+      final enabled = asStrings((config['dns'] as Map?)?['feeds']);
       return {
         'total': 1000,
         'blocked': 120,
@@ -222,6 +274,21 @@ class FakeDevice implements Transport {
         'top_blocked': [
           {'domain': 'ads.example', 'count': 50},
         ],
+        'feeds': {
+          'enabled': enabled,
+          'catalog': feedCatalog,
+          'updated_at': feedsUpdatedAt,
+          'status': [
+            for (final id in enabled)
+              {
+                'id': id,
+                'entries': feedFails.contains(id) ? 0 : 1000,
+                'updated_at': feedsUpdatedAt,
+                'error': feedFails.contains(id) ? 'download failed: HTTP 503' : null,
+                'ok': !feedFails.contains(id),
+              },
+          ],
+        },
       };
     }
     if (p == '/v1/dns/events') {
@@ -415,6 +482,12 @@ class FakeDevice implements Transport {
       previous = live;
       live = op['tag'] as String;
       return {'tag': live, 'previous': previous};
+    }
+    if (p == '/v1/dns/feeds/update') {
+      _bound(op, 'update_dns_feeds');
+      feedUpdates++;
+      feedsUpdatedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      return {'started': true};
     }
     if (p == '/v1/update/rollback') {
       _bound(op, 'rollback_update');

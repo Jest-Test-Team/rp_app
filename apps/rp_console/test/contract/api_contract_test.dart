@@ -202,6 +202,13 @@ void main() {
       expect(cmds.any((c) => '$c'.contains('nft add element inet rp ap_quarantine4')), isTrue);
     });
 
+    test('DNS feeds: catalogue and status come with the stats; an update can be started', () async {
+      final feeds = asMap((await client.dnsStats())['feeds']);
+      final ids = asList(feeds['catalog']).map((f) => asMap(f)['id']).toList();
+      expect(ids, containsAll(['stevenblack', 'urlhaus', 'phishing_army']));
+      expect((await client.updateDnsFeeds())['started'], true);
+    });
+
     test('MCP tools run from the app; a privileged tool only queues a request', () async {
       final h = await client.runTool('get_system_health', {});
       expect(h['tier'], 'read');
