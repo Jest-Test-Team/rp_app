@@ -386,6 +386,41 @@ async fn approval_queue_and_mcp_clients() {
 }
 
 #[tokio::test]
+async fn console_runs_mcp_tools() {
+    let t = T::new("mcprun");
+    t.pair(&key(1)).await;
+    let tok = t.session(&key(1)).await;
+    let run = |name: &str, args: Value| {
+        let path = format!("/v1/mcp/tools/{name}/run");
+        let tok = tok.clone();
+        let t = &t;
+        async move { t.req(Method::POST, &path, Some(&tok), Some(args)).await }
+    };
+    let (s, v) = run("get_system_health", json!({})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["tier"], "read");
+    assert!(v["result"]["mem_total_kb"].is_u64(), "{v}");
+    let (s, v) = run("get_device_inventory", json!({})).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["result"]["count"], 3);
+    // Privileged tools only queue a request; it shows in the approval queue.
+    let (s, v) = run("block_device", json!({"ip": "198.51.100.150", "ttl_minutes": 30})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["result"]["status"], "pending");
+    let (_, q) = t.req(Method::GET, "/v1/actions/pending", Some(&tok), None).await;
+    assert_eq!(q["actions"][0]["status"], "pending");
+    assert!(q["actions"][0]["principal"].as_str().unwrap_or("").starts_with("console-"), "{q}");
+    // Validation and auth.
+    let (s, v) = run("nope", json!({})).await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+    let (s, _) = run("get_flows", json!({"limit": "lots"})).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) =
+        t.req(Method::POST, "/v1/mcp/tools/get_system_health/run", None, Some(json!({}))).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn errors_are_structured_and_limits_hold() {
     let t = T::new("errors");
     let (s, v) = t.req(Method::GET, "/v1/nope", None, None).await;
@@ -466,6 +501,7 @@ fn openapi_documents_every_route() {
         "POST /v1/actions/{id}/approve",
         "POST /v1/actions/{id}/deny",
         "GET /v1/mcp/tools",
+        "POST /v1/mcp/tools/{name}/run",
         "GET /v1/mcp/clients",
         "POST /v1/mcp/clients",
         "DELETE /v1/mcp/clients/{name}",
@@ -489,4 +525,23 @@ fn openapi_documents_every_route() {
     want.sort();
     assert_eq!(got, want, "router and OpenAPI document must list the same endpoints");
     assert!(doc["components"]["securitySchemes"]["session"].is_object());
+}
+
+#[test]
+fn fake_health_has_the_agents_shape() {
+    // The console once read keys the agent never sends (cpu.load1, memory.*),
+    // because the fakes used a made-up shape. Keep the fake = the agent.
+    let dir = std::env::temp_dir().join(format!("rp-api-health-{}", std::process::id()));
+    let dev = FakeDevice::create(&dir.join("dev"), Some(SECRET)).unwrap();
+    let cfg = rp_core::config::load(&dev.config).unwrap();
+    let ctx = rp_agent::collect::Ctx { root: dir.clone(), cfg };
+    let real = rp_agent::collect::health(&ctx);
+    let fake = dev.observe("/v1/health").unwrap();
+    let keys = |v: &Value| {
+        let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        k.sort();
+        k
+    };
+    assert_eq!(keys(&fake), keys(&real));
+    assert!(fake["load"].is_array() && fake["mem_available_kb"].is_u64());
 }
