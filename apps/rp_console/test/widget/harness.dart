@@ -23,6 +23,7 @@ class Harness {
   final Future<String?> Function(BuildContext)? scanQr;
   final store = MemoryStore();
   String? latestRelease = 'v0.2.1';
+  String? publicIp = '203.0.113.7';
   late final Services services = Services(
     vault: Vault(store),
     discoverer: StaticDiscoverer([Found(name: 'RP Security on rp-demo', host: 'rp-demo.local', port: 8443)]),
@@ -35,6 +36,7 @@ class Harness {
     latest: () async => latestRelease,
     desktop: desktop,
     scanQr: scanQr,
+    publicIp: () async => publicIp,
   );
   late final AppState state = AppState(services);
 
@@ -68,8 +70,9 @@ Future<void> enter(WidgetTester t, String key, String text) async {
   await settle(t, 5);
 }
 
-/// Pair through the onboarding code path; leaves the app on the home screen.
-Future<void> pairViaCode(WidgetTester t, Harness h) async {
+/// Pair through the onboarding code path; ends on the device screen with the
+/// first-visit VPN prompt answered "Not now" (unless [keepVpnPrompt]).
+Future<void> pairViaCode(WidgetTester t, Harness h, {bool keepVpnPrompt = false}) async {
   await tapKey(t, 'home-add-first');
   await tapKey(t, 'path-code');
   await tapKey(t, 'onb-next');
@@ -78,6 +81,9 @@ Future<void> pairViaCode(WidgetTester t, Harness h) async {
   await tapKey(t, 'pair-button');
   await tapKey(t, 'onb-next');
   await tapKey(t, 'onb-finish');
+  if (!keepVpnPrompt && find.byKey(const Key('vpn-pick-later')).evaluate().isNotEmpty) {
+    await tapKey(t, 'vpn-pick-later');
+  }
 }
 
 ExecResult ok(String out) => ExecResult(0, out, '');

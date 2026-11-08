@@ -56,3 +56,20 @@ Future<String?> latestTag({String repo = kRepo}) async {
     c.close(force: true);
   }
 }
+
+/// This network's public IPv4 address as the internet sees it (for the
+/// WireGuard endpoint). The phone must be on the same network as the Pi.
+Future<String?> fetchPublicIp() async {
+  final c = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final req = await c.getUrl(Uri.parse('https://api.ipify.org'));
+    final resp = await req.close();
+    if (resp.statusCode != 200) return null;
+    final ip = (await resp.transform(utf8.decoder).join()).trim();
+    return RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(ip) ? ip : null;
+  } catch (_) {
+    return null;
+  } finally {
+    c.close(force: true);
+  }
+}

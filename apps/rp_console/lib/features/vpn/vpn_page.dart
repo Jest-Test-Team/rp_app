@@ -52,9 +52,34 @@ String clientConfig({
     '# All traffic, including IPv6, goes through the tunnel so nothing leaks.\n'
     'AllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n';
 
+bool usesWireguard(String mode) => mode == 'wireguard' || mode == 'both';
+bool usesTailscale(String mode) => mode == 'tailscale' || mode == 'both';
+
+/// Status lines in words, for one mode or both (`/v1/vpn/status`).
+List<(String, String, bool)> vpnStatusLines(S s, Map<String, Object?> st) {
+  if (st['configured'] == false) return [(s('vpn.status.none'), '', false)];
+  (String, String, bool) line(Map<String, Object?> m) {
+    final ok = m['available'] == true;
+    final mode = str(m['mode']);
+    final peers = m['peers'];
+    final n = peers is List ? peers.length : integer(peers);
+    final what = mode == 'tailscale'
+        ? (str(m['backend_state']).isEmpty ? '' : str(m['backend_state']))
+        : s('vpn.status.peers', {'n': n});
+    return (s('vpn.mode.$mode', {}, mode), ok ? (what.isEmpty ? s('vpn.status.up') : what) : s('vpn.status.down'), ok);
+  }
+
+  if (str(st['mode']) == 'both') return [line(asMap(st['tailscale'])), line(asMap(st['wireguard']))];
+  return [line(st)];
+}
+
 class VpnPage extends StatelessWidget {
-  const VpnPage({super.key, required this.client});
+  const VpnPage({super.key, required this.client, this.suggestedMode, this.publicIp});
   final RpClient client;
+
+  /// Mode picked in the first-visit prompt (preselected in the form).
+  final String? suggestedMode;
+  final Future<String?> Function()? publicIp;
 
   @override
   Widget build(BuildContext context) => Loader<(Map<String, Object?>, Map<String, Object?>, Status, Capabilities)>(
@@ -74,12 +99,13 @@ class VpnPage extends StatelessWidget {
             Section(
               title: s('vpn.status'),
               children: [
-                for (final e in d.$2.entries)
+                for (final (name, state, ok) in vpnStatusLines(s, d.$2))
                   ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    title: Text(e.key),
-                    trailing: Text('${e.value}'),
+                    leading: Icon(ok ? Icons.check_circle_outline : Icons.radio_button_unchecked),
+                    title: Text(name),
+                    trailing: Text(state),
                   ),
               ],
             ),
@@ -89,8 +115,10 @@ class VpnPage extends StatelessWidget {
               caps: d.$4.module('vpn'),
               authKeySet: d.$3.secretSet('tailscale_auth_key'),
               onSaved: reload,
+              suggestedMode: suggestedMode,
+              publicIp: publicIp,
             ),
-            if (str(cfg['mode']) == 'wireguard')
+            if (usesWireguard(str(cfg['mode'])))
               Peers(
                 client: client,
                 cfg: cfg,
@@ -112,18 +140,46 @@ class VpnForm extends StatefulWidget {
     required this.caps,
     required this.authKeySet,
     required this.onSaved,
+    this.suggestedMode,
+    this.publicIp,
   });
   final RpClient client;
   final Map<String, Object?> cfg;
   final ModuleCapability caps;
   final bool authKeySet;
   final VoidCallback onSaved;
+  final String? suggestedMode;
+  final Future<String?> Function()? publicIp;
   @override
   State<VpnForm> createState() => _VpnFormState();
 }
 
 class _VpnFormState extends State<VpnForm> {
-  late String mode = str(widget.cfg['mode'], 'tailscale');
+  late String mode = _initialMode();
+  bool detecting = false;
+
+  String _initialMode() {
+    final options = widget.caps.options.isEmpty ? ['tailscale'] : widget.caps.options;
+    final want = widget.suggestedMode;
+    if (want != null && options.contains(want)) return want;
+    return str(widget.cfg['mode'], 'tailscale');
+  }
+
+  Future<void> _detect() async {
+    final f = widget.publicIp;
+    if (f == null) return;
+    setState(() => detecting = true);
+    final ip = await f();
+    if (!mounted) return;
+    setState(() => detecting = false);
+    final port = asMap(widget.cfg['wireguard'])['listen_port'] ?? 51820;
+    if (ip != null) {
+      endpoint.text = '$ip:$port';
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(S.of(context)('vpn.endpoint.nodetect'))));
+    }
+  }
+
   late final hostname = TextEditingController(text: str(asMap(widget.cfg['tailscale'])['hostname']));
   late final endpoint = TextEditingController(text: str(asMap(widget.cfg['wireguard'])['endpoint']));
   final authKey = TextEditingController();
@@ -137,16 +193,24 @@ class _VpnFormState extends State<VpnForm> {
       children: [
         SegmentedButton<String>(
           key: const Key('vpn-mode'),
-          segments: [for (final m in modes) ButtonSegment(value: m, label: Text(m))],
+          segments: [
+            for (final m in modes)
+              ButtonSegment(
+                value: m,
+                label: Text(s('vpn.mode.$m', {}, m), key: Key('vpn-mode-$m')),
+              ),
+          ],
           selected: {mode},
           onSelectionChanged: (v) => setState(() => mode = v.first),
         ),
+        const SizedBox(height: 8),
+        Text(s('vpn.mode.$mode.body', {}, ''), style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 12),
-        if (mode == 'tailscale') ...[
+        if (usesTailscale(mode)) ...[
           TextField(
             key: const Key('vpn-hostname'),
             controller: hostname,
-            decoration: const InputDecoration(labelText: 'Hostname'),
+            decoration: InputDecoration(labelText: s('vpn.hostname')),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -156,12 +220,39 @@ class _VpnFormState extends State<VpnForm> {
             autocorrect: false,
             decoration: InputDecoration(labelText: s('vpn.authkey'), helperText: s('vpn.authkey.body')),
           ),
-        ] else
+          const SizedBox(height: 12),
+        ],
+        if (usesWireguard(mode)) ...[
           TextField(
             key: const Key('vpn-endpoint'),
             controller: endpoint,
-            decoration: const InputDecoration(labelText: 'Endpoint (host:port)'),
+            decoration: InputDecoration(
+              labelText: s('vpn.endpoint'),
+              helperText: s('vpn.endpoint.body'),
+              helperMaxLines: 4,
+              suffixIcon: widget.publicIp == null
+                  ? null
+                  : IconButton(
+                      key: const Key('vpn-detect'),
+                      tooltip: s('vpn.endpoint.detect'),
+                      onPressed: detecting ? null : _detect,
+                      icon: detecting
+                          ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.my_location),
+                    ),
+            ),
           ),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.router_outlined),
+              title: Text(s('vpn.portforward')),
+              subtitle: Text(
+                s('vpn.portforward.body', {'port': asMap(widget.cfg['wireguard'])['listen_port'] ?? 51820}),
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         Align(
           alignment: Alignment.centerRight,
@@ -170,10 +261,11 @@ class _VpnFormState extends State<VpnForm> {
             onPressed: () async {
               final key = authKey.text.trim();
               final patch = <String, Object?>{'vpn.mode': mode};
-              if (mode == 'tailscale') {
+              if (usesTailscale(mode)) {
                 if (hostname.text.trim().isNotEmpty) patch['vpn.tailscale.hostname'] = hostname.text.trim();
                 if (key.isNotEmpty || widget.authKeySet) patch['vpn.tailscale.auth_key_file'] = '/etc/rp/tailscale.key';
-              } else if (endpoint.text.trim().isNotEmpty) {
+              }
+              if (usesWireguard(mode) && endpoint.text.trim().isNotEmpty) {
                 patch['vpn.wireguard.endpoint'] = endpoint.text.trim();
               }
               final ok = await showChange(

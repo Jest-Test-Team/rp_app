@@ -28,13 +28,15 @@ class Services {
     this.desktop = false,
     this.demoPairingCode,
     this.scanQr,
+    Future<String?> Function()? publicIp,
   }) : transport = transport ?? ((h, p, pin) => PinnedTransport(host: h, port: p, pin: pin)),
        shell =
            shell ??
            (({required host, required user, required password, required verifyHostKey}) =>
                DartSshShell.connect(host: host, user: user, password: password, verifyHostKey: verifyHostKey)),
        release = release ?? fetchRelease,
-       latest = latest ?? latestTag;
+       latest = latest ?? latestTag,
+       publicIp = publicIp ?? fetchPublicIp;
 
   final Vault vault;
   final Discoverer discoverer;
@@ -42,6 +44,9 @@ class Services {
   final ShellFactory shell;
   final Future<ReleaseInfo> Function() release;
   final Future<String?> Function() latest;
+
+  /// The home network's public IP (WireGuard endpoint suggestion).
+  final Future<String?> Function() publicIp;
 
   /// Demo mode: the simulated device's pairing code (shown and pre-filled).
   final String? demoPairingCode;
