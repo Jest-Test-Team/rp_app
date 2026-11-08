@@ -7,6 +7,7 @@ Test Tags         cli    vpn
 *** Variables ***
 ${WG}             ${FIXTURES}/config/wireguard.toml
 ${TS}             ${FIXTURES}/config/tailscale.toml
+${BOTH}           ${FIXTURES}/config/vpn-both.toml
 # A throwaway server key used only by these tests (not a secret).
 ${SERVER_KEY}     yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=
 
@@ -44,7 +45,7 @@ VPN Apply Validates The Combined Ruleset And Arms The Timer
     Rpctl    ${root}    0    apply    base    config=${WG}
     Remove File    ${root}/cmds.log
     ${out}=    Rpctl    ${root}    0    apply    vpn    config=${WG}
-    Should Contain    ${out}    next: Forward UDP 51820
+    Should Contain    ${out}    next: WireGuard: forward UDP 51820
     File Should Exist    ${root}/etc/rp/nft.d/50-vpn.nft
     File Should Not Exist    ${root}/etc/rp/.check/vpn.nft
     ${check}=    Index Of Command    ${root}    nft -c -f
@@ -53,6 +54,26 @@ VPN Apply Validates The Combined Ruleset And Arms The Timer
     Should Be True    ${check} < ${reload} < ${wg}
     @{cmds}=    Recorded Commands    ${root}
     Should Contain Match    ${cmds}    nft -c -f */staging/vpn/etc/rp/.check/vpn.nft
+
+Both VPNs Side By Side Get The Same Isolation And Both Start
+    ${out}=    Run Ok    ${RPCTL}    --config    ${BOTH}    render    vpn
+    Should Contain    ${out}    udp dport { 41641, 51820 } accept
+    Should Contain    ${out}    iifname { "tailscale0", "wg0" } ip daddr @vpn_block4 drop
+    Should Contain    ${out}    ip saddr 100.64.0.0/10 masquerade
+    Should Contain    ${out}    ip saddr 198.51.100.0/24 masquerade
+    ${root}=    Create Fake Root
+    Rpctl    ${root}    0    apply    base    config=${BOTH}
+    Remove File    ${root}/cmds.log
+    ${out}=    Rpctl    ${root}    0    apply    vpn    config=${BOTH}
+    Should Contain    ${out}    WireGuard: forward UDP 51820
+    @{cmds}=    Recorded Commands    ${root}
+    Should Contain Match    ${cmds}    systemctl restart wg-quick@wg0.service
+    Should Contain Match    ${cmds}    tailscale up --auth-key=file:/etc/rp/tailscale.key*
+    Should Contain    ${cmds}    dpkg-query -W -f=\${Status} tailscale
+    Should Contain    ${cmds}    dpkg-query -W -f=\${Status} wireguard-tools
+    # A peer can be added in both mode.
+    ${r}=    Run Process    ${RPCTL}    --config    ${BOTH}    --root    ${root}    vpn    add-peer    laptop    --no-qr
+    Should Not Contain    ${r.stdout}${r.stderr}    must be "wireguard"
 
 VPN Rollback Turns Forwarding Off And Stops The Tunnel
     ${root}=    Create Fake Root
