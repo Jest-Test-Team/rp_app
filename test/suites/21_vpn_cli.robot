@@ -68,7 +68,7 @@ Both VPNs Side By Side Get The Same Isolation And Both Start
     Should Contain    ${out}    WireGuard: forward UDP 51820
     @{cmds}=    Recorded Commands    ${root}
     Should Contain Match    ${cmds}    systemctl restart wg-quick@wg0.service
-    Should Contain Match    ${cmds}    tailscale up --auth-key=file:/etc/rp/tailscale.key*
+    Should Contain Match    ${cmds}    *|| tailscale up --auth-key=file:/etc/rp/tailscale.key*
     Should Contain    ${cmds}    dpkg-query -W -f=\${Status} tailscale
     Should Contain    ${cmds}    dpkg-query -W -f=\${Status} wireguard-tools
     # A peer can be added in both mode.
@@ -98,7 +98,8 @@ Tailscale Adds Its Repository Before Installing And Uses The Key File
     ${update}=    Index Of Command    ${root}    env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 update
     ${install}=    Index Of Command    ${root}    env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install
     Should Be True    ${key} < ${update} < ${install}
-    Index Of Command    ${root}    tailscale up --auth-key=file:/etc/rp/tailscale.key --hostname=rp-exit
+    Index Of Command    ${root}    sh -c tailscale status >/dev/null 2>&1 || tailscale up --auth-key=file:/etc/rp/tailscale.key --accept-dns=false --advertise-exit-node --hostname=rp-exit
+    Index Of Command    ${root}    tailscale set --advertise-exit-node=true --accept-dns=false --hostname=rp-exit
     File Should Exist    ${root}/etc/apt/sources.list.d/tailscale.list
 
 Add Peer Prints A Client Config Once And Valid TOML

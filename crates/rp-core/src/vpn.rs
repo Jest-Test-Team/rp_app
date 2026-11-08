@@ -271,22 +271,28 @@ impl Module for Vpn {
             {
                 steps.push(Step::cmd(&["systemctl", "enable", "--now", "tailscaled.service"]));
                 if let Some(key) = &v.tailscale.auth_key_file {
-                    let mut up = vec![
-                        "tailscale".to_string(),
-                        "up".into(),
-                        format!("--auth-key=file:{key}"),
-                    ];
+                    // Log in only when not logged in yet: on a running node
+                    // `tailscale up` refuses unless every non-default flag is
+                    // repeated, so re-applying (e.g. adding WireGuard) failed.
+                    // The key path and hostname are validated (no spaces/quotes).
+                    let mut up = format!(
+                        "tailscale status >/dev/null 2>&1 || tailscale up --auth-key=file:{key} \
+                         --accept-dns=false --advertise-exit-node"
+                    );
                     if let Some(h) = &v.tailscale.hostname {
-                        up.push(format!("--hostname={h}"));
+                        up.push_str(&format!(" --hostname={h}"));
                     }
-                    steps.push(Step { argv: up, best_effort: false });
+                    steps.push(Step::cmd(&["sh", "-c", &up]));
                 }
-                steps.push(Step::best_effort(&[
-                    "tailscale",
-                    "set",
-                    "--advertise-exit-node=true",
-                    "--accept-dns=false",
-                ]));
+                let mut set: Vec<String> =
+                    ["tailscale", "set", "--advertise-exit-node=true", "--accept-dns=false"]
+                        .iter()
+                        .map(|x| x.to_string())
+                        .collect();
+                if let Some(h) = &v.tailscale.hostname {
+                    set.push(format!("--hostname={h}"));
+                }
+                steps.push(Step { argv: set, best_effort: true });
             }
         }
         steps
@@ -426,9 +432,10 @@ mod tests {
     #[test]
     fn tailscale_steps_use_key_file_never_key_value() {
         let steps: Vec<String> = Vpn.post_apply(&ts()).iter().map(|s| s.display()).collect();
-        assert!(steps
-            .iter()
-            .any(|s| s == "tailscale up --auth-key=file:/etc/rp/tailscale.key --hostname=rp-exit"));
+        // Only logs in when not logged in yet (re-applying a running node must not fail).
+        assert!(steps.iter().any(|s| s.contains("tailscale status >/dev/null 2>&1 || tailscale up --auth-key=file:/etc/rp/tailscale.key --accept-dns=false --advertise-exit-node --hostname=rp-exit")), "{steps:?}");
+        assert!(steps.iter().any(|s| s
+            == "tailscale set --advertise-exit-node=true --accept-dns=false --hostname=rp-exit"));
         let pre: Vec<String> = Vpn.pre_install(&ts()).iter().map(|s| s.display()).collect();
         assert!(pre
             .iter()
@@ -468,7 +475,7 @@ mod tests {
         assert!(paths.contains(&TS_LIST_PATH.to_string()));
         let steps: Vec<String> = Vpn.post_apply(&c).iter().map(|s| s.display()).collect();
         assert!(steps.iter().any(|s| s == "systemctl restart wg-quick@wg0.service"));
-        assert!(steps.iter().any(|s| s.starts_with("tailscale up --auth-key=file:")));
+        assert!(steps.iter().any(|s| s.contains("|| tailscale up --auth-key=file:")));
         assert!(!Vpn.pre_install(&c).is_empty(), "the Tailscale repository key is fetched");
         let checks: Vec<&str> =
             crate::changeset::verify_steps("vpn", &c).iter().map(|(n, _)| *n).collect();
