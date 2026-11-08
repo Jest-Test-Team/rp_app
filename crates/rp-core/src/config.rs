@@ -159,14 +159,13 @@ fn safe_token(s: &str, max: usize) -> bool {
 }
 
 fn validate_vpn(cfg: &Config, v: &rp_schema::Vpn, errs: &mut Vec<String>) {
-    use rp_schema::VpnMode;
     for n in &v.allow_lan {
         if is_catch_all(n) {
             errs.push(format!("vpn.allow_lan entry {n} would expose every network"));
         }
     }
-    match v.mode {
-        VpnMode::Tailscale => {
+    if v.mode.tailscale() {
+        {
             let t = &v.tailscale;
             if let Some(p) = &t.auth_key_file {
                 if !p.starts_with('/') || p.chars().any(|c| c.is_whitespace() || c == '\'') {
@@ -192,7 +191,9 @@ fn validate_vpn(cfg: &Config, v: &rp_schema::Vpn, errs: &mut Vec<String>) {
                 ));
             }
         }
-        VpnMode::Wireguard => {
+    }
+    if v.mode.wireguard() {
+        {
             let w = &v.wireguard;
             if !valid_ifname(&w.interface) {
                 errs.push(format!(

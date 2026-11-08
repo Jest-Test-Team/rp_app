@@ -1019,8 +1019,8 @@ fn add_peer(
     qr: bool,
 ) -> Result<rp_schema::WgPeer> {
     use rp_core::wg;
-    let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode == rp_schema::VpnMode::Wireguard) else {
-        anyhow::bail!("vpn.mode must be \"wireguard\" to add peers");
+    let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode.wireguard()) else {
+        anyhow::bail!("vpn.mode must be \"wireguard\" or \"both\" to add peers");
     };
     if v.wireguard.endpoint.is_none() {
         anyhow::bail!("set vpn.wireguard.endpoint (public host:port) first");

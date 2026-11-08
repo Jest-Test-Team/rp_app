@@ -263,6 +263,7 @@ pub fn evaluate(hw: &HwFacts) -> Capabilities {
     let mut vpn_notes = vec![];
     if hw.kernel_wireguard {
         vpn_opts.push("wireguard".into());
+        vpn_opts.push("both".into());
     } else {
         vpn_notes.push(Reason::NoKernelWireguard);
     }
@@ -379,7 +380,7 @@ mod tests {
         assert!(c.modules.values().all(|m| m.available), "{c:#?}");
         assert_eq!(ap(&c).options, ["wlan0"]);
         assert_eq!(ap(&c).notes, [Reason::Wpa2Only]);
-        assert_eq!(c.modules["vpn"].options, ["tailscale", "wireguard"]);
+        assert_eq!(c.modules["vpn"].options, ["tailscale", "wireguard", "both"]);
         assert!(c.interfaces.iter().find(|i| i.name == "eth0").unwrap().is_mgmt);
     }
 

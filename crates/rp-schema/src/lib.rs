@@ -366,6 +366,17 @@ pub struct Vpn {
 pub enum VpnMode {
     Tailscale,
     Wireguard,
+    /// Tailscale and WireGuard side by side (same isolation for both).
+    Both,
+}
+
+impl VpnMode {
+    pub fn tailscale(self) -> bool {
+        matches!(self, VpnMode::Tailscale | VpnMode::Both)
+    }
+    pub fn wireguard(self) -> bool {
+        matches!(self, VpnMode::Wireguard | VpnMode::Both)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

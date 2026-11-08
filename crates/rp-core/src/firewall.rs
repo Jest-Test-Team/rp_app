@@ -100,7 +100,7 @@ fn zone_match(cfg: &Config, z: Zone, dir: char, fam: Option<u8>) -> Option<Strin
         Zone::Lan => fam_set("lan4", "lan6", ""),
         Zone::Wan => fam_set("lan4", "lan6", "!= "),
         Zone::Iot => format!("{ifx} \"{}\"", cfg.ap.as_ref()?.interface),
-        Zone::Vpn => format!("{ifx} \"{}\"", crate::vpn::vpn_if(cfg)),
+        Zone::Vpn => crate::vpn::vpn_if_match(cfg, ifx),
         Zone::Device => String::new(),
     })
 }

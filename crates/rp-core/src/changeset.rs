@@ -623,13 +623,16 @@ pub fn verify_steps(module: &str, cfg: &Config) -> Vec<(&'static str, Step)> {
             v.push(("hostapd_active", active("rp-ap-hostapd.service")));
             v.push(("dnsmasq_active", active("rp-ap-dnsmasq.service")));
         }
-        "vpn" => match cfg.vpn.as_ref().map(|v| v.mode) {
-            Some(rp_schema::VpnMode::Wireguard) => {
-                let i = cfg.vpn.as_ref().unwrap().wireguard.interface.clone();
+        "vpn" => {
+            let vpn = cfg.vpn.as_ref();
+            if vpn.is_none_or(|x| x.mode.tailscale()) {
+                v.push(("tailscaled_active", active("tailscaled.service")));
+            }
+            if let Some(x) = vpn.filter(|x| x.mode.wireguard()) {
+                let i = x.wireguard.interface.clone();
                 v.push(("wireguard_up", Step::cmd(&["ip", "link", "show", "dev", &i])));
             }
-            _ => v.push(("tailscaled_active", active("tailscaled.service"))),
-        },
+        }
         "agent" => v.push(("rp_agent_active", active("rp-agent.service"))),
         "api" => v.push(("rp_api_active", active("rp-api.socket"))),
         _ => {}

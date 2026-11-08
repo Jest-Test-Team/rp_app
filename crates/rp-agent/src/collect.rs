@@ -307,49 +307,59 @@ fn run_with_timeout(argv: &[&str]) -> Option<String> {
     Some(out)
 }
 
+fn wireguard_status(w: &rp_schema::WireGuard) -> Value {
+    let names: BTreeMap<&str, &str> =
+        w.peers.iter().map(|p| (p.public_key.as_str(), p.name.as_str())).collect();
+    let dump = run_with_timeout(&["wg", "show", &w.interface, "dump"]);
+    let peers: Vec<Value> = dump
+        .as_deref()
+        .unwrap_or("")
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() >= 7).then(|| {
+                json!({
+                    "name": names.get(f[0]).copied().unwrap_or("unknown"),
+                    "latest_handshake": f[4].parse::<i64>().unwrap_or(0),
+                    "rx_bytes": f[5].parse::<u64>().unwrap_or(0),
+                    "tx_bytes": f[6].parse::<u64>().unwrap_or(0),
+                })
+            })
+        })
+        .collect();
+    json!({"mode": "wireguard", "available": dump.is_some(), "peers": peers})
+}
+
+fn tailscale_status() -> Value {
+    let st = run_with_timeout(&["tailscale", "status", "--json"])
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    match st {
+        Some(s) => json!({
+            "mode": "tailscale", "available": true,
+            "backend_state": s["BackendState"],
+            "peers": s["Peer"].as_object().map(|p| p.len()).unwrap_or(0),
+        }),
+        None => json!({"mode": "tailscale", "available": false}),
+    }
+}
+
+/// VPN state. One mode: that mode's fields at the top level (as before).
+/// Both: `mode = "both"`, plus a `tailscale` and a `wireguard` object.
 pub fn vpn(ctx: &Ctx) -> Value {
     let Some(v) = &ctx.cfg.vpn else { return json!({"configured": false}) };
-    match v.mode {
-        VpnMode::Wireguard => {
-            let names: BTreeMap<&str, &str> = v
-                .wireguard
-                .peers
-                .iter()
-                .map(|p| (p.public_key.as_str(), p.name.as_str()))
-                .collect();
-            let dump = run_with_timeout(&["wg", "show", &v.wireguard.interface, "dump"]);
-            let peers: Vec<Value> = dump
-                .as_deref()
-                .unwrap_or("")
-                .lines()
-                .skip(1)
-                .filter_map(|l| {
-                    let f: Vec<&str> = l.split('\t').collect();
-                    (f.len() >= 7).then(|| {
-                        json!({
-                            "name": names.get(f[0]).copied().unwrap_or("unknown"),
-                            "latest_handshake": f[4].parse::<i64>().unwrap_or(0),
-                            "rx_bytes": f[5].parse::<u64>().unwrap_or(0),
-                            "tx_bytes": f[6].parse::<u64>().unwrap_or(0),
-                        })
-                    })
-                })
-                .collect();
-            json!({"configured": true, "mode": "wireguard", "available": dump.is_some(), "peers": peers})
+    let mut out = match v.mode {
+        VpnMode::Wireguard => wireguard_status(&v.wireguard),
+        VpnMode::Tailscale => tailscale_status(),
+        VpnMode::Both => {
+            let (t, w) = (tailscale_status(), wireguard_status(&v.wireguard));
+            json!({"mode": "both",
+                   "available": t["available"] == true || w["available"] == true,
+                   "tailscale": t, "wireguard": w})
         }
-        VpnMode::Tailscale => {
-            let st = run_with_timeout(&["tailscale", "status", "--json"])
-                .and_then(|t| serde_json::from_str::<Value>(&t).ok());
-            match st {
-                Some(s) => json!({
-                    "configured": true, "mode": "tailscale", "available": true,
-                    "backend_state": s["BackendState"],
-                    "peers": s["Peer"].as_object().map(|p| p.len()).unwrap_or(0),
-                }),
-                None => json!({"configured": true, "mode": "tailscale", "available": false}),
-            }
-        }
-    }
+    };
+    out["configured"] = json!(true);
+    out
 }
 
 /// Connection-tracking flows (metadata only: addresses, ports, byte counts).

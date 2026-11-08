@@ -5,7 +5,7 @@
 use std::fmt::Write;
 
 use ipnet::IpNet;
-use rp_schema::{Config, VpnMode};
+use rp_schema::Config;
 
 use crate::files::{ManagedFile, HEADER};
 use crate::module::{Module, Step};
@@ -44,11 +44,27 @@ pub fn wg_conf_path(cfg: &Config) -> String {
     format!("/etc/wireguard/{ifname}.conf")
 }
 
-/// Interface VPN traffic arrives on.
-pub fn vpn_if(cfg: &Config) -> String {
-    match cfg.vpn.as_ref().map(|v| v.mode) {
-        Some(VpnMode::Wireguard) => cfg.vpn.as_ref().unwrap().wireguard.interface.clone(),
-        _ => TS_IF.to_string(),
+/// Interfaces VPN traffic arrives on (Tailscale first).
+pub fn vpn_ifs(cfg: &Config) -> Vec<String> {
+    let Some(v) = cfg.vpn.as_ref() else { return vec![TS_IF.to_string()] };
+    let mut ifs = vec![];
+    if v.mode.tailscale() {
+        ifs.push(TS_IF.to_string());
+    }
+    if v.mode.wireguard() {
+        ifs.push(v.wireguard.interface.clone());
+    }
+    ifs
+}
+
+/// nftables match for "arrives from a VPN": `iifname "x"` or `iifname { "x", "y" }`.
+pub fn vpn_if_match(cfg: &Config, ifx: &str) -> String {
+    match vpn_ifs(cfg).as_slice() {
+        [one] => format!("{ifx} \"{one}\""),
+        many => format!(
+            "{ifx} {{ {} }}",
+            many.iter().map(|i| format!("\"{i}\"")).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
@@ -60,7 +76,7 @@ fn parse_all(list: &[&str]) -> Vec<IpNet> {
 pub fn snippet(cfg: &Config) -> String {
     let v = cfg.vpn.as_ref().expect("vpn config");
     let wan = &cfg.device.wan_if;
-    let vif = vpn_if(cfg);
+    let vif = vpn_if_match(cfg, "iifname");
 
     let mut block = cfg.device.lan_cidrs.clone();
     block.extend(parse_all(PRIVATE_V4));
@@ -75,30 +91,35 @@ pub fn snippet(cfg: &Config) -> String {
     set(&mut s, "vpn_allow4", "ipv4_addr", &allow4);
     set(&mut s, "vpn_allow6", "ipv6_addr", &allow6);
 
-    let port = match v.mode {
-        VpnMode::Wireguard => v.wireguard.listen_port,
-        VpnMode::Tailscale => TS_PORT,
+    let mut ports = vec![];
+    if v.mode.tailscale() {
+        ports.push(TS_PORT);
+    }
+    if v.mode.wireguard() {
+        ports.push(v.wireguard.listen_port);
+    }
+    let ports = match ports.as_slice() {
+        [p] => p.to_string(),
+        many => format!("{{ {} }}", many.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")),
     };
-    let _ = write!(s, "\n\tchain mod_input {{\n\t\tudp dport {port} accept\n\t}}\n");
+    let _ = write!(s, "\n\tchain mod_input {{\n\t\tudp dport {ports} accept\n\t}}\n");
 
     s.push_str("\n\tchain mod_forward {\n");
-    let _ = writeln!(s, "\t\tiifname \"{vif}\" oifname \"{wan}\" ip daddr @vpn_allow4 accept");
-    let _ = writeln!(s, "\t\tiifname \"{vif}\" oifname \"{wan}\" ip6 daddr @vpn_allow6 accept");
-    let _ = writeln!(s, "\t\tiifname \"{vif}\" ip daddr @vpn_block4 drop");
-    let _ = writeln!(s, "\t\tiifname \"{vif}\" ip6 daddr @vpn_block6 drop");
-    let _ = writeln!(s, "\t\tiifname \"{vif}\" oifname \"{wan}\" accept");
+    let _ = writeln!(s, "\t\t{vif} oifname \"{wan}\" ip daddr @vpn_allow4 accept");
+    let _ = writeln!(s, "\t\t{vif} oifname \"{wan}\" ip6 daddr @vpn_allow6 accept");
+    let _ = writeln!(s, "\t\t{vif} ip daddr @vpn_block4 drop");
+    let _ = writeln!(s, "\t\t{vif} ip6 daddr @vpn_block6 drop");
+    let _ = writeln!(s, "\t\t{vif} oifname \"{wan}\" accept");
     s.push_str("\t}\n");
 
     s.push_str("\n\tchain vpn_postrouting {\n");
     s.push_str("\t\ttype nat hook postrouting priority srcnat; policy accept;\n");
-    match v.mode {
-        VpnMode::Wireguard => {
-            let _ = writeln!(s, "\t\toifname \"{wan}\" ip saddr {} masquerade", v.wireguard.subnet);
-        }
-        VpnMode::Tailscale => {
-            let _ = writeln!(s, "\t\toifname \"{wan}\" ip saddr {TS_V4} masquerade");
-            let _ = writeln!(s, "\t\toifname \"{wan}\" ip6 saddr {TS_V6} masquerade");
-        }
+    if v.mode.tailscale() {
+        let _ = writeln!(s, "\t\toifname \"{wan}\" ip saddr {TS_V4} masquerade");
+        let _ = writeln!(s, "\t\toifname \"{wan}\" ip6 saddr {TS_V6} masquerade");
+    }
+    if v.mode.wireguard() {
+        let _ = writeln!(s, "\t\toifname \"{wan}\" ip saddr {} masquerade", v.wireguard.subnet);
     }
     s.push_str("\t}\n}\n");
     s
@@ -177,9 +198,11 @@ impl Module for Vpn {
             ManagedFile::check_only(CHECK_PATH, nft::combined(cfg, &snip)),
             ManagedFile::new(SYSCTL_PATH, 0o644, sysctl(cfg)),
         ];
-        match v.mode {
-            VpnMode::Wireguard => files.push(ManagedFile::new(&wg_conf_path(cfg), 0o600, wg_conf(cfg))),
-            VpnMode::Tailscale => files.push(
+        if v.mode.wireguard() {
+            files.push(ManagedFile::new(&wg_conf_path(cfg), 0o600, wg_conf(cfg)));
+        }
+        if v.mode.tailscale() {
+            files.push(
                 ManagedFile::new(
                     TS_LIST_PATH,
                     0o644,
@@ -189,14 +212,14 @@ impl Module for Vpn {
                     ),
                 )
                 .early(),
-            ),
+            );
         }
         files
     }
 
     fn pre_install(&self, cfg: &Config) -> Vec<Step> {
         match cfg.vpn.as_ref().map(|v| (v.mode, v.tailscale.debian_codename.as_str())) {
-            Some((VpnMode::Tailscale, codename)) => {
+            Some((m, codename)) if m.tailscale() => {
                 let url =
                     format!("https://pkgs.tailscale.com/stable/debian/{codename}.noarmor.gpg");
                 vec![
@@ -209,11 +232,15 @@ impl Module for Vpn {
     }
 
     fn packages(&self, cfg: &Config) -> Vec<&'static str> {
-        match cfg.vpn.as_ref().map(|v| v.mode) {
-            Some(VpnMode::Wireguard) => vec!["wireguard-tools"],
-            Some(VpnMode::Tailscale) => vec!["tailscale"],
-            None => vec![],
+        let Some(m) = cfg.vpn.as_ref().map(|v| v.mode) else { return vec![] };
+        let mut p = vec![];
+        if m.tailscale() {
+            p.push("tailscale");
         }
+        if m.wireguard() {
+            p.push("wireguard-tools");
+        }
+        p
     }
 
     fn validate_steps(&self, _cfg: &Config) -> Vec<Step> {
@@ -226,8 +253,8 @@ impl Module for Vpn {
             Step::cmd(&["sysctl", "--system"]),
         ];
         let Some(v) = &cfg.vpn else { return steps };
-        match v.mode {
-            VpnMode::Wireguard => {
+        if v.mode.wireguard() {
+            {
                 let unit = format!("wg-quick@{}.service", v.wireguard.interface);
                 // Generate the server key on the device, once, readable by root only.
                 steps.push(Step::cmd(&[
@@ -239,7 +266,9 @@ impl Module for Vpn {
                 steps.push(Step::cmd(&["systemctl", "enable", &unit]));
                 steps.push(Step::cmd(&["systemctl", "restart", &unit]));
             }
-            VpnMode::Tailscale => {
+        }
+        if v.mode.tailscale() {
+            {
                 steps.push(Step::cmd(&["systemctl", "enable", "--now", "tailscaled.service"]));
                 if let Some(key) = &v.tailscale.auth_key_file {
                     let mut up = vec![
@@ -290,14 +319,19 @@ impl Module for Vpn {
 
     fn next_steps(&self, cfg: &Config) -> Vec<String> {
         let Some(v) = &cfg.vpn else { return vec![] };
-        match v.mode {
-            VpnMode::Wireguard => vec![
-                format!("Forward UDP {} on your router to this device.", v.wireguard.listen_port),
+        let mut n = vec![];
+        if v.mode.wireguard() {
+            n.push(format!(
+                "WireGuard: forward UDP {} on your router to this device.",
+                v.wireguard.listen_port
+            ));
+            n.push(
                 "Add a client: sudo rpctl vpn add-peer <name>  (prints its config + QR once)"
                     .into(),
-            ],
-            VpnMode::Tailscale => {
-                let mut n = vec![];
+            );
+        }
+        if v.mode.tailscale() {
+            {
                 if v.tailscale.auth_key_file.is_none() {
                     n.push(
                         "Log in: sudo tailscale up   (then re-run: sudo rpctl apply vpn)".into(),
@@ -305,9 +339,9 @@ impl Module for Vpn {
                 }
                 n.push("Approve the exit node in the Tailscale admin console (Machines > Edit route settings).".into());
                 n.push("Share the machine with your friend's tailnet with 'Allow use as an exit node' enabled.".into());
-                n
             }
         }
+        n
     }
 }
 
@@ -405,6 +439,42 @@ mod tests {
     fn rollback_turns_forwarding_off_explicitly() {
         let steps: Vec<String> = Vpn.post_rollback().iter().map(|s| s.display()).collect();
         assert!(steps.contains(&"sysctl -w net.ipv4.ip_forward=0".to_string()));
+    }
+
+    fn both() -> Config {
+        cfg("[vpn]\nmode = \"both\"\n[vpn.tailscale]\nauth_key_file = \"/etc/rp/tailscale.key\"\n[[vpn.wireguard.peers]]\nname = \"phone\"\npublic_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\nhost = 2\n")
+    }
+
+    #[test]
+    fn both_isolates_each_interface_and_masquerades_each_range() {
+        let c = both();
+        assert_eq!(vpn_ifs(&c), ["tailscale0", "wg0"]);
+        let s = snippet(&c);
+        assert!(s.contains("udp dport { 41641, 51820 } accept"), "{s}");
+        let drop4 =
+            s.find("iifname { \"tailscale0\", \"wg0\" } ip daddr @vpn_block4 drop").unwrap();
+        let accept = s.find("iifname { \"tailscale0\", \"wg0\" } oifname \"eth0\" accept").unwrap();
+        assert!(drop4 < accept);
+        assert!(s.contains("ip saddr 100.64.0.0/10 masquerade"));
+        assert!(s.contains("ip saddr 10.88.0.0/24 masquerade"));
+    }
+
+    #[test]
+    fn both_installs_and_starts_both() {
+        let c = both();
+        assert_eq!(Vpn.packages(&c), ["tailscale", "wireguard-tools"]);
+        let paths: Vec<String> = Vpn.render(&c).into_iter().map(|f| f.path).collect();
+        assert!(paths.contains(&"/etc/wireguard/wg0.conf".to_string()));
+        assert!(paths.contains(&TS_LIST_PATH.to_string()));
+        let steps: Vec<String> = Vpn.post_apply(&c).iter().map(|s| s.display()).collect();
+        assert!(steps.iter().any(|s| s == "systemctl restart wg-quick@wg0.service"));
+        assert!(steps.iter().any(|s| s.starts_with("tailscale up --auth-key=file:")));
+        assert!(!Vpn.pre_install(&c).is_empty(), "the Tailscale repository key is fetched");
+        let checks: Vec<&str> =
+            crate::changeset::verify_steps("vpn", &c).iter().map(|(n, _)| *n).collect();
+        assert_eq!(checks, ["firewall_loaded", "tailscaled_active", "wireguard_up"]);
+        let next = Vpn.next_steps(&c).join("\n");
+        assert!(next.contains("UDP 51820") && next.contains("exit node"));
     }
 
     #[test]
