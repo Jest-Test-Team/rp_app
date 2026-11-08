@@ -11,6 +11,7 @@ use rp_core::files::under_root;
 use rp_schema::{Config, VpnMode};
 use serde_json::{json, Value};
 
+#[derive(Clone)]
 pub struct Ctx {
     pub root: PathBuf,
     pub cfg: Config,

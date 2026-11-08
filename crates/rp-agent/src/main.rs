@@ -54,7 +54,15 @@ async fn run(cli: Cli) -> Result<()> {
     std::fs::create_dir_all(&state_dir).ok();
     let audit = Audit::open(&state_dir.join("audit.jsonl"))?;
     let store = Store::new(&state_dir.join("actions"));
-    let st = Arc::new(State { ctx, token, store, audit, last_scan: Mutex::new(None) });
+    let st = Arc::new(State {
+        ctx,
+        token,
+        store,
+        audit,
+        last_scan: Mutex::new(None),
+        config_path: Some(cli.config.clone()),
+        live_cfg: Mutex::new(None),
+    });
     let listener = tokio::net::TcpListener::bind(a.listen)
         .await
         .with_context(|| format!("bind {}", a.listen))?;
