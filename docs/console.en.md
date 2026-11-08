@@ -68,6 +68,10 @@ With a free Apple ID and the iPhone on a cable, `scripts/ios-device-install.sh -
 
 The Android upload key lives outside the repository (`~/.config/rp-release/android/`): keep a backup — Android only installs an update over an existing app if it carries the same signature.
 
+### Publishing a release
+
+Push a tag `vX.Y.Z` equal to the workspace version (`Cargo.toml`); that publishes by itself. A manual run (Actions › release › Run workflow) is a dry run unless `publish` is ticked. A publish is checked first, in seconds, by `deploy/release-preflight.sh`: the tag must be `vX.Y.Z`, exist, point at the commit being built (run the workflow *from the tag*), match the version, not have a release yet, and the signing key must be set. Every problem is listed with its fix; nothing is built.
+
 ## Develop and test
 
 ```

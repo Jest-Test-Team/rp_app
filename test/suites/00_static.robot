@@ -14,7 +14,7 @@ Shell Scripts Pass ShellCheck
     Require Tool    shellcheck
     @{scripts}=    List Files In Directory    ${REPO}/scripts    *.sh    absolute=True
     @{tools}=    List Files In Directory    ${REPO}/apps/rp_console/tool    *.sh    absolute=True
-    Run Ok    shellcheck    -x    ${INSTALL_SH}    ${REPO}/test/run.sh    @{scripts}    @{tools}
+    Run Ok    shellcheck    -x    ${INSTALL_SH}    ${REPO}/deploy/release-preflight.sh    ${REPO}/test/run.sh    @{scripts}    @{tools}
 
 PowerShell Installer Passes PSScriptAnalyzer
     [Tags]    static    pwsh

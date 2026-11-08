@@ -68,6 +68,10 @@ release 以 minisign 簽章。裝置只會安裝 `SHA256SUMS` 簽章能以 `/etc
 
 Android upload key 存放在 repository 之外（`~/.config/rp-release/android/`）：請備份——Android 只會在簽章相同時以新版覆蓋安裝。
 
+### 發佈 release
+
+推送等於 workspace 版本（`Cargo.toml`）的 tag `vX.Y.Z`，會自動發佈。手動執行（Actions › release › Run workflow）除非勾選 `publish`，否則只是 dry run。發佈前會先由 `deploy/release-preflight.sh` 在數秒內檢查：tag 必須是 `vX.Y.Z`、必須存在、必須指向這次建置的 commit（請*從該 tag* 執行 workflow）、必須與版本相符、尚未有同名 release，且簽章金鑰已設定。所有問題會連同修正方式一次列出，且不會開始任何建置。
+
 ## 開發與測試
 
 ```
