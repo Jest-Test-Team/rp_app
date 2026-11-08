@@ -42,13 +42,13 @@ Every change in the app is a **change set**:
 
 | Screen | What you can do |
 |---|---|
-| Overview | Health (CPU, memory, temperature, under-voltage), modules and why one is unavailable |
-| DNS firewall | Statistics, block / allow lists, suspicious-name blocking, recent events |
+| Overview | Health (CPU load 1/5/15 min and clock, free memory, temperature, under-voltage, disk, uptime; alerts in words), modules and why one is unavailable |
+| DNS firewall | Statistics, **threat-intelligence lists** (public, open source, updated daily by the Pi: StevenBlack, URLhaus, Phishing Army recommended; HaGeZi optional; a failed download keeps yesterday's list; *Update now*), block / allow lists, suspicious-name blocking, recent events |
 | IoT Wi-Fi | SSID, password (stored as a secret on the device, never in the change), country, channel, network, DoT blocking, connected devices |
-| Firewall | Zone rules `lan / wan / iot / vpn → … / device`; they take effect before module rules; nothing that would cut off management can be saved |
-| VPN | Tailscale (auth key as a secret) or WireGuard; WireGuard keys are generated in the app and the client config is shown once as a QR code |
-| MCP | Approve or deny privileged requests (signed by you), clients (token shown once), tools by tier, audit chain |
-| Settings | Paired apps (revoke a lost phone), add another phone, software update, remove RP Security from the device |
+| Firewall | **Quick protections** (pause a device's internet, stop Telnet, force the DNS firewall, let a smart device or VPN users reach one home device) and rules in plain words (Smart-home Wi-Fi, VPN users, Home network, Internet, This Raspberry Pi; services such as Websites or File sharing), optionally for **picked devices** (by MAC). They take effect before module rules; nothing that would cut off management can be saved, and home network ↔ internet rules are explained instead (that traffic goes through the router) |
+| VPN | Tailscale (auth key as a secret), WireGuard, or **both side by side** (same isolation: internet yes, home network no). The first time a device is opened the app asks whether to use a VPN. WireGuard needs the public address (the app can fill in this network's public IP) and **UDP 51820 forwarded on the router**; keys are generated in the app and the client config is shown once as a QR code |
+| MCP | **Run any tool from the app** (form from its parameters, readable result); privileged tools only create a request you approve on the same screen (signed by you). Clients for AI assistants (token shown once), audit chain |
+| Settings | **Language** (phone / English / 繁體中文; also on the home screen), paired apps (revoke a lost phone), add another phone, software update, remove RP Security from the device |
 
 ## Software updates
 
