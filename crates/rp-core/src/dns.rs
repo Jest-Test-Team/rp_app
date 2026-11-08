@@ -13,6 +13,45 @@ pub const UNIT_PATH: &str = "/etc/systemd/system/rp-dns.service";
 pub const SNIPPET_PATH: &str = "/etc/rp/nft.d/40-dns.nft";
 pub const CHECK_PATH: &str = "/etc/rp/.check/dns.nft";
 pub const BIN: &str = "/usr/local/bin/rp-dns";
+pub const FEEDS_SERVICE_PATH: &str = "/etc/systemd/system/rp-dns-feeds.service";
+pub const FEEDS_TIMER_PATH: &str = "/etc/systemd/system/rp-dns-feeds.timer";
+
+/// Downloads the enabled threat-intelligence feeds (rp_core::dns_feeds).
+fn feeds_service() -> String {
+    format!(
+        "# {HEADER}
+[Unit]
+Description=rp DNS firewall: update threat-intelligence feeds
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rpctl dns update-feeds
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min
+"
+    )
+}
+
+fn feeds_timer() -> String {
+    format!(
+        "# {HEADER}
+[Unit]
+Description=Daily update of the DNS firewall feeds
+
+[Timer]
+OnBootSec=5min
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"
+    )
+}
 
 pub struct Dns;
 
@@ -94,6 +133,8 @@ impl Module for Dns {
         let snip = snippet(cfg);
         vec![
             ManagedFile::new(UNIT_PATH, 0o644, unit()),
+            ManagedFile::new(FEEDS_SERVICE_PATH, 0o644, feeds_service()),
+            ManagedFile::new(FEEDS_TIMER_PATH, 0o644, feeds_timer()),
             ManagedFile::new(SNIPPET_PATH, 0o600, snip.clone()),
             ManagedFile::check_only(CHECK_PATH, nft::combined(cfg, &snip)),
         ]
@@ -107,18 +148,33 @@ impl Module for Dns {
         ]
     }
 
-    fn post_apply(&self, _cfg: &Config) -> Vec<Step> {
-        vec![
+    fn post_apply(&self, cfg: &Config) -> Vec<Step> {
+        let mut v = vec![
             Step::cmd(&["systemctl", "daemon-reload"]),
             Step::cmd(&["systemctl", "enable", "rp-dns.service"]),
             Step::cmd(&["systemctl", "restart", "rp-dns.service"]),
             Step::cmd(&["systemctl", "reload-or-restart", "rp-firewall.service"]),
             Step::cmd(&["systemctl", "is-active", "--quiet", "rp-dns.service"]),
-        ]
+            Step::cmd(&["systemctl", "enable", "--now", "rp-dns-feeds.timer"]),
+        ];
+        // Fetch newly enabled feeds now (in the background: downloads must
+        // not hold the change set, and a failed download keeps DNS running).
+        if cfg.dns.as_ref().is_some_and(|d| !d.feeds.is_empty()) {
+            v.push(Step::best_effort(&[
+                "systemctl",
+                "start",
+                "--no-block",
+                "rp-dns-feeds.service",
+            ]));
+        }
+        v
     }
 
     fn pre_rollback(&self) -> Vec<Step> {
-        vec![Step::best_effort(&["systemctl", "disable", "--now", "rp-dns.service"])]
+        vec![
+            Step::best_effort(&["systemctl", "disable", "--now", "rp-dns-feeds.timer"]),
+            Step::best_effort(&["systemctl", "disable", "--now", "rp-dns.service"]),
+        ]
     }
 
     fn post_rollback(&self) -> Vec<Step> {
@@ -182,6 +238,27 @@ mod tests {
         ] {
             assert!(u.contains(line), "missing {line}");
         }
+    }
+
+    #[test]
+    fn feeds_update_daily_in_the_background() {
+        let c = cfg("feeds = [\"stevenblack\", \"urlhaus\"]\n");
+        let files = Dns.render(&c);
+        let timer = files.iter().find(|f| f.path == FEEDS_TIMER_PATH).unwrap();
+        assert!(
+            timer.content.contains("OnCalendar=daily") && timer.content.contains("Persistent=true")
+        );
+        let svc = files.iter().find(|f| f.path == FEEDS_SERVICE_PATH).unwrap();
+        assert!(svc.content.contains("ExecStart=/usr/local/bin/rpctl dns update-feeds"));
+        let steps: Vec<String> = Dns.post_apply(&c).iter().map(|s| s.display()).collect();
+        assert!(steps.contains(&"systemctl enable --now rp-dns-feeds.timer".to_string()));
+        assert!(steps.contains(&"systemctl start --no-block rp-dns-feeds.service".to_string()));
+        let none: Vec<String> = Dns.post_apply(&cfg("")).iter().map(|s| s.display()).collect();
+        assert!(!none.iter().any(|s| s.contains("--no-block")), "nothing to fetch");
+        let bad = crate::config::parse(
+            "[device]\nwan_if = \"eth0\"\nlan_cidrs = [\"192.0.2.0/24\"]\n[dns]\nupstreams = [\"1.1.1.1:53\"]\nfeeds = [\"nope\"]\n",
+        );
+        assert!(bad.is_err(), "unknown feed ids are refused by validation");
     }
 
     #[test]

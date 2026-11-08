@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod changeset;
 pub mod config;
 pub mod dns;
+pub mod dns_feeds;
 pub mod files;
 pub mod firewall;
 pub mod init;

@@ -277,6 +277,7 @@ pub fn editable_keys(module: &str) -> &'static [(&'static str, Kind)] {
             ("dns.upstreams", StrList),
             ("dns.block", StrList),
             ("dns.allow", StrList),
+            ("dns.feeds", StrList),
             ("dns.block_response", Str),
             ("dns.block_suspicious", Bool),
             ("dns.suspicious_threshold", Int),

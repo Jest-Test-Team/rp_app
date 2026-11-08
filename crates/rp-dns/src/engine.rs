@@ -51,7 +51,7 @@ impl Lists {
         for d in &cfg.block {
             block.insert(d);
         }
-        for f in &cfg.blocklists {
+        for f in &rp_core::dns_feeds::list_files(cfg) {
             match std::fs::read_to_string(f) {
                 Ok(t) => {
                     block.load_text(&t);

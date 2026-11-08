@@ -511,6 +511,7 @@ fn openapi_documents_every_route() {
         "GET /v1/vpn/status",
         "GET /v1/dns/events",
         "GET /v1/dns/stats",
+        "POST /v1/dns/feeds/update",
         "GET /v1/flows",
         "GET /v1/firewall/rules",
         "GET /v1/audit/events",

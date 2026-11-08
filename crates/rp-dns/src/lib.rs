@@ -6,6 +6,7 @@
 
 pub mod engine;
 pub mod events;
+pub mod feeds;
 pub mod lists;
 pub mod ratelimit;
 pub mod score;

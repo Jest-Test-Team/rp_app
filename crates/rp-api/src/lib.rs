@@ -889,6 +889,18 @@ async fn update_rollback(
     signed(&st, peer, env).await
 }
 
+/// Download the DNS threat-intelligence feeds now (signed `update_dns_feeds`).
+#[utoipa::path(post, path = "/v1/dns/feeds/update", tag = "observe", request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 503, body = ApiError)))]
+async fn dns_feeds_update(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "update_dns_feeds", &[])?;
+    signed(&st, peer, env).await
+}
+
 /// Remove every module and forget all admins (signed `uninstall`).
 #[utoipa::path(post, path = "/v1/uninstall", tag = "update", request_body = SignedEnvelope,
     responses((status = 200, body = Object), (status = 400, body = ApiError)))]
@@ -927,7 +939,7 @@ impl utoipa::Modify for SecurityAddon {
     paths(info, pair, pairing_open, session, logout, me, capabilities, status, modules, config, module_config,
           list_changesets, get_changeset, create_changeset, cs_preflight, cs_apply, cs_confirm, cs_rollback,
           set_secret, admins, revoke_admin, actions, approve, deny, mcp_tools, mcp_run, mcp_clients, mcp_add, mcp_remove,
-          health, inventory, ap_clients, vpn_status, dns_events, dns_stats, flows, firewall_rules, audit,
+          health, inventory, ap_clients, vpn_status, dns_events, dns_stats, dns_feeds_update, flows, firewall_rules, audit,
           update_status, update_install, update_rollback, uninstall, openapi_json),
     components(schemas(SignedEnvelope, PairRequest, ApiError)),
     modifiers(&SecurityAddon),
@@ -969,6 +981,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/v1/vpn/status", get(vpn_status))
         .route("/v1/dns/events", get(dns_events))
         .route("/v1/dns/stats", get(dns_stats))
+        .route("/v1/dns/feeds/update", post(dns_feeds_update))
         .route("/v1/flows", get(flows))
         .route("/v1/firewall/rules", get(firewall_rules))
         .route("/v1/audit/events", get(audit))

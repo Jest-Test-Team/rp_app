@@ -424,21 +424,38 @@ pub fn dns_events(ctx: &Ctx, since_mins: i64, action: Option<&str>, limit: u32) 
     }
 }
 
+/// The feed catalogue, which feeds are on, and the last update's result.
+pub fn dns_feeds(ctx: &Ctx, d: &rp_schema::Dns) -> Value {
+    let status = rp_dns::feeds::read_status(&ctx.path(rp_core::dns_feeds::FEED_DIR));
+    let catalog: Vec<Value> = rp_core::dns_feeds::FEEDS
+        .iter()
+        .map(|f| {
+            json!({"id": f.id, "name": f.name, "homepage": f.homepage, "license": f.license,
+                   "blocks": f.blocks, "approx_entries": f.approx_entries, "balanced": f.balanced})
+        })
+        .collect();
+    json!({"enabled": d.feeds, "catalog": catalog, "updated_at": status["updated_at"],
+           "status": status["feeds"]})
+}
+
 pub fn dns_stats(ctx: &Ctx, since_mins: i64) -> Value {
     let Some(d) = &ctx.cfg.dns else { return json!({"configured": false}) };
     let db = ctx.path(&d.events_db);
-    if !Path::new(&db).exists() {
-        return json!({"configured": true, "total": 0, "blocked": 0, "block_rate": 0.0,
-                      "top_domains": [], "top_blocked": [], "top_clients": []});
-    }
-    match rp_dns::events::stats(&db, now() - since_mins * 60, 10) {
-        Ok(mut v) => {
-            v["configured"] = json!(true);
-            v["since_mins"] = json!(since_mins);
-            v
+    let mut v = if !Path::new(&db).exists() {
+        json!({"configured": true, "total": 0, "blocked": 0, "block_rate": 0.0,
+               "top_domains": [], "top_blocked": [], "top_clients": []})
+    } else {
+        match rp_dns::events::stats(&db, now() - since_mins * 60, 10) {
+            Ok(mut v) => {
+                v["configured"] = json!(true);
+                v["since_mins"] = json!(since_mins);
+                v
+            }
+            Err(e) => json!({"configured": true, "error": e.to_string()}),
         }
-        Err(e) => json!({"configured": true, "error": e.to_string()}),
-    }
+    };
+    v["feeds"] = dns_feeds(ctx, d);
+    v
 }
 
 #[cfg(test)]

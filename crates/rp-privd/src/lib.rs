@@ -118,6 +118,9 @@ pub enum SignedOp {
         tag: String,
     },
     RollbackUpdate {},
+    /// Download the enabled DNS threat-intelligence feeds now (in the
+    /// background; the result shows in the DNS stats).
+    UpdateDnsFeeds {},
     /// Remove every module (api last) and forget all admins.
     /// `confirm_device_id` must repeat this device's id.
     Uninstall {
@@ -143,6 +146,7 @@ impl SignedOp {
             Self::McpRemoveClient { .. } => "mcp_remove_client",
             Self::InstallUpdate { .. } => "install_update",
             Self::RollbackUpdate {} => "rollback_update",
+            Self::UpdateDnsFeeds {} => "update_dns_feeds",
             Self::Uninstall { .. } => "uninstall",
         }
     }
@@ -595,6 +599,20 @@ fn run_op(
             let settle =
                 std::time::Duration::from_secs(if ctx.root == Path::new("/") { 5 } else { 0 });
             update_result(rp_core::update::rollback(&t, settle))
+        }
+        SignedOp::UpdateDnsFeeds {} => {
+            let argv: Vec<String> = ["systemctl", "start", "--no-block", "rp-dns-feeds.service"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            match ctx.runner.run(&argv) {
+                Ok(o) if o.ok() => Response::ok(json!({"started": true})),
+                Ok(o) => Response::err(
+                    "unavailable",
+                    format!("cannot start the update: {}", o.stderr.trim()),
+                ),
+                Err(e) => Response::err("unavailable", format!("cannot start the update: {e}")),
+            }
         }
         SignedOp::Uninstall { confirm_device_id } => {
             let dev = device_id(&ctx.root).unwrap_or_default();

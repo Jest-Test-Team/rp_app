@@ -65,6 +65,33 @@ Import From A URL Requires https And Uses curl Safely
     Should Contain    ${cmds}    curl -fsSL --proto =https --max-filesize 50000000 -o
     Should Contain    ${cmds}    https://lists.example/hosts
 
+Feeds Are Fetched Over https With Limits And Failures Keep DNS Running
+    [Documentation]    rpctl dns update-feeds (run daily by rp-dns-feeds.timer): only catalogue
+    ...                URLs, curl limited to https / size / time; a failed download is reported
+    ...                per feed (exit 1 for the timer) and never breaks the DNS firewall.
+    ${root}=    Create Fake Root
+    ${r}=    Run Expecting    1    ${RPCTL}    --config    ${FIXTURES}/config/dns-feeds.toml    --root    ${root}
+    ...    --record-commands    ${root}/cmds.log    dns    update-feeds
+    ${cmds}=    Get File    ${root}/cmds.log
+    Should Contain    ${cmds}    curl -fsSL --proto =https --max-time 300 --max-filesize 30000000 -o
+    Should Contain    ${cmds}    https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+    Should Contain    ${cmds}    https://phishing.army/download/phishing_army_blocklist.txt
+    Should Contain    ${r.stdout}    NOT updated
+    ${status}=    Get File    ${root}/var/lib/rp-dns-feeds/status.json
+    Should Contain    ${status}    "id": "urlhaus"
+    ${list}=    Run Expecting    0    ${RPCTL}    --config    ${FIXTURES}/config/dns-feeds.toml    --root    ${root}
+    ...    dns    feeds
+    Should Contain    ${list.stdout}    [x] stevenblack
+    Should Contain    ${list.stdout}    [ ] hagezi_tif_mini
+
+Unknown Feed Ids Are Refused By Validation
+    ${root}=    Create Fake Root
+    ${cfg}=    Set Variable    ${root}/bad-feeds.toml
+    ${t}=    Get File    ${FIXTURES}/config/dns-feeds.toml
+    Create File    ${cfg}    ${t.replace('"urlhaus"', '"https://evil.example/list"')}
+    ${r}=    Run Expecting    3    ${RPCTL}    --config    ${cfg}    --root    ${root}    check
+    Should Contain    ${r.stdout}${r.stderr}    is not a known feed
+
 *** Keywords ***
 List Only
     [Documentation]    stdout only (the count goes to stderr).

@@ -292,6 +292,10 @@ pub struct Dns {
     /// Blocklist files (hosts format or one domain per line).
     #[serde(default)]
     pub blocklists: Vec<String>,
+    /// Public threat-intelligence feeds (catalogue ids, rp_core::dns_feeds),
+    /// downloaded daily and loaded after `blocklists`.
+    #[serde(default)]
+    pub feeds: Vec<String>,
     /// Domains blocked in addition to the list files (subdomains included).
     #[serde(default)]
     pub block: Vec<String>,

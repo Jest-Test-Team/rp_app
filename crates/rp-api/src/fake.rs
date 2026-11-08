@@ -204,7 +204,15 @@ impl FakeDevice {
                 "by_action": {"allowed": 1290, "blocked": 212, "suspicious": 18},
                 "top_domains": [{"domain": "www.example", "count": 300}],
                 "top_blocked": [{"domain": "telemetry.example", "count": 120}],
-                "top_clients": [{"client": "198.51.100.150", "count": 700, "blocked": 150}]})
+                "top_clients": [{"client": "198.51.100.150", "count": 700, "blocked": 150}],
+                "feeds": {
+                    "enabled": ["stevenblack"],
+                    "catalog": rp_core::dns_feeds::FEEDS.iter().map(|f| json!({"id": f.id, "name": f.name,
+                        "homepage": f.homepage, "license": f.license, "blocks": f.blocks,
+                        "approx_entries": f.approx_entries, "balanced": f.balanced})).collect::<Vec<_>>(),
+                    "updated_at": now - 3_600,
+                    "status": [{"id": "stevenblack", "entries": 78_000, "updated_at": now - 3_600, "error": null, "ok": true}],
+                }})
             }
             "/v1/arp" => {
                 json!({"entries": [{"ip": "192.0.2.20", "mac": "02:00:00:00:00:20", "iface": "eth0", "state": "REACHABLE"}]})

@@ -39,6 +39,13 @@ impl DomainSet {
         self.names.is_empty()
     }
 
+    /// Entries in sorted order.
+    pub fn sorted(&self) -> Vec<&str> {
+        let mut v: Vec<&str> = self.names.iter().map(String::as_str).collect();
+        v.sort_unstable();
+        v
+    }
+
     /// The listed entry covering `name` (itself or a parent domain), if any.
     pub fn matches<'a>(&'a self, name: &str) -> Option<&'a str> {
         let mut rest = name;

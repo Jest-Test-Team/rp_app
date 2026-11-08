@@ -317,6 +317,7 @@ fn validate_dns(d: &rp_schema::Dns, errs: &mut Vec<String>) {
             errs.push(format!("dns path '{p}' must be absolute"));
         }
     }
+    errs.extend(crate::dns_feeds::validate(d));
     if d.suspicious_threshold > 100 {
         errs.push("dns.suspicious_threshold must be 0-100".into());
     }

@@ -728,6 +728,47 @@
         ]
       }
     },
+    "/v1/dns/feeds/update": {
+      "post": {
+        "tags": [
+          "observe"
+        ],
+        "summary": "Download the DNS threat-intelligence feeds now (signed `update_dns_feeds`).",
+        "operationId": "dns_feeds_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedEnvelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/dns/stats": {
       "get": {
         "tags": [
