@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:rp_console/core/api/models.dart' show str;
 import 'package:rp_console/core/api/transport.dart';
 import 'package:rp_console/core/auth/admin_key.dart';
 import 'package:rp_console/core/pairing/pairing.dart';
@@ -84,6 +85,7 @@ class FakeDevice implements Transport {
     'firewall': null,
   };
   final actions = <Map<String, Object?>>[];
+  List<Map<String, Object?>> healthAlerts = [];
   final mcpClients = <Map<String, Object?>>[];
   String? preflightFail;
   String live = 'v0.2.0';
@@ -111,6 +113,11 @@ class FakeDevice implements Transport {
     }
     if (method == 'POST' && p == '/v1/pairing') return _pair((body as Map).cast<String, Object?>());
     if (method == 'GET' && p == '/v1/openapi.json') return {'paths': {}};
+    final run = RegExp(r'^/v1/mcp/tools/(\w+)/run$').firstMatch(p);
+    if (method == 'POST' && run != null) {
+      if (token == null || !tokens.contains(token)) throw _err(401, 'unauthorized', 'a valid session is required');
+      return _runTool(run.group(1)!, asArgs(body));
+    }
     if (method == 'GET') {
       if (token == null || !tokens.contains(token)) throw _err(401, 'unauthorized', 'a valid session is required');
       if (failNextGets > 0) {
@@ -181,13 +188,22 @@ class FakeDevice implements Transport {
     if (p == '/v1/me') return {'admin_id': admins.keys.first, 'name': 'test'};
     if (p == '/v1/capabilities') return caps;
     if (p == '/v1/health') {
+      // Same shape as rp-agent's /v1/health (and rp-api's fake, which a Rust
+      // test pins to the agent).
       return {
-        'status': 'ok',
-        'alerts': [],
-        'cpu': {'load1': 0.2},
-        'memory': {'total_mb': 920, 'available_mb': 600},
-        'temperature_c': 45.0,
+        'load': [0.21, 0.18, 0.15],
+        'mem_total_kb': 944000,
+        'mem_available_kb': 624640,
+        'temperature_c': 47.2,
         'under_voltage': false,
+        'cpu_mhz': 900,
+        'cpu_max_mhz': 900,
+        'disk_used_percent': 31,
+        'ntp_synchronized': true,
+        'uptime_s': 86400.0,
+        'modules': {},
+        'status': 'ok',
+        'alerts': healthAlerts,
       };
     }
     final mc = RegExp(r'^/v1/modules/(\w+)/config$').firstMatch(p);
@@ -228,8 +244,48 @@ class FakeDevice implements Transport {
     if (p == '/v1/mcp/tools') {
       return {
         'tools': [
-          {'name': 'get_system_health', 'tier': 'read', 'description': 'Health'},
-          {'name': 'block_device', 'tier': 'privileged', 'description': 'Block'},
+          {
+            'name': 'get_system_health',
+            'tier': 'read',
+            'description': 'Load, memory, temperature',
+            'input_schema': {'type': 'object', 'properties': {}, 'required': []},
+          },
+          {
+            'name': 'get_device_inventory',
+            'tier': 'read',
+            'description': 'Devices on the networks',
+            'input_schema': {'type': 'object', 'properties': {}, 'required': []},
+          },
+          {
+            'name': 'query_dns_events',
+            'tier': 'read',
+            'description': 'Blocked and suspicious DNS queries',
+            'input_schema': {
+              'type': 'object',
+              'properties': {
+                'since_minutes': {'type': 'integer', 'minimum': 1, 'maximum': 10080, 'default': 60},
+                'action': {
+                  'type': 'string',
+                  'enum': ['blocked', 'suspicious'],
+                },
+              },
+              'required': [],
+            },
+          },
+          {
+            'name': 'block_device',
+            'tier': 'privileged',
+            'description': 'REQUEST blocking an access-point client by IP',
+            'input_schema': {
+              'type': 'object',
+              'properties': {
+                'ip': {'type': 'string'},
+                'ttl_minutes': {'type': 'integer', 'minimum': 1, 'maximum': 1440, 'default': 60},
+                'reason': {'type': 'string', 'maxLength': 200},
+              },
+              'required': ['ip'],
+            },
+          },
         ],
       };
     }
@@ -389,6 +445,58 @@ class FakeDevice implements Transport {
       return {'revoked': ad.group(1)};
     }
     throw _err(404, 'not_found', 'no such endpoint');
+  }
+
+  static Map<String, Object?> asArgs(Object? b) => b is Map ? b.cast<String, Object?>() : {};
+
+  Object? _runTool(String name, Map<String, Object?> args) {
+    Object? result;
+    switch (name) {
+      case 'get_system_health':
+        result = _read('/v1/health');
+      case 'get_device_inventory':
+        result = {
+          'devices': [
+            {'ip': '192.0.2.20', 'mac': '02:00:00:00:00:20', 'iface': 'eth0', 'hostname': 'laptop', 'new': false},
+            {'ip': '198.51.100.150', 'mac': '02:00:00:00:00:01', 'iface': 'wlan0', 'hostname': 'plug', 'new': true},
+          ],
+          'count': 2,
+          'new_in_last_24h': 1,
+        };
+      case 'query_dns_events':
+        result = _read('/v1/dns/events');
+      case 'get_vpn_status':
+        result = _read('/v1/vpn/status');
+      case 'list_pending_actions':
+        result = {'actions': actions};
+      case 'block_device' || 'isolate_client':
+        final target = str(args[name == 'block_device' ? 'ip' : 'mac']);
+        if (target.isEmpty) {
+          throw _err(400, 'invalid', "missing required argument '${name == 'block_device' ? 'ip' : 'mac'}'");
+        }
+        final id = randomHex(4);
+        actions.add({
+          'id': id,
+          'tool': name,
+          'args': args,
+          'summary': '${name == 'block_device' ? 'Block' : 'Isolate'} $target for ${args['ttl_minutes'] ?? 60} minutes',
+          'principal': 'console-test',
+          'status': 'pending',
+        });
+        result = {'id': id, 'status': 'pending'};
+      case 'scan_network':
+        result = {'scanned': 254, 'found': 3};
+      case 'get_flows' || 'get_audit_log' || 'inspect_arp_table' || 'inspect_usb':
+        result = {'entries': []};
+      default:
+        throw _err(400, 'invalid', "unknown tool '$name'");
+    }
+    final tier = switch (name) {
+      'block_device' || 'isolate_client' => 'privileged',
+      'scan_network' => 'active',
+      _ => 'read',
+    };
+    return {'tool': name, 'tier': tier, 'result': result};
   }
 
   void _applyPatch(String module, Map<String, Object?> patch) {

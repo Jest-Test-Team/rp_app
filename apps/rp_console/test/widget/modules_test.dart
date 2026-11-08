@@ -32,6 +32,52 @@ void main() {
     expect(find.text('Healthy'), findsOneWidget);
     expect(find.byKey(const Key('health-power')), findsOneWidget);
     expect(find.byKey(const Key('cap-dns')), findsOneWidget);
+    // The agent's real keys: load average, memory in kB (shown in MB).
+    expect(find.text('0.21 · 0.18 · 0.15'), findsOneWidget);
+    expect(find.text('610 / 922 MB'), findsOneWidget);
+    expect(find.text('1 d 0 h'), findsOneWidget);
+  });
+
+  testWidgets('overview names alerts in plain words', (t) async {
+    await onDevice(
+      t,
+      'Overview',
+      prep: (d) => d.healthAlerts = [
+        {'level': 'critical', 'kind': 'under_voltage', 'detail': 'use a 5V/2.5A supply'},
+      ],
+    );
+    expect(find.text('Power supply too weak'), findsOneWidget);
+    expect(find.text('use a 5V/2.5A supply'), findsOneWidget);
+  });
+
+  testWidgets('MCP: run a tool and read the result; a privileged tool only queues a request', (t) async {
+    final h = await onDevice(t, 'MCP');
+    await tapKey(t, 'tool-get_device_inventory');
+    expect(find.byKey(const Key('tool-result')), findsOneWidget);
+    expect(find.text('plug'), findsOneWidget);
+    expect(find.text('2 devices'), findsOneWidget);
+    await t.pageBack();
+    await settle(t);
+
+    await tapKey(t, 'tool-block_device');
+    await tapKey(t, 'tool-run');
+    expect(find.byKey(const Key('tool-error')), findsOneWidget); // IP is required
+    await enter(t, 'arg-ip', '198.51.100.150');
+    await enter(t, 'arg-ttl_minutes', '9999');
+    await tapKey(t, 'tool-run');
+    expect(find.byKey(const Key('tool-error')), findsOneWidget); // out of range
+    expect(h.device.actions, isEmpty);
+    await enter(t, 'arg-ttl_minutes', '30');
+    await tapKey(t, 'tool-run');
+    expect(find.text('Request created'), findsOneWidget);
+    final run = h.device.calls.lastWhere((c) => c.path == '/v1/mcp/tools/block_device/run');
+    expect(run.body, {'ip': '198.51.100.150', 'ttl_minutes': 30});
+    expect(run.token, isNotNull);
+    expect(h.device.actions.single['status'], 'pending');
+    await t.pageBack();
+    await settle(t);
+    // The request waits in the queue for a signed approval.
+    expect(find.byKey(Key('approve-${h.device.actions.single['id']}')), findsOneWidget);
   });
 
   testWidgets('DNS: invalid domains are refused; a valid block goes through the change sheet', (t) async {

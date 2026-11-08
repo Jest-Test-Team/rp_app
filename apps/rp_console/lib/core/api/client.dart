@@ -82,14 +82,17 @@ class RpClient {
     if (t != null) await transport.request('DELETE', '/v1/session', token: t);
   }
 
-  Future<Object?> _get(String path) async {
+  Future<Object?> _get(String path) => _withSession('GET', path);
+
+  /// A session-authenticated request (reads, and running read-only tools).
+  Future<Object?> _withSession(String method, String path, [Object? body]) async {
     _token ??= await openSession();
     try {
-      return await transport.request('GET', path, token: _token);
+      return await transport.request(method, path, body: body, token: _token);
     } on ApiException catch (e) {
       if (e.status != 401) rethrow;
       _token = await openSession();
-      return transport.request('GET', path, token: _token);
+      return transport.request(method, path, body: body, token: _token);
     }
   }
 
@@ -114,6 +117,11 @@ class RpClient {
       asList(asMap(await _get('/v1/admins'))['admins']).map(asMap).toList();
   Future<Map<String, Object?>> pendingActions() async => asMap(await _get('/v1/actions/pending'));
   Future<Map<String, Object?>> mcpTools() async => asMap(await _get('/v1/mcp/tools'));
+
+  /// Run an MCP tool on the device. Privileged tools only queue a request
+  /// that still has to be approved (signed) in the approval queue.
+  Future<Map<String, Object?>> runTool(String name, Map<String, Object?> args) async =>
+      asMap(await _withSession('POST', '/v1/mcp/tools/${Uri.encodeComponent(name)}/run', args));
   Future<Map<String, Object?>> mcpClients() async => asMap(await _get('/v1/mcp/clients'));
   Future<Map<String, Object?>> health() async => asMap(await _get('/v1/health'));
   Future<Map<String, Object?>> inventory() async => asMap(await _get('/v1/inventory'));
