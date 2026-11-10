@@ -9,6 +9,7 @@ import 'app/release.dart';
 import 'app/services.dart';
 import 'core/discovery/discovery.dart';
 import 'core/storage/vault.dart';
+import 'core/vpn/vpn_platform.dart';
 import 'demo/demo_device.dart';
 import 'features/onboarding/qr_scanner.dart';
 
@@ -39,6 +40,7 @@ Future<void> main() async {
       discoverer: MdnsDiscoverer(),
       desktop: Platform.isMacOS || Platform.isLinux || Platform.isWindows,
       scanQr: Platform.isAndroid || Platform.isIOS ? scanPairingQr : null,
+      vpn: Platform.isAndroid ? AndroidVpnPlatform() : null,
     );
   }
   final state = AppState(services);

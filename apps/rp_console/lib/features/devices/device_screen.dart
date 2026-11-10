@@ -4,6 +4,8 @@ import '../../app/app_state.dart';
 import '../../app/strings.dart';
 import '../../core/api/client.dart';
 import '../../core/api/models.dart';
+import '../../core/api/routing_transport.dart';
+import '../../core/api/transport.dart';
 import '../../core/storage/vault.dart';
 import '../../widgets/common.dart';
 import '../ap/ap_page.dart';
@@ -13,6 +15,7 @@ import '../health/overview_page.dart';
 import '../mcp/mcp_page.dart';
 import '../settings/settings_page.dart';
 import '../vpn/vpn_page.dart';
+import 'connection_help.dart';
 
 const _vpnTab = 4;
 
@@ -76,6 +79,23 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
     }
   }
 
+  PairedDevice get device =>
+      widget.app.devices.firstWhere((d) => d.key == widget.device.key, orElse: () => widget.device);
+
+  bool _learned = false;
+  String? route;
+
+  /// Remember the Pi's VPN addresses while it is reachable, and show the path.
+  Future<void> _learn(RpClient c) async {
+    final t = c.transport;
+    if (t is RoutingTransport && t.host != route && mounted) setState(() => route = t.host);
+    if (_learned || device.profile.isNotEmpty) return; // a VPN profile has one fixed address
+    _learned = true;
+    try {
+      await widget.app.learnVpnHosts(device, c);
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
@@ -91,7 +111,20 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
     final app = widget.app;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.device.name),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.device.name),
+            if (route != null)
+              Text(
+                route == widget.device.host && widget.device.profile.isEmpty
+                    ? s('conn.via.lan', {'host': route!})
+                    : s('conn.via.vpn', {'host': route!}),
+                key: const Key('conn-route'),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
         bottom: TabBar(
           controller: tabs,
           isScrollable: true,
@@ -99,10 +132,37 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
           tabs: [for (final (label, icon) in labels) Tab(key: Key('tab-$label'), text: label, icon: Icon(icon))],
         ),
       ),
-      body: Loader<RpClient>(
-        load: () => app.client(widget.device),
-        builder: (context, client, _) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskVpn(client));
+      body: Loader<(RpClient, bool)>(
+        // Reach the Pi first (home address or VPN); if nothing answers, say
+        // why instead of an error on every tab.
+        load: () async {
+          final c = await app.client(device);
+          try {
+            await c.info();
+            return (c, true);
+          } catch (e) {
+            if (e is PinMismatch || e is ApiException) rethrow;
+            return (c, false);
+          }
+        },
+        builder: (context, d, reload) {
+          final (client, reachable) = d;
+          if (!reachable) {
+            return ConnectionHelp(
+              device: device,
+              vpn: app.services.vpn,
+              onRetry: reload,
+              onAddHost: (h) async {
+                await app.setVpnHosts(device, [h, ...device.vpnHosts.where((x) => x != h)]);
+                app.reconnect(widget.device);
+                reload();
+              },
+            );
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _maybeAskVpn(client);
+            _learn(client);
+          });
           return TabBarView(
             controller: tabs,
             children: [
@@ -115,6 +175,8 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
                 client: client,
                 suggestedMode: suggestedMode,
                 publicIp: app.services.publicIp,
+                app: app,
+                device: device,
               ),
               McpPage(client: client),
               SettingsPage(app: app, device: widget.device, client: client),

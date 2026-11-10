@@ -3,7 +3,9 @@
 import 'package:flutter/widgets.dart';
 
 import '../core/api/client.dart';
+import '../core/api/routing_transport.dart';
 import '../core/api/transport.dart';
+import '../core/vpn/vpn_platform.dart';
 import '../core/discovery/discovery.dart';
 import '../core/provision/ssh_bootstrap.dart';
 import '../core/storage/vault.dart';
@@ -29,6 +31,7 @@ class Services {
     this.demoPairingCode,
     this.scanQr,
     Future<String?> Function()? publicIp,
+    this.vpn,
   }) : transport = transport ?? ((h, p, pin) => PinnedTransport(host: h, port: p, pin: pin)),
        shell =
            shell ??
@@ -55,9 +58,21 @@ class Services {
   /// cancelled). Null on platforms without a scanner (the code is pasted).
   final Future<String?> Function(BuildContext context)? scanQr;
 
+  /// The phone's VPN apps and state (Android); null elsewhere (no VPN check).
+  final VpnPlatform? vpn;
+
   /// Can write SD cards (desktop builds).
   final bool desktop;
 
-  Future<RpClient> clientFor(PairedDevice d) async =>
-      RpClient(transport(d.host, d.port, d.certSha256), key: await vault.adminKey(), deviceId: d.deviceId);
+  /// A client that reaches [d] at home or over the VPN (see RoutingTransport).
+  Future<RpClient> clientFor(PairedDevice d) async => RpClient(
+    RoutingTransport(
+      lanHost: d.host,
+      vpnHosts: d.vpnHosts,
+      open: (h) => transport(h, d.port, d.certSha256),
+      vpnActive: () async => await vpn?.vpnActive() ?? false,
+    ),
+    key: await vault.adminKey(),
+    deviceId: d.deviceId,
+  );
 }

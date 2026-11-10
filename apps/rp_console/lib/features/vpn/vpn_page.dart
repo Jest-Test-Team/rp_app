@@ -6,9 +6,12 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/strings.dart';
 import '../../core/api/client.dart';
+import '../../app/app_state.dart';
 import '../../core/api/models.dart';
+import '../../core/storage/vault.dart';
 import '../../widgets/change_sheet.dart';
 import '../../widgets/common.dart';
+import 'vpn_join.dart';
 
 class WgKeys {
   WgKeys(this.privateB64, this.publicB64);
@@ -73,9 +76,22 @@ List<(String, String, bool)> vpnStatusLines(S s, Map<String, Object?> st) {
   return [line(st)];
 }
 
+/// Which VPN the [i]-th status line is about (null if none is configured).
+String? statusMode(Map<String, Object?> st, int i) {
+  final mode = str(st['mode']);
+  if (st['configured'] == false || mode.isEmpty) return null;
+  if (mode == 'both') return i == 0 ? 'tailscale' : 'wireguard';
+  return mode;
+}
+
 class VpnPage extends StatelessWidget {
-  const VpnPage({super.key, required this.client, this.suggestedMode, this.publicIp});
+  const VpnPage({super.key, required this.client, this.suggestedMode, this.publicIp, this.app, this.device});
   final RpClient client;
+
+  /// With these, a running Tailscale / WireGuard under Status can be tapped
+  /// to use it with the app (VpnJoinPage).
+  final AppState? app;
+  final PairedDevice? device;
 
   /// Mode picked in the first-visit prompt (preselected in the form).
   final String? suggestedMode;
@@ -99,13 +115,40 @@ class VpnPage extends StatelessWidget {
             Section(
               title: s('vpn.status'),
               children: [
-                for (final (name, state, ok) in vpnStatusLines(s, d.$2))
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(ok ? Icons.check_circle_outline : Icons.radio_button_unchecked),
-                    title: Text(name),
-                    trailing: Text(state),
+                for (final (i, (name, state, ok)) in vpnStatusLines(s, d.$2).indexed)
+                  Builder(
+                    builder: (context) {
+                      final mode = statusMode(d.$2, i);
+                      final a = app, dev = device;
+                      final tappable = ok && mode != null && a != null && dev != null;
+                      return ListTile(
+                        key: Key('vpn-status-${mode ?? i}'),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(ok ? Icons.check_circle_outline : Icons.radio_button_unchecked),
+                        title: Text(name),
+                        subtitle: tappable ? Text(s('join.tap')) : null,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [Text(state), if (tappable) const Icon(Icons.chevron_right)],
+                        ),
+                        onTap: !tappable
+                            ? null
+                            : () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => VpnJoinPage(
+                                    mode: mode,
+                                    app: a,
+                                    device: dev,
+                                    client: client,
+                                    status: d.$2,
+                                    cfg: cfg,
+                                    serverPublic: d.$3.raw['wireguard_public_key'] as String?,
+                                  ),
+                                ),
+                              ),
+                      );
+                    },
                   ),
               ],
             ),
@@ -286,6 +329,36 @@ class _VpnFormState extends State<VpnForm> {
   }
 }
 
+/// Add a WireGuard device [name] (keys made here, public key sent in a change
+/// set); returns its client config, or null if the change was not applied.
+Future<String?> addWireguardPeer(
+  BuildContext context,
+  RpClient client,
+  Map<String, Object?> cfg,
+  String? serverPublic,
+  String name,
+) async {
+  final wg = asMap(cfg['wireguard']);
+  final peers = asList(wg['peers']).map(asMap).toList();
+  final keys = await WgKeys.generate();
+  final subnet = str(wg['subnet'], '10.88.0.0/24');
+  final host = nextFreeHost(peers, subnet);
+  final next = [
+    ...peers,
+    {'name': name, 'public_key': keys.publicB64, 'host': host},
+  ];
+  if (!context.mounted) return null;
+  final ok = await showChange(context, client, 'vpn', {'vpn.wireguard.peers': next});
+  if (!ok) return null;
+  return clientConfig(
+    privateKey: keys.privateB64,
+    address: peerAddress(subnet, host),
+    dns: str(wg['client_dns'], '1.1.1.1'),
+    serverPublic: serverPublic ?? '<server key>',
+    endpoint: str(wg['endpoint'], '<PUBLIC_HOST>:51820'),
+  );
+}
+
 class Peers extends StatelessWidget {
   const Peers({super.key, required this.client, required this.cfg, required this.serverPublic, required this.onSaved});
   final RpClient client;
@@ -307,23 +380,8 @@ class Peers extends StatelessWidget {
         onPressed: () async {
           final name = await showDialog<String>(context: context, builder: (_) => const _NameDialog());
           if (name == null || !context.mounted) return;
-          final keys = await WgKeys.generate();
-          final subnet = str(wg['subnet'], '10.88.0.0/24');
-          final host = nextFreeHost(peers, subnet);
-          final next = [
-            ...peers,
-            {'name': name, 'public_key': keys.publicB64, 'host': host},
-          ];
-          if (!context.mounted) return;
-          final ok = await showChange(context, client, 'vpn', {'vpn.wireguard.peers': next});
-          if (!ok || !context.mounted) return;
-          final conf = clientConfig(
-            privateKey: keys.privateB64,
-            address: peerAddress(subnet, host),
-            dns: str(wg['client_dns'], '1.1.1.1'),
-            serverPublic: serverPublic ?? '<server key>',
-            endpoint: str(wg['endpoint'], '<PUBLIC_HOST>:51820'),
-          );
+          final conf = await addWireguardPeer(context, client, cfg, serverPublic, name);
+          if (conf == null || !context.mounted) return;
           await showDialog<void>(
             context: context,
             builder: (c) => AlertDialog(
@@ -359,14 +417,20 @@ class Peers extends StatelessWidget {
   }
 }
 
-class _NameDialog extends StatefulWidget {
+class _NameDialog extends NameDialog {
   const _NameDialog();
-  @override
-  State<_NameDialog> createState() => _NameDialogState();
 }
 
-class _NameDialogState extends State<_NameDialog> {
-  final c = TextEditingController();
+/// Asks for a WireGuard device name (letters, digits, - and _).
+class NameDialog extends StatefulWidget {
+  const NameDialog({super.key, this.initial = ''});
+  final String initial;
+  @override
+  State<NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<NameDialog> {
+  late final c = TextEditingController(text: widget.initial);
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);

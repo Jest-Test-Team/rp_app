@@ -42,6 +42,12 @@ void main() {
     expect(m, contains('android.permission.CAMERA'));
     expect(m, contains('android:name="android.hardware.camera" android:required="false"'));
     expect(m, contains('CHANGE_WIFI_MULTICAST_STATE'));
+    // Package visibility only for the two VPN apps (is one installed?).
+    expect(m, contains('<package android:name="com.tailscale.ipn" />'));
+    expect(m, contains('<package android:name="com.wireguard.android" />'));
+    expect(m, isNot(contains('QUERY_ALL_PACKAGES')));
+    final act = read('android/app/src/main/kotlin/com/jesttestteam/rp/rp_console/MainActivity.kt');
+    expect(act, contains('pkg !in vpnApps'), reason: 'the channel only opens the two VPN apps');
     expect(read('android/app/src/main/res/xml/data_extraction_rules.xml'), contains('<cloud-backup>'));
   });
 

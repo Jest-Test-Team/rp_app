@@ -87,6 +87,9 @@ class FakeDevice implements Transport {
   final actions = <Map<String, Object?>>[];
   List<Map<String, Object?>> healthAlerts = [];
   int feedUpdates = 0;
+
+  /// Replaces the default VPN status (Tailscale only) when set.
+  Map<String, Object?>? vpnStatus;
   int? feedsUpdatedAt;
   Set<String> feedFails = {};
   static List<String> asStrings(Object? v) => v is List ? v.whereType<String>().toList() : [];
@@ -305,7 +308,17 @@ class FakeDevice implements Transport {
         ],
       };
     }
-    if (p == '/v1/vpn/status') return {'mode': 'tailscale', 'running': true};
+    if (p == '/v1/vpn/status') {
+      if (vpnStatus != null) return vpnStatus;
+      return {
+        'configured': true,
+        'mode': 'tailscale',
+        'available': true,
+        'backend_state': 'Running',
+        'addresses': ['198.51.100.7', 'fd7a:115c:a1e0::7'],
+        'dns_name': 'rp-demo.tail0000.ts.net',
+      };
+    }
     if (p == '/v1/firewall/rules') return {'rules': (config['firewall'] as Map?)?['rules'] ?? []};
     if (p == '/v1/actions/pending') return {'actions': actions};
     if (p == '/v1/mcp/tools') {
@@ -579,6 +592,6 @@ class FakeDevice implements Transport {
   }
 }
 
-class SocketLikeException implements Exception {
+class SocketLikeException implements Unreachable {
   const SocketLikeException();
 }

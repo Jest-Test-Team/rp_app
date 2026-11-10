@@ -534,6 +534,10 @@ pub fn mgmt_networks(cfg: &Config) -> Vec<ipnet::IpNet> {
         n.push(crate::vpn::TS_V4.parse().unwrap());
         n.push(crate::vpn::TS_V6.parse().unwrap());
     }
+    // WireGuard devices are this device's own VPN users: they manage it too.
+    if let Some(v) = cfg.vpn.as_ref().filter(|v| v.mode.wireguard()) {
+        n.push(ipnet::IpNet::V4(v.wireguard.subnet));
+    }
     n
 }
 

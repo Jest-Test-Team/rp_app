@@ -8,12 +8,14 @@ import 'package:rp_console/app/release.dart';
 import 'package:rp_console/app/services.dart';
 import 'package:rp_console/core/discovery/discovery.dart';
 import 'package:rp_console/core/provision/ssh_bootstrap.dart';
+import 'package:rp_console/core/api/transport.dart';
 import 'package:rp_console/core/storage/vault.dart';
+import 'package:rp_console/core/vpn/vpn_platform.dart';
 
 import '../support/fakes.dart';
 
 class Harness {
-  Harness({FakeDevice? device, this.desktop = false, FakeShell? shell, this.scanQr})
+  Harness({FakeDevice? device, this.desktop = false, FakeShell? shell, this.scanQr, this.vpn})
     : device = device ?? FakeDevice(),
       shell = shell ?? FakeShell([]);
 
@@ -21,13 +23,17 @@ class Harness {
   final bool desktop;
   final FakeShell shell;
   final Future<String?> Function(BuildContext)? scanQr;
+  final FakeVpn? vpn;
+
+  /// Addresses that do not answer (e.g. the home address behind an exit node).
+  final down = <String>{};
   final store = MemoryStore();
   String? latestRelease = 'v0.2.1';
   String? publicIp = '203.0.113.7';
   late final Services services = Services(
     vault: Vault(store),
     discoverer: StaticDiscoverer([Found(name: 'RP Security on rp-demo', host: 'rp-demo.local', port: 8443)]),
-    transport: (h, p, pin) => device,
+    transport: (h, p, pin) => down.contains(h) ? const DownTransport() : device,
     shell: ({required host, required user, required password, required verifyHostKey}) async {
       if (!await verifyHostKey('ssh-ed25519', 'deadbeef')) throw StateError('host key refused');
       return shell;
@@ -37,6 +43,7 @@ class Harness {
     desktop: desktop,
     scanQr: scanQr,
     publicIp: () async => publicIp,
+    vpn: vpn,
   );
   late final AppState state = AppState(services);
 
@@ -87,3 +94,40 @@ Future<void> pairViaCode(WidgetTester t, Harness h, {bool keepVpnPrompt = false}
 }
 
 ExecResult ok(String out) => ExecResult(0, out, '');
+
+class DownTransport implements Transport {
+  const DownTransport();
+  @override
+  String? get seenCert => null;
+  @override
+  Future<Object?> request(String method, String path, {Object? body, String? token}) async =>
+      throw const SocketLikeException();
+}
+
+class FakeVpn implements VpnPlatform {
+  FakeVpn({this.tailscale = false, this.wireguard = false, this.active = false});
+  bool tailscale, wireguard, active;
+  final opened = <String>[];
+  @override
+  Future<VpnApps> installedApps() async => VpnApps(tailscale: tailscale, wireguard: wireguard);
+  @override
+  Future<bool> vpnActive() async => active;
+  @override
+  Future<bool> openApp(String package) async {
+    opened.add('app:$package');
+    return true;
+  }
+
+  @override
+  Future<bool> openStore(String package) async {
+    opened.add('store:$package');
+    return true;
+  }
+
+  final saved = <String, String>{};
+  @override
+  Future<String?> saveConfig(String fileName, String text) async {
+    saved[fileName] = text;
+    return 'Download/$fileName';
+  }
+}

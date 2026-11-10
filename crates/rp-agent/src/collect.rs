@@ -329,7 +329,9 @@ fn wireguard_status(w: &rp_schema::WireGuard) -> Value {
             })
         })
         .collect();
-    json!({"mode": "wireguard", "available": dump.is_some(), "peers": peers})
+    let server = w.subnet.hosts().next().map(|a| a.to_string());
+    json!({"mode": "wireguard", "available": dump.is_some(), "peers": peers,
+           "address": server, "listen_port": w.listen_port})
 }
 
 fn tailscale_status() -> Value {
@@ -340,6 +342,9 @@ fn tailscale_status() -> Value {
             "mode": "tailscale", "available": true,
             "backend_state": s["BackendState"],
             "peers": s["Peer"].as_object().map(|p| p.len()).unwrap_or(0),
+            // How the console app reaches this device over the tailnet.
+            "addresses": s["Self"]["TailscaleIPs"],
+            "dns_name": s["Self"]["DNSName"].as_str().map(|n| n.trim_end_matches('.')),
         }),
         None => json!({"mode": "tailscale", "available": false}),
     }

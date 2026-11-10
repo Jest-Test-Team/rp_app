@@ -50,17 +50,95 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<RpClient> client(PairedDevice d) async => _clients[d.deviceId] ??= await services.clientFor(d);
+  Future<RpClient> client(PairedDevice d) async => _clients[d.key] ??= await services.clientFor(d);
 
   Future<void> add(PairedDevice d) async {
     await services.vault.saveDevice(d);
-    _clients.remove(d.deviceId);
+    _clients.remove(d.key);
+    await load();
+  }
+
+  /// The device's VPN addresses from `/v1/vpn/status` (one mode or both):
+  /// Tailscale IPv4 first, then its MagicDNS name, then the WireGuard address.
+  static List<String> vpnHostsFrom(Map<String, Object?> st) {
+    Map<String, Object?> part(String mode) {
+      final nested = st[mode];
+      if (nested is Map) return nested.cast<String, Object?>();
+      return st['mode'] == mode ? st : const {};
+    }
+
+    final ts = part('tailscale'), wg = part('wireguard');
+    final addrs = (ts['addresses'] is List ? ts['addresses']! as List : const []).whereType<String>().toList()
+      ..sort((a, b) => (a.contains(':') ? 1 : 0) - (b.contains(':') ? 1 : 0));
+    return [
+      ...addrs.where((a) => !a.contains(':')),
+      if (ts['dns_name'] is String && (ts['dns_name']! as String).isNotEmpty) ts['dns_name']! as String,
+      if (wg['address'] is String) wg['address']! as String,
+    ];
+  }
+
+  /// Remember how to reach [d] over the VPN (learned while it is reachable).
+  Future<void> learnVpnHosts(PairedDevice d, RpClient c) async {
+    final hosts = vpnHostsFrom(await c.vpnStatus());
+    if (hosts.isEmpty) return;
+    await setVpnHosts(d, {...hosts, ...d.vpnHosts}.toList());
+  }
+
+  /// Set the VPN addresses (also typed in by the user); the next connection
+  /// uses them.
+  Future<void> setVpnHosts(PairedDevice d, List<String> hosts) async {
+    final cur = devices.firstWhere((x) => x.key == d.key, orElse: () => d);
+    if (cur.vpnHosts.length == hosts.length && cur.vpnHosts.every(hosts.contains)) return;
+    await services.vault.saveDevice(cur.copyWith(vpnHosts: hosts));
+    devices = await services.vault.devices();
+    notifyListeners();
+  }
+
+  /// Drop the cached connection (e.g. after new addresses were added).
+  void reconnect(PairedDevice d) => _clients.remove(d.key);
+
+  /// Does the device answer on [host] with its paired certificate?
+  Future<bool> reaches(PairedDevice d, String host) async {
+    try {
+      await services
+          .transport(host, d.port, d.certSha256)
+          .request('GET', '/v1/info')
+          .timeout(const Duration(seconds: 6));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Save a profile of [base] that always connects through a VPN at [host]
+  /// ('tailscale' / 'wireguard'); replaces an earlier profile of that kind.
+  Future<PairedDevice> addVpnProfile(PairedDevice base, String profile, String host, String label) async {
+    final p = PairedDevice(
+      deviceId: base.deviceId,
+      name: '${base.name} · $label',
+      host: host,
+      port: base.port,
+      certSha256: base.certSha256,
+      adminId: base.adminId,
+      addedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      profile: profile,
+    );
+    await add(p);
+    return devices.firstWhere((x) => x.key == p.key, orElse: () => p);
+  }
+
+  /// Forget a device and all its VPN profiles (after removing RP Security).
+  Future<void> forgetAll(String deviceId) async {
+    for (final d in devices.where((x) => x.deviceId == deviceId).toList()) {
+      await services.vault.removeDevice(d.key);
+      _clients.remove(d.key);
+    }
     await load();
   }
 
   Future<void> forget(PairedDevice d) async {
-    await services.vault.removeDevice(d.deviceId);
-    _clients.remove(d.deviceId);
+    await services.vault.removeDevice(d.key);
+    _clients.remove(d.key);
     await load();
   }
 }

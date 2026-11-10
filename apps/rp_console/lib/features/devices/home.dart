@@ -72,8 +72,8 @@ class HomeScreen extends StatelessWidget {
                     Card(
                       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: ListTile(
-                        key: Key('device-${d.deviceId}'),
-                        leading: const Icon(Icons.router_outlined),
+                        key: Key('device-${d.key}'),
+                        leading: Icon(d.profile.isEmpty ? Icons.router_outlined : Icons.vpn_lock),
                         title: Text(d.name),
                         subtitle: Text('${d.host}:${d.port}'),
                         trailing: const Icon(Icons.chevron_right),

@@ -132,7 +132,7 @@ pub struct AppState {
     pub backend: Arc<dyn Backend>,
     pub observer: Arc<dyn Observer>,
     /// Empty = any address (tests).
-    pub allowed: Vec<ipnet::IpNet>,
+    pub allowed: std::sync::RwLock<Vec<ipnet::IpNet>>,
     pub session_minutes: u32,
     sessions: Mutex<HashMap<String, Session>>,
     general: Mutex<Limiter>,
@@ -150,7 +150,7 @@ impl AppState {
         Arc::new(Self {
             backend,
             observer,
-            allowed,
+            allowed: std::sync::RwLock::new(allowed),
             session_minutes: session_minutes.clamp(1, 1440),
             sessions: Mutex::new(HashMap::new()),
             general: Mutex::new(Limiter::new(600)),
@@ -249,7 +249,8 @@ fn allowed(st: &AppState, ip: IpAddr) -> bool {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
         v4 => v4,
     };
-    st.allowed.is_empty() || ip.is_loopback() || st.allowed.iter().any(|n| n.contains(&ip))
+    let nets = st.allowed.read().unwrap();
+    nets.is_empty() || ip.is_loopback() || nets.iter().any(|n| n.contains(&ip))
 }
 
 async fn guard(
