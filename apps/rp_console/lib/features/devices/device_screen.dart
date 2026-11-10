@@ -80,7 +80,7 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
   }
 
   PairedDevice get device =>
-      widget.app.devices.firstWhere((d) => d.deviceId == widget.device.deviceId, orElse: () => widget.device);
+      widget.app.devices.firstWhere((d) => d.key == widget.device.key, orElse: () => widget.device);
 
   bool _learned = false;
   String? route;
@@ -89,7 +89,7 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
   Future<void> _learn(RpClient c) async {
     final t = c.transport;
     if (t is RoutingTransport && t.host != route && mounted) setState(() => route = t.host);
-    if (_learned) return;
+    if (_learned || device.profile.isNotEmpty) return; // a VPN profile has one fixed address
     _learned = true;
     try {
       await widget.app.learnVpnHosts(device, c);
@@ -117,7 +117,9 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
             Text(widget.device.name),
             if (route != null)
               Text(
-                route == widget.device.host ? s('conn.via.lan', {'host': route!}) : s('conn.via.vpn', {'host': route!}),
+                route == widget.device.host && widget.device.profile.isEmpty
+                    ? s('conn.via.lan', {'host': route!})
+                    : s('conn.via.vpn', {'host': route!}),
                 key: const Key('conn-route'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -173,6 +175,8 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
                 client: client,
                 suggestedMode: suggestedMode,
                 publicIp: app.services.publicIp,
+                app: app,
+                device: device,
               ),
               McpPage(client: client),
               SettingsPage(app: app, device: widget.device, client: client),

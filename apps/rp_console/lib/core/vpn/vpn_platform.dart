@@ -21,6 +21,10 @@ abstract class VpnPlatform {
   Future<bool> vpnActive();
   Future<bool> openApp(String package);
   Future<bool> openStore(String package);
+
+  /// Save a WireGuard config to Downloads (for the WireGuard app's "Import
+  /// from file"); returns where, or null if not possible.
+  Future<String?> saveConfig(String fileName, String text);
 }
 
 class AndroidVpnPlatform implements VpnPlatform {
@@ -41,4 +45,8 @@ class AndroidVpnPlatform implements VpnPlatform {
   @override
   Future<bool> openStore(String package) async =>
       await _ch.invokeMethod<bool>('openStore', {'package': package}) ?? false;
+
+  @override
+  Future<String?> saveConfig(String fileName, String text) =>
+      _ch.invokeMethod<String>('saveConfig', {'name': fileName, 'text': text});
 }

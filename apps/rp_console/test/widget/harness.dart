@@ -123,4 +123,11 @@ class FakeVpn implements VpnPlatform {
     opened.add('store:$package');
     return true;
   }
+
+  final saved = <String, String>{};
+  @override
+  Future<String?> saveConfig(String fileName, String text) async {
+    saved[fileName] = text;
+    return 'Download/$fileName';
+  }
 }

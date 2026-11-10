@@ -50,11 +50,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<RpClient> client(PairedDevice d) async => _clients[d.deviceId] ??= await services.clientFor(d);
+  Future<RpClient> client(PairedDevice d) async => _clients[d.key] ??= await services.clientFor(d);
 
   Future<void> add(PairedDevice d) async {
     await services.vault.saveDevice(d);
-    _clients.remove(d.deviceId);
+    _clients.remove(d.key);
     await load();
   }
 
@@ -87,7 +87,7 @@ class AppState extends ChangeNotifier {
   /// Set the VPN addresses (also typed in by the user); the next connection
   /// uses them.
   Future<void> setVpnHosts(PairedDevice d, List<String> hosts) async {
-    final cur = devices.firstWhere((x) => x.deviceId == d.deviceId, orElse: () => d);
+    final cur = devices.firstWhere((x) => x.key == d.key, orElse: () => d);
     if (cur.vpnHosts.length == hosts.length && cur.vpnHosts.every(hosts.contains)) return;
     await services.vault.saveDevice(cur.copyWith(vpnHosts: hosts));
     devices = await services.vault.devices();
@@ -95,11 +95,50 @@ class AppState extends ChangeNotifier {
   }
 
   /// Drop the cached connection (e.g. after new addresses were added).
-  void reconnect(PairedDevice d) => _clients.remove(d.deviceId);
+  void reconnect(PairedDevice d) => _clients.remove(d.key);
+
+  /// Does the device answer on [host] with its paired certificate?
+  Future<bool> reaches(PairedDevice d, String host) async {
+    try {
+      await services
+          .transport(host, d.port, d.certSha256)
+          .request('GET', '/v1/info')
+          .timeout(const Duration(seconds: 6));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Save a profile of [base] that always connects through a VPN at [host]
+  /// ('tailscale' / 'wireguard'); replaces an earlier profile of that kind.
+  Future<PairedDevice> addVpnProfile(PairedDevice base, String profile, String host, String label) async {
+    final p = PairedDevice(
+      deviceId: base.deviceId,
+      name: '${base.name} · $label',
+      host: host,
+      port: base.port,
+      certSha256: base.certSha256,
+      adminId: base.adminId,
+      addedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      profile: profile,
+    );
+    await add(p);
+    return devices.firstWhere((x) => x.key == p.key, orElse: () => p);
+  }
+
+  /// Forget a device and all its VPN profiles (after removing RP Security).
+  Future<void> forgetAll(String deviceId) async {
+    for (final d in devices.where((x) => x.deviceId == deviceId).toList()) {
+      await services.vault.removeDevice(d.key);
+      _clients.remove(d.key);
+    }
+    await load();
+  }
 
   Future<void> forget(PairedDevice d) async {
-    await services.vault.removeDevice(d.deviceId);
-    _clients.remove(d.deviceId);
+    await services.vault.removeDevice(d.key);
+    _clients.remove(d.key);
     await load();
   }
 }

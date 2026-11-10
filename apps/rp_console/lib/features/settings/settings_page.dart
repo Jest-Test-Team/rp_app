@@ -141,7 +141,7 @@ class SettingsPage extends StatelessWidget {
     );
     if (ok != true) return;
     await client.uninstall();
-    await app.forget(device);
+    await app.forgetAll(device.deviceId);
     if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
   }
 }

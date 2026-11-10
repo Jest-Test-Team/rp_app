@@ -87,6 +87,9 @@ class FakeDevice implements Transport {
   final actions = <Map<String, Object?>>[];
   List<Map<String, Object?>> healthAlerts = [];
   int feedUpdates = 0;
+
+  /// Replaces the default VPN status (Tailscale only) when set.
+  Map<String, Object?>? vpnStatus;
   int? feedsUpdatedAt;
   Set<String> feedFails = {};
   static List<String> asStrings(Object? v) => v is List ? v.whereType<String>().toList() : [];
@@ -306,6 +309,7 @@ class FakeDevice implements Transport {
       };
     }
     if (p == '/v1/vpn/status') {
+      if (vpnStatus != null) return vpnStatus;
       return {
         'configured': true,
         'mode': 'tailscale',

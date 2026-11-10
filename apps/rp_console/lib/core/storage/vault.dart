@@ -55,6 +55,7 @@ class PairedDevice {
     required this.adminId,
     required this.addedAt,
     this.vpnHosts = const [],
+    this.profile = '',
   });
 
   final String deviceId;
@@ -69,6 +70,14 @@ class PairedDevice {
   /// learned from the device; used away from home or with an exit node.
   final List<String> vpnHosts;
 
+  /// '' for the device as paired; 'tailscale' / 'wireguard' for a profile of
+  /// the same device that always connects through that VPN ([host] is then
+  /// the device's VPN address). Same key, same pinned certificate.
+  final String profile;
+
+  /// Unique per entry (a device and its VPN profiles share [deviceId]).
+  String get key => profile.isEmpty ? deviceId : '$deviceId#$profile';
+
   Map<String, Object> toJson() => {
     'device_id': deviceId,
     'name': name,
@@ -78,6 +87,7 @@ class PairedDevice {
     'admin_id': adminId,
     'added_at': addedAt,
     if (vpnHosts.isNotEmpty) 'vpn_hosts': vpnHosts,
+    if (profile.isNotEmpty) 'profile': profile,
   };
 
   static PairedDevice fromJson(Map<String, Object?> j) => PairedDevice(
@@ -89,18 +99,21 @@ class PairedDevice {
     adminId: j['admin_id'] as String,
     addedAt: j['added_at'] as int,
     vpnHosts: j['vpn_hosts'] is List ? (j['vpn_hosts'] as List).whereType<String>().toList() : const [],
+    profile: j['profile'] is String ? j['profile'] as String : '',
   );
 
-  PairedDevice copyWith({String? name, String? host, int? port, List<String>? vpnHosts}) => PairedDevice(
-    deviceId: deviceId,
-    name: name ?? this.name,
-    host: host ?? this.host,
-    port: port ?? this.port,
-    certSha256: certSha256,
-    adminId: adminId,
-    addedAt: addedAt,
-    vpnHosts: vpnHosts ?? this.vpnHosts,
-  );
+  PairedDevice copyWith({String? name, String? host, int? port, List<String>? vpnHosts, String? profile}) =>
+      PairedDevice(
+        deviceId: deviceId,
+        name: name ?? this.name,
+        host: host ?? this.host,
+        port: port ?? this.port,
+        certSha256: certSha256,
+        adminId: adminId,
+        addedAt: addedAt,
+        vpnHosts: vpnHosts ?? this.vpnHosts,
+        profile: profile ?? this.profile,
+      );
 }
 
 class Vault {
@@ -135,12 +148,14 @@ class Vault {
   }
 
   Future<void> saveDevice(PairedDevice d) async {
-    final all = (await devices()).where((x) => x.deviceId != d.deviceId).toList()..add(d);
+    final all = (await devices()).where((x) => x.key != d.key).toList()..add(d);
     await store.write(_devicesName, jsonEncode([for (final x in all) x.toJson()]));
   }
 
-  Future<void> removeDevice(String deviceId) async {
-    final all = (await devices()).where((x) => x.deviceId != deviceId).toList();
+  /// Remove one entry by [PairedDevice.key] (a device id removes the device
+  /// as paired, not its VPN profiles).
+  Future<void> removeDevice(String key) async {
+    final all = (await devices()).where((x) => x.key != key).toList();
     await store.write(_devicesName, jsonEncode([for (final x in all) x.toJson()]));
   }
 
