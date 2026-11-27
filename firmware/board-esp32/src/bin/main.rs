@@ -42,8 +42,14 @@ const PROFILE_OFFSET: u32 = 0xA000;
 const MAGIC: &[u8; 4] = b"RPK1";
 const PROFILE_MAGIC: &[u8; 4] = b"RPP1";
 
+/// No radio code in this firmware yet, so no sentry; oob, honeypot and csi
+/// switch and report but do nothing else so far.
 fn supported() -> Profiles {
-    Profile::ALL.into_iter().fold(Profiles::empty(), Profiles::with)
+    Profiles::empty()
+        .with(Profile::Approver)
+        .with(Profile::Oob)
+        .with(Profile::Honeypot)
+        .with(Profile::Csi)
 }
 
 /// Single LED: on/off for a light at time `now` (ms).

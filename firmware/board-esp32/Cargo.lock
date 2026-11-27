@@ -1167,6 +1167,7 @@ name = "rp-board"
 version = "0.3.0"
 dependencies = [
  "ed25519-dalek",
+ "heapless 0.8.0",
  "rp-wire",
 ]
 

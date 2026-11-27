@@ -159,11 +159,15 @@ struct Port {
     to_board: Option<mpsc::Sender<String>>,
     /// The attached client, with its id.
     client: Option<(u64, mpsc::Sender<String>)>,
+    /// A sentry board was told which SSID to guard since it (re)started.
+    watch_sent: bool,
 }
 
 /// Shared state of all ports.
 pub struct Hub {
     root: PathBuf,
+    /// The SSID sentry boards guard (the gateway's IoT access point).
+    watch: Option<Vec<u8>>,
     ports: Mutex<HashMap<String, Port>>,
     next_client: AtomicU64,
 }
@@ -207,6 +211,10 @@ fn clean(s: &str) -> String {
 
 impl Hub {
     pub fn new(root: &Path, ports: &[String]) -> Arc<Self> {
+        Self::with_watch(root, ports, None)
+    }
+
+    pub fn with_watch(root: &Path, ports: &[String], watch: Option<Vec<u8>>) -> Arc<Self> {
         let dir = state_dir(root);
         let _ = std::fs::create_dir_all(&dir);
         let map = ports
@@ -218,12 +226,14 @@ impl Hub {
                     log: LogFile::open(log_path(root, p)),
                     to_board: None,
                     client: None,
+                    watch_sent: false,
                 };
                 (p.clone(), port)
             })
             .collect();
         Arc::new(Self {
             root: root.to_path_buf(),
+            watch,
             ports: Mutex::new(map),
             next_client: AtomicU64::new(1),
         })
@@ -269,6 +279,13 @@ impl Hub {
         if line.trim().is_empty() || line.starts_with("# ") {
             return;
         }
+        // A start can cut the bootloader's last line short, so the board's
+        // first LOG line arrives glued to it: split them.
+        if let Some(i) = line.find("LOG ").filter(|&i| i > 0) {
+            self.from_board(port, &line[..i]);
+            self.from_board(port, &line[i..]);
+            return;
+        }
         let forward = match KeyMsg::parse(line) {
             Some(KeyMsg::Log { level, text }) => {
                 if text.starts_with("boot reason=") || text.starts_with("restarted after") {
@@ -279,7 +296,10 @@ impl Hub {
                 if let Some(rest) = text.strip_prefix("running profile=") {
                     let name = rest.split(' ').next().unwrap_or("");
                     if let Some(prof) = rp_wire::Profile::parse(name) {
-                        self.with(port, |p| p.status.profile = Some(prof.as_str().into()));
+                        self.with(port, |p| {
+                            p.status.profile = Some(prof.as_str().into());
+                            p.watch_sent = false; // it restarted
+                        });
                     }
                 }
                 self.log(port, level.as_str(), "board", text);
@@ -336,6 +356,7 @@ impl Hub {
                 let was = p.status.connected;
                 p.status.connected = up;
                 p.to_board = to_board;
+                p.watch_sent = false;
                 if !up {
                     p.client = None;
                     p.status.profile = None;
@@ -347,6 +368,18 @@ impl Hub {
             let what = if up { "board connected" } else { "board disconnected" };
             self.log(port, if up { "info" } else { "warn" }, "gateway", what);
         }
+    }
+
+    /// The WATCH line for a sentry board that has not been told yet.
+    fn pending_watch(&self, port: &str) -> Option<String> {
+        let ssid = self.watch.as_ref()?;
+        let line = HostMsg::watch(ssid)?.to_string();
+        self.with(port, |p| {
+            let due = p.status.profile.as_deref() == Some("sentry") && !p.watch_sent;
+            p.watch_sent |= due;
+            due.then_some(line)
+        })
+        .flatten()
     }
 
     fn needs_info(&self, port: &str) -> bool {
@@ -424,6 +457,13 @@ fn port_worker(hub: Arc<Hub>, port: String) {
                     }
                 }
                 next_query = Instant::now() + Duration::from_secs(if missing { 2 } else { 60 });
+            }
+            if !hub.attached(&port) {
+                if let Some(w) = hub.pending_watch(&port) {
+                    if let Err(e) = link.send(&w) {
+                        hub.log(&port, "warn", "gateway", &format!("write failed: {e}"));
+                    }
+                }
             }
             match link.recv(Instant::now() + Duration::from_millis(100)) {
                 Ok(Some(line)) => hub.from_board(&port, &line),
@@ -507,7 +547,8 @@ pub fn serve(hub: Arc<Hub>, socket: &Path) -> io::Result<()> {
 /// `rp-agent boards`: run until killed.
 pub fn run(cfg: &Config, root: &Path) -> io::Result<()> {
     let ports = ports(cfg);
-    let hub = Hub::new(root, &ports);
+    let watch = cfg.ap.as_ref().map(|a| a.ssid.as_bytes().to_vec());
+    let hub = Hub::with_watch(root, &ports, watch);
     for p in ports {
         let hub = hub.clone();
         std::thread::spawn(move || port_worker(hub, p));
@@ -533,7 +574,7 @@ impl HubLink {
                 "rp-boards: {}",
                 l.strip_prefix("ERR ").unwrap_or(&l)
             ))),
-            None => Err(io::Error::other("rp-boards did not answer")),
+            None => Err(io::Error::other("rp-boards: did not answer")),
         }
     }
 }
@@ -576,7 +617,14 @@ pub fn open_port(root: &Path, port: &str) -> io::Result<Box<dyn KeyLink>> {
     if socket.exists() {
         match HubLink::attach(&socket, port) {
             Ok(l) => return Ok(Box::new(l)),
-            Err(e) if !e.to_string().contains("unknown port") => return Err(e),
+            // rp-boards answered: the port is busy, not connected, ...
+            Err(e)
+                if e.to_string().starts_with("rp-boards:")
+                    && !e.to_string().contains("unknown port") =>
+            {
+                return Err(e)
+            }
+            // A stale socket (service stopped) or a port it does not manage.
             Err(_) => {}
         }
     }
@@ -613,6 +661,8 @@ mod tests {
         hub.from_board(P, "I (27) boot: chip revision: v3.1");
         hub.from_board(P, "====================== PANIC ======================");
         hub.from_board(P, "# button down");
+        hub.from_board(P, "I (194) esp_image: segment 3: sizeLOG info boot reason=CoreUsbUart");
+        assert_eq!(read_status(&r)[0].last_boot.as_deref(), Some("boot reason=CoreUsbUart"));
         hub.from_board(P, "ERR bad line");
 
         let st = read_status(&r);
@@ -620,11 +670,11 @@ mod tests {
         assert_eq!(st[0].chip.as_deref(), Some("esp32"));
         assert_eq!(st[0].profile.as_deref(), Some("approver"));
         assert_eq!(st[0].supported, ["approver", "oob"]);
-        assert_eq!(st[0].last_boot.as_deref(), Some("boot reason=SysBrownOut"));
+        assert_eq!(st[0].last_boot.as_deref(), Some("boot reason=CoreUsbUart"), "the latest");
         assert_eq!(st[0].errors, 2, "the LOG error and the panic line");
 
         let all = read_logs(&r, P, 100, None);
-        assert_eq!(all.len(), 6, "everything but the # note and INFO: {all:?}");
+        assert_eq!(all.len(), 8, "everything but the # note and INFO: {all:?}");
         assert_eq!(all[0].text, "ERR bad line", "newest first");
         let errors = read_logs(&r, P, 100, Some("error"));
         assert_eq!(errors.len(), 2);
@@ -686,6 +736,20 @@ mod tests {
         }
         assert!(!hub.attached(P), "detached when the client goes away");
         assert!(HubLink::attach(&socket, P).is_ok());
+    }
+
+    #[test]
+    fn sentry_boards_are_told_the_ssid_once_per_start() {
+        let r = root("watch");
+        let hub = Hub::with_watch(&r, &[P.to_string()], Some(b"iot".to_vec()));
+        assert_eq!(hub.pending_watch(P), None, "profile unknown yet");
+        hub.from_board(P, "LOG info running profile=sentry firmware=0.2.0");
+        assert_eq!(hub.pending_watch(P).as_deref(), Some("WATCH 696f74"));
+        assert_eq!(hub.pending_watch(P), None, "once");
+        hub.from_board(P, "LOG info running profile=sentry firmware=0.2.0");
+        assert!(hub.pending_watch(P).is_some(), "again after a restart");
+        hub.from_board(P, "LOG info running profile=approver firmware=0.2.0");
+        assert_eq!(hub.pending_watch(P), None, "not for other profiles");
     }
 
     #[test]

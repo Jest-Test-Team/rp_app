@@ -78,7 +78,7 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # 切換 profile（
 ```
 
 - 設定檔的 `backup_port`（預設 `/dev/rp-approver-backup`）在 `port` 沒插東西時使用；udev 規則請用板子的序號綁定（見 `99-rp-approver.rules`）。
-- 每塊板子一次跑一個 profile：`approver`、`oob`、`honeypot`、`sentry`、`csi`（S3 不支援 `oob`）。**只有 `approver` 會回應核准請求**；切到其他 profile 時核准會失敗（維持 pending），不會變寬鬆。目前除了 `approver` 以外的 profile 只有切換與狀態回報，功能尚未實作。
+- 每塊板子一次跑一個 profile：S3 有 `approver`、`honeypot`、`sentry`、`csi`；WROOM 有 `approver`、`oob`、`honeypot`、`csi`。**只有 `approver` 會回應核准請求**；切到其他 profile 時核准會失敗（維持 pending），不會變寬鬆。已實作：`approver`、`sentry`（S3）；`oob`、`honeypot`、`csi` 目前只有切換與狀態回報。
 - 開啟 USB-UART 時 Pi 會同時放掉 DTR/RTS，避免經典 ESP32 被自動下載電路卡在重置；核准前會先等板子回應 `INFO`，並確認它是已登記的鑰匙且在 `approver` profile。
 
 ## 板子狀態與錯誤記錄（rp-boards）
@@ -90,6 +90,18 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # 切換 profile（
 - **查看**：手機 App「設定 › ESP32 板子」（狀態、依等級篩選的記錄、複製、切換 profile）；Claude 的唯讀 MCP 工具 `get_boards`、`get_board_logs`；API `GET /v1/boards`、`GET /v1/boards/logs?level=warn`。
 - **切換 profile**：App 送出管理員簽章的 `set_board_profile`，由 rp-privd 透過 rp-boards 轉給板子。核准請求、`rpctl approver info|profile|enroll` 也都經由 rp-boards（`/run/rp-boards/boards.sock`，只有 root 能連），不會和它搶序列埠；只接受 rp-wire 指令，不能對板子打任意文字。
 - **沙箱**：沒有網路（`PrivateNetwork=yes`）、只能開 ttyACM／ttyUSB 裝置、沒有任何 capability。板子送來的文字一律當作資料顯示。
+
+## Wi-Fi 哨兵（S3 的 `sentry` profile）
+
+接上外接天線的 S3 切到 `sentry` 後才會打開無線電（`approver` 時一律關閉），以 promiscuous 模式**只收不發**，每 250 ms 輪流切換頻道 1–13，只看 802.11 標頭與 SSID，不讀也不存任何資料內容：
+
+| 偵測 | 條件 | 記錄 |
+|---|---|---|
+| deauth／disassoc 洪水 | 同一個 BSSID 10 秒內 ≥ 20 個 | `warn sentry: deauth/disassoc flood from <bssid> ...` |
+| Evil Twin | IoT AP 的 SSID（rp-boards 自動以 `WATCH` 告知，取自 `[ap] ssid`）出現第二個 BSSID | `warn sentry: '<ssid>' also advertised by <bssid> ...`（mesh／延伸器也會觸發，請人工確認） |
+| 頻道擁擠度 | 每 60 秒 | `info sentry: channel load ch1=47f/2ap ...`（f＝訊框數、ap＝AP 數） |
+
+記錄一樣進 rp-boards，App 的「ESP32 板子」與 MCP `get_board_logs` 都看得到。台灣法規：只被動監聽；韌體從不送出訊框（不掃描、不連線）。
 
 ## 鑰匙遺失或損壞
 

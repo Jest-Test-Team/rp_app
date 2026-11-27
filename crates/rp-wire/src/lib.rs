@@ -22,6 +22,7 @@
 //! | board → gateway | `INFO <chip> <profile> <version> <supported profiles, comma-separated>` |
 //! | gateway → board | `PROFILE <name>` (board answers `OK`, stores it and restarts) |
 //! | board → gateway | `LOG <error\|warn\|info> <text>` (any time; kept by rp-boards) |
+//! | gateway → board | `WATCH <ssid, hex>` (sentry: the network to guard against evil twins) |
 //!
 //! Lines starting with `# ` are diagnostics; anything else a board prints
 //! (boot ROM, panic messages) is kept as raw log text by the gateway.
@@ -177,10 +178,30 @@ pub const MAX_LOG_TEXT: usize = 120;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostMsg {
     Hello,
-    Ask { id: [u8; ID_LEN], digest: [u8; DIGEST_LEN], nonce: [u8; NONCE_LEN] },
+    Ask {
+        id: [u8; ID_LEN],
+        digest: [u8; DIGEST_LEN],
+        nonce: [u8; NONCE_LEN],
+    },
     Cancel,
     Info,
     SetProfile(Profile),
+    /// The SSID a sentry board guards (up to 32 bytes).
+    Watch {
+        ssid: [u8; 32],
+        len: u8,
+    },
+}
+
+impl HostMsg {
+    pub fn watch(ssid: &[u8]) -> Option<Self> {
+        if ssid.is_empty() || ssid.len() > 32 {
+            return None;
+        }
+        let mut b = [0u8; 32];
+        b[..ssid.len()].copy_from_slice(ssid);
+        Some(HostMsg::Watch { ssid: b, len: ssid.len() as u8 })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +261,7 @@ impl fmt::Display for HostMsg {
             HostMsg::Cancel => f.write_str("CANCEL"),
             HostMsg::Info => f.write_str("INFO"),
             HostMsg::SetProfile(p) => write!(f, "PROFILE {}", p.as_str()),
+            HostMsg::Watch { ssid, len } => write!(f, "WATCH {}", Hex(&ssid[..*len as usize])),
             HostMsg::Ask { id, digest, nonce } => {
                 write!(f, "ASK {} {} {}", Hex(id), Hex(digest), Hex(nonce))
             }
@@ -255,6 +277,18 @@ impl HostMsg {
             ("CANCEL", 1) => Some(HostMsg::Cancel),
             ("INFO", 1) => Some(HostMsg::Info),
             ("PROFILE", 2) => Some(HostMsg::SetProfile(Profile::parse(f[1])?)),
+            ("WATCH", 2) => {
+                let h = f[1].as_bytes();
+                if h.is_empty() || h.len() > 64 || h.len() % 2 != 0 {
+                    return None;
+                }
+                let mut ssid = [0u8; 32];
+                for i in 0..h.len() / 2 {
+                    let pair = core::str::from_utf8(&h[2 * i..2 * i + 2]).ok()?;
+                    ssid[i] = unhex::<1>(pair)?[0];
+                }
+                Some(HostMsg::Watch { ssid, len: (h.len() / 2) as u8 })
+            }
             ("ASK", 4) => {
                 Some(HostMsg::Ask { id: unhex(f[1])?, digest: unhex(f[2])?, nonce: unhex(f[3])? })
             }
@@ -345,7 +379,10 @@ mod tests {
     fn host_messages_round_trip() {
         let ask = HostMsg::Ask { id: [0xab; 6], digest: [1; 32], nonce: [0xfe; 16] };
         let set = HostMsg::SetProfile(Profile::Oob);
-        for m in [HostMsg::Hello, HostMsg::Cancel, HostMsg::Info, set, ask] {
+        let watch = HostMsg::watch(b"home-iot").unwrap();
+        assert_eq!(watch.to_string(), "WATCH 686f6d652d696f74");
+        assert!(HostMsg::watch(&[b'x'; 33]).is_none());
+        for m in [HostMsg::Hello, HostMsg::Cancel, HostMsg::Info, set, watch, ask] {
             assert_eq!(HostMsg::parse(&m.to_string()), Some(m));
         }
         assert!(ask.to_string().len() <= MAX_LINE);

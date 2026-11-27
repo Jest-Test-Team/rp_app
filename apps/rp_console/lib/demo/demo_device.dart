@@ -107,7 +107,7 @@ class FakeDevice implements Transport {
       'chip': 'esp32',
       'firmware': '0.2.0',
       'profile': 'approver',
-      'supported': ['approver', 'oob', 'honeypot', 'sentry', 'csi'],
+      'supported': ['approver', 'oob', 'honeypot', 'csi'],
       'key_id': '4f186fe903930e9a',
       'enrolled_as': 'backup',
       'last_boot': 'boot reason=SysBrownOut (supply voltage dropped: use a powered hub)',

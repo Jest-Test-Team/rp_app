@@ -12,3 +12,4 @@ repository.workspace = true
 [dependencies]
 rp-wire = { path = "../rp-wire" }
 ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+heapless = "0.8"

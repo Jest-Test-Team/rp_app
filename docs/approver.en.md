@@ -78,7 +78,7 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # switch profile (t
 ```
 
 - `backup_port` (default `/dev/rp-approver-backup`) is used when nothing is plugged in at `port`; pin the udev rule to the board's serial number (see `99-rp-approver.rules`).
-- A board runs one profile at a time: `approver`, `oob`, `honeypot`, `sentry`, `csi` (the S3 has no `oob`). **Only `approver` answers approval requests**; in any other profile approvals fail and stay pending. Apart from `approver`, profiles so far only switch and report; their functions are not implemented yet.
+- A board runs one profile at a time: the S3 has `approver`, `honeypot`, `sentry`, `csi`; the WROOM has `approver`, `oob`, `honeypot`, `csi`. **Only `approver` answers approval requests**; in any other profile approvals fail and stay pending. Implemented: `approver` and `sentry` (S3); `oob`, `honeypot` and `csi` so far only switch and report.
 - When opening a USB-UART port the gateway drops DTR and RTS together so the auto-download circuit does not hold a classic ESP32 in reset; before asking, it waits for the board's `INFO` and checks that it is an enrolled key in the `approver` profile.
 
 ## Board status and error log (rp-boards)
@@ -90,6 +90,18 @@ With `[approver]` (or `[boards] ports = [...]`) in the config, `sudo rpctl apply
 - **Viewing**: the console app's Settings › ESP32 boards (status, log filtered by level, copy, profile switch); Claude's read-only MCP tools `get_boards` and `get_board_logs`; the API `GET /v1/boards` and `GET /v1/boards/logs?level=warn`.
 - **Switching profiles**: the app sends an admin-signed `set_board_profile`, which rp-privd passes to the board through rp-boards. Approvals and `rpctl approver info|profile|enroll` also go through rp-boards (`/run/rp-boards/boards.sock`, root only), so nothing fights over a port; only rp-wire requests pass, never raw text.
 - **Sandbox**: no network (`PrivateNetwork=yes`), only ttyACM/ttyUSB devices, no capabilities. Text from boards is displayed as data, never acted on.
+
+## Wi-Fi sentry (the S3's `sentry` profile)
+
+Only in `sentry` does the S3 (with its external antenna) turn the radio on (never in `approver`). It receives in promiscuous mode and **never transmits**, hopping channels 1-13 every 250 ms, and looks only at 802.11 headers and SSIDs, never at payloads:
+
+| Detects | When | Logged |
+|---|---|---|
+| deauth/disassoc flood | ≥ 20 from one BSSID within 10 s | `warn sentry: deauth/disassoc flood from <bssid> ...` |
+| evil twin | the IoT AP's SSID (sent by rp-boards as `WATCH`, from `[ap] ssid`) advertised by a second BSSID | `warn sentry: '<ssid>' also advertised by <bssid> ...` (mesh systems and extenders trigger this too: check) |
+| channel load | every 60 s | `info sentry: channel load ch1=47f/2ap ...` (f = frames, ap = access points) |
+
+The lines go through rp-boards like any other board log: the app's ESP32 boards page and the MCP tool `get_board_logs` show them. Passive listening only; the firmware never sends frames (it does not scan or connect).
 
 ## Lost or broken key
 

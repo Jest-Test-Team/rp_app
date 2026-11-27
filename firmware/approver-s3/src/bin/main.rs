@@ -11,6 +11,10 @@
 //! * flash: key seed at 0x9000, profile at 0xA000 (inside `nvs`, which
 //!   `espflash flash` keeps; `espflash erase-flash` wipes both)
 //!
+//! Sentry profile (only then is the radio on): promiscuous receive, hopping
+//! channels 1-13 every 250 ms; rp-board's sentry decides what to report.
+//! Nothing is transmitted.
+//!
 //! Light: white for 1 s at boot; idle colour per profile (approver green,
 //! sentry blue, csi purple, honeypot cyan); a waiting request blinks amber;
 //! held long enough = solid green; denied = red flash.
@@ -19,7 +23,13 @@
 #![no_main]
 #![deny(clippy::mem_forget)]
 
+extern crate alloc;
+
+use core::cell::RefCell;
 use core::fmt::Write as _;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use critical_section::Mutex;
 
 use ed25519_dalek::SigningKey;
 use esp_backtrace as _;
@@ -162,6 +172,33 @@ fn boot_log(out: &mut dyn Out, profile: Profile) {
 }
 
 
+/// Management frames copied out of the radio callback (header + SSID only).
+const PKT: usize = 80;
+struct Pkt {
+    len: u8,
+    data: [u8; PKT],
+}
+static FRAMES: Mutex<RefCell<heapless::Deque<Pkt, 48>>> = Mutex::new(RefCell::new(heapless::Deque::new()));
+/// Frames of any kind since the last drain.
+static TRAFFIC: AtomicU32 = AtomicU32::new(0);
+static DROPPED: AtomicU32 = AtomicU32::new(0);
+
+fn on_packet(p: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
+    TRAFFIC.fetch_add(1, Ordering::Relaxed);
+    // Management frames only (type bits 2-3 of the first byte = 0).
+    if p.data.first().is_none_or(|fc| (fc >> 2) & 0b11 != 0) {
+        return;
+    }
+    let n = p.data.len().min(PKT);
+    let mut pkt = Pkt { len: n as u8, data: [0; PKT] };
+    pkt.data[..n].copy_from_slice(&p.data[..n]);
+    critical_section::with(|cs| {
+        if FRAMES.borrow_ref_mut(cs).push_back(pkt).is_err() {
+            DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
+
 struct UsbOut<'a, 'd>(&'a mut UsbSerialJtag<'d, Blocking>);
 
 impl UsbOut<'_, '_> {
@@ -206,6 +243,21 @@ fn main() -> ! {
     let stored = load_profile(&mut flash);
     let mut board = Board::new(key, "esp32s3", VERSION, supported(), stored);
 
+    // Radio only in the sentry profile; an approval key keeps it off.
+    let mut radio = None;
+    if board.profile() == Profile::Sentry {
+        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
+        let timg0 = esp_hal::timer::timg::TimerGroup::new(p.TIMG0);
+        esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
+        let mut ctl = esp_radio::wifi::WifiController::new(p.WIFI, Default::default())
+            .expect("Wi-Fi controller");
+        ctl.set_config(&esp_radio::wifi::Config::Station(Default::default())).expect("station mode");
+        let mut sniffer = ctl.sniffer();
+        sniffer.set_receive_cb(on_packet);
+        sniffer.set_promiscuous_mode(true).expect("promiscuous mode");
+        radio = Some((ctl, sniffer));
+    }
+
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
     let freq = Rate::from_mhz(80);
     let rmt = Rmt::new(p.RMT, freq).expect("RMT");
@@ -242,8 +294,32 @@ fn main() -> ! {
     while boot.elapsed() < Duration::from_millis(1000) {}
     boot_log(&mut UsbOut(&mut usb), board.profile());
 
+    let mut channel = 1u8;
+    let mut hop_at = 0u64;
+    let mut dropped_reported = 0u32;
     loop {
         let now = boot.elapsed().as_millis();
+        if let Some((ctl, _)) = &mut radio {
+            // Count what arrived on the channel we are leaving, then hop.
+            board.on_traffic(TRAFFIC.swap(0, Ordering::Relaxed));
+            while let Some(pkt) = critical_section::with(|cs| FRAMES.borrow_ref_mut(cs).pop_front()) {
+                board.on_frame(&pkt.data[..pkt.len as usize]);
+            }
+            if now >= hop_at {
+                channel = channel % 13 + 1;
+                let _ = ctl.set_channel(channel, esp_radio::wifi::SecondaryChannel::None);
+                board.on_channel(channel);
+                hop_at = now + 250;
+            }
+            let dropped = DROPPED.load(Ordering::Relaxed);
+            if dropped >= dropped_reported + 1000 {
+                dropped_reported = dropped;
+                UsbOut(&mut usb).msg(KeyMsg::Log {
+                    level: Level::Warn,
+                    text: "sentry: busy air, some management frames were not inspected",
+                });
+            }
+        }
         while let Ok(b) = usb.read_byte() {
             if let Some(next) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
                 if !store_profile(&mut flash, next) {

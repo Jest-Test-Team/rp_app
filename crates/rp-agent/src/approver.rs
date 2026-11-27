@@ -352,6 +352,9 @@ pub(crate) mod testkey {
                     self.profile = p;
                     self.out.push_back(KeyMsg::Ok.to_string());
                 }
+                Some(HostMsg::Watch { .. }) => {
+                    self.out.push_back(KeyMsg::Err("not in the sentry profile").to_string())
+                }
                 None => self.out.push_back(KeyMsg::Err("bad line").to_string()),
             }
             Ok(())

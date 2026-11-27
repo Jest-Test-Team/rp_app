@@ -17,6 +17,8 @@
 
 #![no_std]
 
+pub mod sentry;
+
 use ed25519_dalek::{Signer, SigningKey};
 use rp_wire::{HostMsg, KeyMsg, Profile, Profiles};
 
@@ -69,6 +71,7 @@ pub struct Board {
     pressed_at: Option<u64>,
     was_down: bool,
     result: Option<(Light, u64)>,
+    sentry: Option<sentry::Sentry>,
 }
 
 impl Board {
@@ -99,6 +102,28 @@ impl Board {
             pressed_at: None,
             was_down: false,
             result: None,
+            sentry: (profile == Profile::Sentry).then(sentry::Sentry::new),
+        }
+    }
+
+    /// Sentry profile: the radio moved to channel `ch`.
+    pub fn on_channel(&mut self, ch: u8) {
+        if let Some(s) = &mut self.sentry {
+            s.on_channel(ch);
+        }
+    }
+
+    /// Sentry profile: `n` frames of any kind arrived on the current channel.
+    pub fn on_traffic(&mut self, n: u32) {
+        if let Some(s) = &mut self.sentry {
+            s.traffic(n);
+        }
+    }
+
+    /// Sentry profile: one received 802.11 frame (header and SSID only are used).
+    pub fn on_frame(&mut self, data: &[u8]) {
+        if let (Some(s), Some(f)) = (&mut self.sentry, sentry::parse(data)) {
+            s.frame(&f);
         }
     }
 
@@ -164,6 +189,13 @@ impl Board {
                 self.pressed_at = None;
                 self.result = None;
             }
+            Some(HostMsg::Watch { ssid, len }) => match &mut self.sentry {
+                Some(s) => {
+                    s.watch(&ssid[..len as usize]);
+                    out.msg(KeyMsg::Ok);
+                }
+                None => out.msg(KeyMsg::Err("not in the sentry profile")),
+            },
             Some(HostMsg::Cancel) => {
                 self.ask = None;
                 self.pressed_at = None;
@@ -175,6 +207,9 @@ impl Board {
 
     /// Call often (every few ms) with the button level.
     pub fn tick(&mut self, now: u64, down: bool, out: &mut dyn Out) -> Light {
+        if let Some(s) = &mut self.sentry {
+            s.tick(now, &mut |level, text| out.msg(KeyMsg::Log { level, text }));
+        }
         if down != self.was_down {
             self.was_down = down;
             out.note(if down { "button down" } else { "button up" });
@@ -337,6 +372,45 @@ mod tests {
         assert_eq!(send(&mut b, "PROFILE approver", 0, &mut out), None, "already running");
         assert_eq!(send(&mut b, "PROFILE oob", 0, &mut out), Some(Profile::Oob));
         assert_eq!(out.lines.pop().unwrap(), "OK");
+    }
+
+    #[test]
+    fn sentry_profile_watches_and_reports() {
+        let all = Profiles::empty().with(Profile::Approver).with(Profile::Sentry);
+        let mut b =
+            Board::new(SigningKey::from_bytes(&[5; 32]), "c", "1", all, Some(Profile::Sentry));
+        let mut out = Rec::default();
+        send(&mut b, &HostMsg::watch(b"iot").unwrap().to_string(), 0, &mut out);
+        assert_eq!(out.lines.pop().as_deref(), Some("OK"));
+        b.on_channel(6);
+        let beacon = |bssid: u8| {
+            let mut f = std::vec![0x80u8, 0, 0, 0];
+            f.extend([0xff; 6]);
+            f.extend([2, 0, 0, 0, 0, bssid]);
+            f.extend([2, 0, 0, 0, 0, bssid]);
+            f.extend([0; 2 + 12]);
+            f.extend([0, 3]);
+            f.extend(b"iot");
+            f
+        };
+        b.on_frame(&beacon(1));
+        b.on_frame(&beacon(9));
+        b.on_traffic(2);
+        b.tick(sentry::SUMMARY_MS, false, &mut out);
+        assert!(
+            out.lines.iter().any(|l| l.starts_with("LOG warn sentry: 'iot' also advertised")),
+            "{:?}",
+            out.lines
+        );
+        assert!(out
+            .lines
+            .iter()
+            .any(|l| l.starts_with("LOG info sentry: channel load ch6=2f/2ap")));
+
+        let (mut a, mut out) = (board(Profile::Approver), Rec::default());
+        send(&mut a, "WATCH 696f74", 0, &mut out);
+        assert_eq!(out.lines.pop().as_deref(), Some("ERR not in the sentry profile"));
+        a.on_frame(&beacon(1)); // ignored, no radio in approver
     }
 
     #[test]
