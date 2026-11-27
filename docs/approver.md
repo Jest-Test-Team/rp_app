@@ -65,6 +65,22 @@ sudo rpctl approver list
 # wait_seconds = 60        # 10-300
 ```
 
+## 備用鑰匙（ESP32-WROOM）與 profile
+
+`firmware/board-esp32` 是經典 ESP32 的韌體，和 S3 共用 `crates/rp-board`（協定、按鍵規則、profile）。WROOM 經由板上的 USB-UART 晶片連線（CH9102，`1a86:55d4`，Pi 上是 `/dev/ttyUSB*`）；按鍵是 BOOT，指示燈是 GPIO2 的藍燈（請求等待中快閃、按夠久恆亮）。
+
+```bash
+cd firmware/board-esp32 && cargo build --release
+espflash flash --chip esp32 target/xtensa-esp32-none-elf/release/board-esp32
+sudo rpctl approver info --port /dev/ttyUSB0                 # 晶片、韌體、profile、金鑰 id
+sudo rpctl approver enroll --name backup --port /dev/ttyUSB0
+sudo rpctl approver profile sentry --port /dev/ttyUSB0       # 切換 profile（板子會重開機）
+```
+
+- 設定檔的 `backup_port`（預設 `/dev/rp-approver-backup`）在 `port` 沒插東西時使用；udev 規則請用板子的序號綁定（見 `99-rp-approver.rules`）。
+- 每塊板子一次跑一個 profile：`approver`、`oob`、`honeypot`、`sentry`、`csi`（S3 不支援 `oob`）。**只有 `approver` 會回應核准請求**；切到其他 profile 時核准會失敗（維持 pending），不會變寬鬆。目前除了 `approver` 以外的 profile 只有切換與狀態回報，功能尚未實作。
+- 開啟 USB-UART 時 Pi 會同時放掉 DTR/RTS，避免經典 ESP32 被自動下載電路卡在重置；核准前會先等板子回應 `INFO`，並確認它是已登記的鑰匙且在 `approver` profile。
+
 ## 鑰匙遺失或損壞
 
 兩種方式並存：

@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "approver-s3"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "critical-section",
  "ed25519-dalek",
@@ -24,6 +24,7 @@ dependencies = [
  "esp-println",
  "esp-storage",
  "heapless 0.8.0",
+ "rp-board",
  "rp-wire",
  "sha2 0.10.9",
  "smart-leds",
@@ -1232,6 +1233,14 @@ name = "riscv-target-parser"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1376b15f3ff160e9b1e8ea564ce427f2f6fcf77528cc0a8bf405cb476f9cea7"
+
+[[package]]
+name = "rp-board"
+version = "0.3.0"
+dependencies = [
+ "ed25519-dalek",
+ "rp-wire",
+]
 
 [[package]]
 name = "rp-wire"

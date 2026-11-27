@@ -292,12 +292,28 @@ mod tests {
         }
         // A key that is not enrolled.
         let (r, calls) = f.decide(&id, 9, Press::Approve);
-        assert!(r.unwrap_err().contains("signature"));
+        assert!(r.unwrap_err().contains("not an enrolled key"));
         assert_eq!((calls, f.status(&id)), (0, Status::Pending));
 
         // A short press on the key denies the request for good.
         let (r, calls) = f.decide(&id, 1, Press::Deny);
         assert_eq!((r.unwrap().status, calls), (Status::Denied, 0));
+    }
+
+    #[test]
+    fn a_board_in_another_profile_cannot_approve() {
+        let f = fixture("profile", true);
+        f.enroll(1);
+        let id = f.request();
+        let runner = RecordingRunner::default();
+        let open = |_: &Approver, _: &Path| -> std::io::Result<Box<dyn KeyLink>> {
+            let mut k = SoftKey::new(1, Press::Approve);
+            k.profile = rp_wire::Profile::Sentry;
+            Ok(Box::new(k))
+        };
+        let e = decide_with(&f.cfg, &f.root, &id, true, "admin:t", &runner, &open).unwrap_err();
+        assert!(e.contains("sentry profile"), "{e}");
+        assert_eq!((runner.calls().len(), f.status(&id)), (0, Status::Pending));
     }
 
     #[test]

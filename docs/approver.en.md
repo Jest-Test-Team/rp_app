@@ -65,6 +65,22 @@ Add to `/etc/rp/rp.toml`:
 # wait_seconds = 60        # 10-300
 ```
 
+## Backup key (ESP32-WROOM) and profiles
+
+`firmware/board-esp32` is the classic ESP32 firmware; it shares `crates/rp-board` (protocol, button rules, profiles) with the S3. The WROOM talks through its USB-UART bridge (CH9102, `1a86:55d4`, `/dev/ttyUSB*` on the Pi); the button is BOOT and the light is the blue LED on GPIO2 (fast blink while a request waits, solid once held long enough).
+
+```bash
+cd firmware/board-esp32 && cargo build --release
+espflash flash --chip esp32 target/xtensa-esp32-none-elf/release/board-esp32
+sudo rpctl approver info --port /dev/ttyUSB0                 # chip, firmware, profile, key id
+sudo rpctl approver enroll --name backup --port /dev/ttyUSB0
+sudo rpctl approver profile sentry --port /dev/ttyUSB0       # switch profile (the board restarts)
+```
+
+- `backup_port` (default `/dev/rp-approver-backup`) is used when nothing is plugged in at `port`; pin the udev rule to the board's serial number (see `99-rp-approver.rules`).
+- A board runs one profile at a time: `approver`, `oob`, `honeypot`, `sentry`, `csi` (the S3 has no `oob`). **Only `approver` answers approval requests**; in any other profile approvals fail and stay pending. Apart from `approver`, profiles so far only switch and report; their functions are not implemented yet.
+- When opening a USB-UART port the gateway drops DTR and RTS together so the auto-download circuit does not hold a classic ESP32 in reset; before asking, it waits for the board's `INFO` and checks that it is an enrolled key in the `approver` profile.
+
 ## Lost or broken key
 
 Both mechanisms are available:

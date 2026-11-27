@@ -1140,6 +1140,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "ipnet",
+ "libc",
  "rand_core",
  "rp-core",
  "rp-dns",
@@ -1181,6 +1182,14 @@ dependencies = [
  "tokio-rustls",
  "tower",
  "utoipa",
+]
+
+[[package]]
+name = "rp-board"
+version = "0.3.0"
+dependencies = [
+ "ed25519-dalek",
+ "rp-wire",
 ]
 
 [[package]]
@@ -1340,6 +1349,7 @@ dependencies = [
  "rp-policy",
  "rp-privd",
  "rp-schema",
+ "rp-wire",
  "rpassword",
  "serde",
  "serde_json",

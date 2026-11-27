@@ -50,6 +50,9 @@ pub struct Approver {
     /// Serial device of the key (a udev rule gives it a stable name).
     #[serde(default = "default_approver_port")]
     pub port: String,
+    /// Used when nothing is plugged in at `port` (the backup key).
+    #[serde(default = "default_approver_backup_port")]
+    pub backup_port: String,
     /// Enrolled public keys (managed by `rpctl approver enroll/revoke`).
     #[serde(default = "default_approver_keys")]
     pub keys_file: String,
@@ -62,6 +65,7 @@ impl Default for Approver {
     fn default() -> Self {
         Self {
             port: default_approver_port(),
+            backup_port: default_approver_backup_port(),
             keys_file: default_approver_keys(),
             wait_seconds: default_approver_wait(),
         }
@@ -70,6 +74,9 @@ impl Default for Approver {
 
 fn default_approver_port() -> String {
     "/dev/rp-approver".into()
+}
+fn default_approver_backup_port() -> String {
+    "/dev/rp-approver-backup".into()
 }
 fn default_approver_keys() -> String {
     "/etc/rp/approver-keys.toml".into()

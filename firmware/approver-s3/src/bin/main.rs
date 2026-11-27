@@ -1,16 +1,19 @@
-//! approver-s3: hardware approval key for the rp gateway.
+//! rp board firmware for the ESP32-S3 (DevKitC-1 N16R8 and clones).
 //!
-//! Speaks `rp-wire` over the S3's native USB port (USB Serial/JTAG, the port
-//! you flash through; `/dev/ttyACM*` on the Pi). Holds an Ed25519 key that is
-//! generated on first boot from the hardware TRNG and stored in flash; only the
-//! public key ever leaves the board.
+//! The chip-independent logic (rp-wire session, approval button, profiles)
+//! is `crates/rp-board`; this file only connects it to the S3's pins:
+//! * link: native USB Serial/JTAG (the port you flash through; `/dev/ttyACM*`
+//!   on the Pi, `303a:1001`)
+//! * button: BOOT (GPIO0). Stopgap: the USB port's DTR/RTS lines also drive
+//!   GPIO0; rp-board's arming rule stops a held/stuck pin from approving, but
+//!   wire a push button between GPIO4 and GND for a real key.
+//! * light: WS2812 RGB LED on GPIO48 or GPIO38 (both are driven)
+//! * flash: key seed at 0x9000, profile at 0xA000 (inside `nvs`, which
+//!   `espflash flash` keeps; `espflash erase-flash` wipes both)
 //!
-//! Buttons and light (onboard only, nothing to solder):
-//! * idle: dim green
-//! * a request is waiting: blinking amber
-//! * hold BOOT for 3 s: approve (light turns solid green while held long enough)
-//! * short press of BOOT: deny (red flash)
-//! * the gateway gives up (CANCEL) or 310 s pass: back to idle
+//! Light: white for 1 s at boot; idle colour per profile (approver green,
+//! sentry blue, csi purple, honeypot cyan); a waiting request blinks amber;
+//! held long enough = solid green; denied = red flash.
 
 #![no_std]
 #![no_main]
@@ -18,9 +21,10 @@
 
 use core::fmt::Write as _;
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use esp_backtrace as _;
 use esp_hal::{
+    Blocking,
     clock::CpuClock,
     gpio::{Input, InputConfig, Pull},
     main,
@@ -29,37 +33,45 @@ use esp_hal::{
     time::{Duration, Instant, Rate},
     usb::usb_serial_jtag::UsbSerialJtag,
 };
-use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds};
+use esp_hal_smartled::{RmtSmartLeds, buffer_size, color_order};
 use esp_storage::FlashStorage;
-use rp_wire::{HostMsg, KeyMsg};
+use rp_board::{Board, Light, Out};
+use rp_wire::{KeyMsg, Profile, Profiles};
 use sha2::{Digest, Sha256};
-use smart_leds::{SmartLedsWrite, RGB8};
+use smart_leds::{RGB8, SmartLedsWrite};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Start of the `nvs` partition in the default partition table. `espflash
-/// flash` leaves it alone, so the key survives firmware updates; `espflash
-/// erase-flash` destroys it (and the key must be enrolled again).
 const KEY_OFFSET: u32 = 0x9000;
+const PROFILE_OFFSET: u32 = 0xA000;
 const MAGIC: &[u8; 4] = b"RPK1";
-/// Backstop only: the gateway decides how long to wait (approver.wait_seconds,
-/// at most 300 s) and sends CANCEL; this just clears a request nobody cancels.
-const ASK_TIMEOUT: Duration = Duration::from_millis(310_000);
-const LONG_PRESS: Duration = Duration::from_millis(3_000);
-const MIN_PRESS: Duration = Duration::from_millis(50);
+const PROFILE_MAGIC: &[u8; 4] = b"RPP1";
 
 const OFF: RGB8 = RGB8 { r: 0, g: 0, b: 0 };
-const IDLE: RGB8 = RGB8 { r: 0, g: 10, b: 0 };
 const AMBER: RGB8 = RGB8 { r: 40, g: 18, b: 0 };
 const GREEN: RGB8 = RGB8 { r: 0, g: 40, b: 0 };
 const RED: RGB8 = RGB8 { r: 40, g: 0, b: 0 };
 
-struct Ask {
-    id: [u8; rp_wire::ID_LEN],
-    digest: [u8; rp_wire::DIGEST_LEN],
-    nonce: [u8; rp_wire::NONCE_LEN],
-    since: Instant,
+fn supported() -> Profiles {
+    Profiles::empty()
+        .with(Profile::Approver)
+        .with(Profile::Honeypot)
+        .with(Profile::Sentry)
+        .with(Profile::Csi)
+}
+
+fn colour(l: Light) -> RGB8 {
+    match l {
+        Light::Idle(Profile::Approver) => RGB8 { r: 0, g: 10, b: 0 },
+        Light::Idle(Profile::Sentry) => RGB8 { r: 0, g: 0, b: 12 },
+        Light::Idle(Profile::Csi) => RGB8 { r: 8, g: 0, b: 10 },
+        Light::Idle(_) => RGB8 { r: 0, g: 8, b: 8 },
+        Light::Waiting { on: true } => AMBER,
+        Light::Waiting { on: false } => OFF,
+        Light::Holding | Light::Approved => GREEN,
+        Light::Denied => RED,
+    }
 }
 
 /// Load the key seed from flash, or create and store one.
@@ -82,6 +94,35 @@ fn load_or_create_key(flash: &mut FlashStorage<'_>, trng: &Trng) -> SigningKey {
     SigningKey::from_bytes(&seed)
 }
 
+fn load_profile(flash: &mut FlashStorage<'_>) -> Option<Profile> {
+    let mut rec = [0u8; 5];
+    flash.read(PROFILE_OFFSET, &mut rec).ok()?;
+    (&rec[..4] == PROFILE_MAGIC).then(|| Profile::from_code(rec[4])).flatten()
+}
+
+fn store_profile(flash: &mut FlashStorage<'_>, p: Profile) {
+    let mut rec = [0u8; 5];
+    rec[..4].copy_from_slice(PROFILE_MAGIC);
+    rec[4] = p.code();
+    let _ = flash.write(PROFILE_OFFSET, &rec);
+}
+
+struct UsbOut<'a, 'd>(&'a mut UsbSerialJtag<'d, Blocking>);
+
+impl Out for UsbOut<'_, '_> {
+    fn msg(&mut self, m: KeyMsg<'_>) {
+        let mut s: heapless::String<{ rp_wire::MAX_LINE + 2 }> = heapless::String::new();
+        let _ = write!(s, "{m}\n");
+        let _ = self.0.write(s.as_bytes());
+        let _ = self.0.flush_tx();
+    }
+    fn note(&mut self, text: &str) {
+        let _ = self.0.write(b"# ");
+        let _ = self.0.write(text.as_bytes());
+        let _ = self.0.write(b"\n");
+    }
+}
+
 #[main]
 fn main() -> ! {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -90,16 +131,12 @@ fn main() -> ! {
     let trng = Trng::try_new().expect("TRNG");
     let mut flash = FlashStorage::new(p.FLASH);
     let key = load_or_create_key(&mut flash, &trng);
-    let public_key = key.verifying_key().to_bytes();
+    let stored = load_profile(&mut flash);
+    let mut board = Board::new(key, "esp32s3", VERSION, supported(), stored);
 
-    // BOOT (GPIO0) is a stopgap: the native USB port's DTR/RTS lines also
-    // drive GPIO0 (auto-download), so the host can fake a press. Wire a push
-    // button between GPIO4 and GND and use `p.GPIO4` here for a real key.
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
     let freq = Rate::from_mhz(80);
     let rmt = Rmt::new(p.RMT, freq).expect("RMT");
-    // The RGB LED sits on GPIO48 (Espressif DevKitC-1 v1.0) or GPIO38 (v1.1
-    // and many N16R8 clones). Drive both; the unused pin is free here.
     let mut led48 = RmtSmartLeds::<{ buffer_size::<RGB8>(1) }, _, RGB8, color_order::Grb>::new_with_memsize(
         esp_hal_smartled::WS2812_TIMING,
         rmt.channel0,
@@ -116,118 +153,33 @@ fn main() -> ! {
         freq,
     )
     .expect("LED 38");
+    let mut shown = None;
     let mut set = |c: RGB8| {
-        let _ = led48.write([c]);
-        let _ = led38.write([c]);
+        if shown != Some(c) {
+            shown = Some(c);
+            let _ = led48.write([c]);
+            let _ = led38.write([c]);
+        }
     };
 
     let mut usb = UsbSerialJtag::new(p.USB_DEVICE);
-    let send = |usb: &mut UsbSerialJtag<'_, _>, m: KeyMsg<'_>| {
-        let mut s: heapless::String<{ rp_wire::MAX_LINE + 2 }> = heapless::String::new();
-        let _ = write!(s, "{m}\n");
-        let _ = usb.write(s.as_bytes());
-        let _ = usb.flush_tx();
-    };
 
-    let mut line: heapless::Vec<u8, { rp_wire::MAX_LINE + 2 }> = heapless::Vec::new();
-    let mut overflow = false;
-    let mut ask: Option<Ask> = None;
-    let mut pressed_at: Option<Instant> = None;
-    // A press only counts if the button was seen released after the request
-    // arrived: a stuck or already-held button can never approve anything.
-    let mut armed = false;
-    let mut was_down = false;
-    let mut flash_until: Option<Instant> = None;
     // Boot: one second of white, so a wrong LED pin is obvious.
     set(RGB8 { r: 30, g: 30, b: 30 });
-    let t = Instant::now();
-    while t.elapsed() < Duration::from_millis(1000) {}
-    set(IDLE);
+    let boot = Instant::now();
+    while boot.elapsed() < Duration::from_millis(1000) {}
 
     loop {
-        // 1. Input from the gateway, one line at a time.
+        let now = boot.elapsed().as_millis();
         while let Ok(b) = usb.read_byte() {
-            if b != b'\n' {
-                if line.push(b).is_err() {
-                    overflow = true;
-                }
-                continue;
+            if let Some(next) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
+                store_profile(&mut flash, next);
+                let t = Instant::now();
+                while t.elapsed() < Duration::from_millis(50) {} // let OK drain
+                esp_hal::system::software_reset();
             }
-            let text = core::str::from_utf8(&line).unwrap_or("");
-            match (overflow, HostMsg::parse(text)) {
-                (false, Some(HostMsg::Hello)) => {
-                    let _ = usb.write(if button.is_low() {
-                        b"# button down\n"
-                    } else {
-                        b"# button up\n"
-                    });
-                    send(&mut usb, KeyMsg::Key { public_key, version: VERSION })
-                }
-                (false, Some(HostMsg::Ask { id, digest, nonce })) => {
-                    ask = Some(Ask { id, digest, nonce, since: Instant::now() });
-                    pressed_at = None; // a press must start after the request
-                    armed = false;
-                }
-                (false, Some(HostMsg::Cancel)) => {
-                    ask = None;
-                    set(IDLE);
-                    send(&mut usb, KeyMsg::Ok);
-                }
-                _ if text.trim().is_empty() => {}
-                _ => send(&mut usb, KeyMsg::Err("bad line")),
-            }
-            line.clear();
-            overflow = false;
         }
-
-        let now = Instant::now();
-
-        // 2. The button: only meaningful while a request is waiting.
-        let down = button.is_low();
-        if down != was_down {
-            was_down = down;
-            // Diagnostic line; the gateway ignores anything that is not rp-wire.
-            let _ = usb.write(if down { b"# button down\n" } else { b"# button up\n" });
-        }
-        if let Some(a) = &ask {
-            if !down && pressed_at.is_none() {
-                armed = true;
-            }
-            match (down, pressed_at) {
-                (true, None) if armed => pressed_at = Some(now),
-                (true, Some(t)) if now - t >= LONG_PRESS => set(GREEN),
-                (false, Some(t)) => {
-                    pressed_at = None;
-                    let held = now - t;
-                    if held >= MIN_PRESS {
-                        let approve = held >= LONG_PRESS;
-                        let msg = rp_wire::signing_message(&a.id, &a.digest, &a.nonce, approve);
-                        let signature = key.sign(&msg).to_bytes();
-                        send(&mut usb, KeyMsg::Decide { id: a.id, approve, signature });
-                        set(if approve { GREEN } else { RED });
-                        flash_until = Some(now + Duration::from_millis(800));
-                        ask = None;
-                    }
-                }
-                _ => {}
-            }
-        } else {
-            pressed_at = None;
-        }
-
-        // 3. Timeouts and the light.
-        if let Some(a) = &ask {
-            if now - a.since >= ASK_TIMEOUT {
-                send(&mut usb, KeyMsg::Timeout { id: a.id });
-                ask = None;
-                set(IDLE);
-            } else if pressed_at.is_none() {
-                let on = (now - a.since).as_millis() / 250 % 2 == 0;
-                set(if on { AMBER } else { OFF });
-            }
-        } else if flash_until.is_some_and(|t| now >= t) {
-            flash_until = None;
-            set(IDLE);
-        }
+        let light = board.tick(now, button.is_low(), &mut UsbOut(&mut usb));
+        set(colour(light));
     }
 }

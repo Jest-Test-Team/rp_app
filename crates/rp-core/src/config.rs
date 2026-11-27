@@ -120,7 +120,7 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         if !(10..=300).contains(&h.wait_seconds) {
             errs.push("approver.wait_seconds must be 10-300".into());
         }
-        for p in [&h.port, &h.keys_file] {
+        for p in [&h.port, &h.backup_port, &h.keys_file] {
             if !p.starts_with('/') || p.contains(['\'', ' ']) {
                 errs.push(format!("approver path '{p}' must be absolute without quotes or spaces"));
             }

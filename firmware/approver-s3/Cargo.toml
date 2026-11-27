@@ -5,7 +5,7 @@
 edition      = "2024"
 name         = "approver-s3"
 rust-version = "1.95"
-version      = "0.1.0"
+version      = "0.2.0"
 
 [[bin]]
 name = "approver-s3"
@@ -31,6 +31,7 @@ ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"
 sha2 = { version = "0.10", default-features = false }
 heapless = "0.8"
 rp-wire = { path = "../../crates/rp-wire" }
+rp-board = { path = "../../crates/rp-board" }
 
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html

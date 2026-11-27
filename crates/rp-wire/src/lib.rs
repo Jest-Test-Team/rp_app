@@ -18,6 +18,12 @@
 //! | key → gateway | `TIMEOUT <action id>` |
 //! | gateway → key | `CANCEL` |
 //! | key → gateway | `OK` / `ERR <text>` |
+//! | gateway → board | `INFO` |
+//! | board → gateway | `INFO <chip> <profile> <version> <supported profiles, comma-separated>` |
+//! | gateway → board | `PROFILE <name>` (board answers `OK`, stores it and restarts) |
+//!
+//! A board runs one [`Profile`] at a time. Only `approver` answers `ASK`; in
+//! any other profile the board answers `ERR`, so approvals fail closed.
 //!
 //! The key signs [`signing_message`]: a domain tag, the action id, the digest
 //! of the action (computed by the gateway), a fresh gateway nonce and the
@@ -52,11 +58,101 @@ pub fn signing_message(
     m
 }
 
+/// What a board does. Stored on the board; switched from the console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Profile {
+    /// Hardware approval key (button + Ed25519 signature). Radio off.
+    Approver,
+    /// Out-of-band serial console and watchdog for the gateway.
+    Oob,
+    /// Decoy Wi-Fi network; reports who tries to join.
+    Honeypot,
+    /// Passive Wi-Fi monitoring: deauth floods, evil twins, channel load.
+    Sentry,
+    /// Wi-Fi channel state information for motion sensing.
+    Csi,
+}
+
+impl Profile {
+    pub const ALL: [Profile; 5] =
+        [Profile::Approver, Profile::Oob, Profile::Honeypot, Profile::Sentry, Profile::Csi];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Profile::Approver => "approver",
+            Profile::Oob => "oob",
+            Profile::Honeypot => "honeypot",
+            Profile::Sentry => "sentry",
+            Profile::Csi => "csi",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+
+    /// One byte for flash storage.
+    pub fn code(self) -> u8 {
+        self as u8 + 1
+    }
+
+    pub fn from_code(c: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.code() == c)
+    }
+
+    fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
+/// A set of profiles, e.g. what a board supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Profiles(pub u8);
+
+impl Profiles {
+    pub const fn empty() -> Self {
+        Profiles(0)
+    }
+    pub fn with(self, p: Profile) -> Self {
+        Profiles(self.0 | p.bit())
+    }
+    pub fn contains(self, p: Profile) -> bool {
+        self.0 & p.bit() != 0
+    }
+    pub fn iter(self) -> impl Iterator<Item = Profile> {
+        Profile::ALL.into_iter().filter(move |p| self.contains(*p))
+    }
+}
+
+impl fmt::Display for Profiles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, p) in self.iter().enumerate() {
+            if i > 0 {
+                f.write_str(",")?;
+            }
+            f.write_str(p.as_str())?;
+        }
+        Ok(())
+    }
+}
+
+impl Profiles {
+    fn parse(s: &str) -> Option<Self> {
+        let mut out = Profiles::empty();
+        for name in s.split(',') {
+            out = out.with(Profile::parse(name)?);
+        }
+        (out.0 != 0).then_some(out)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostMsg {
     Hello,
     Ask { id: [u8; ID_LEN], digest: [u8; DIGEST_LEN], nonce: [u8; NONCE_LEN] },
     Cancel,
+    Info,
+    SetProfile(Profile),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +162,7 @@ pub enum KeyMsg<'a> {
     Timeout { id: [u8; ID_LEN] },
     Ok,
     Err(&'a str),
+    Info { chip: &'a str, profile: Profile, version: &'a str, supported: Profiles },
 }
 
 struct Hex<'a>(&'a [u8]);
@@ -112,6 +209,8 @@ impl fmt::Display for HostMsg {
         match self {
             HostMsg::Hello => f.write_str("HELLO"),
             HostMsg::Cancel => f.write_str("CANCEL"),
+            HostMsg::Info => f.write_str("INFO"),
+            HostMsg::SetProfile(p) => write!(f, "PROFILE {}", p.as_str()),
             HostMsg::Ask { id, digest, nonce } => {
                 write!(f, "ASK {} {} {}", Hex(id), Hex(digest), Hex(nonce))
             }
@@ -125,6 +224,8 @@ impl HostMsg {
         match (f[0], n) {
             ("HELLO", 1) => Some(HostMsg::Hello),
             ("CANCEL", 1) => Some(HostMsg::Cancel),
+            ("INFO", 1) => Some(HostMsg::Info),
+            ("PROFILE", 2) => Some(HostMsg::SetProfile(Profile::parse(f[1])?)),
             ("ASK", 4) => {
                 Some(HostMsg::Ask { id: unhex(f[1])?, digest: unhex(f[2])?, nonce: unhex(f[3])? })
             }
@@ -147,6 +248,9 @@ impl fmt::Display for KeyMsg<'_> {
             KeyMsg::Timeout { id } => write!(f, "TIMEOUT {}", Hex(id)),
             KeyMsg::Ok => f.write_str("OK"),
             KeyMsg::Err(e) => write!(f, "ERR {e}"),
+            KeyMsg::Info { chip, profile, version, supported } => {
+                write!(f, "INFO {chip} {} {version} {supported}", profile.as_str())
+            }
         }
     }
 }
@@ -157,9 +261,15 @@ impl<'a> KeyMsg<'a> {
         if let Some(e) = line.strip_prefix("ERR ") {
             return Some(KeyMsg::Err(e));
         }
-        let (f, n) = fields::<4>(line)?;
+        let (f, n) = fields::<5>(line)?;
         match (f[0], n) {
             ("OK", 1) => Some(KeyMsg::Ok),
+            ("INFO", 5) if valid_version(f[1]) && valid_version(f[3]) => Some(KeyMsg::Info {
+                chip: f[1],
+                profile: Profile::parse(f[2])?,
+                version: f[3],
+                supported: Profiles::parse(f[4])?,
+            }),
             ("KEY", 3) if valid_version(f[2]) => {
                 Some(KeyMsg::Key { public_key: unhex(f[1])?, version: f[2] })
             }
@@ -193,7 +303,8 @@ mod tests {
     #[test]
     fn host_messages_round_trip() {
         let ask = HostMsg::Ask { id: [0xab; 6], digest: [1; 32], nonce: [0xfe; 16] };
-        for m in [HostMsg::Hello, HostMsg::Cancel, ask] {
+        let set = HostMsg::SetProfile(Profile::Oob);
+        for m in [HostMsg::Hello, HostMsg::Cancel, HostMsg::Info, set, ask] {
             assert_eq!(HostMsg::parse(&m.to_string()), Some(m));
         }
         assert!(ask.to_string().len() <= MAX_LINE);
@@ -208,6 +319,12 @@ mod tests {
             KeyMsg::Timeout { id: [2; 6] },
             KeyMsg::Ok,
             KeyMsg::Err("no key"),
+            KeyMsg::Info {
+                chip: "esp32s3",
+                profile: Profile::Sentry,
+                version: "0.2.0",
+                supported: Profiles::empty().with(Profile::Approver).with(Profile::Sentry),
+            },
         ];
         for m in msgs {
             let s = m.to_string();
@@ -228,6 +345,11 @@ mod tests {
             "DECIDE 010101010101 X 00",
             "KEY 00 1.0",
             "KEY 0707070707070707070707070707070707070707070707070707070707070707 a;b",
+            "PROFILE",
+            "PROFILE root",
+            "INFO esp32 approver 1.0",
+            "INFO esp32 approver 1.0 approver,nope",
+            "INFO esp32 nope 1.0 approver",
         ] {
             assert!(HostMsg::parse(bad).is_none() && KeyMsg::parse(bad).is_none(), "{bad:?}");
         }
@@ -239,5 +361,20 @@ mod tests {
         assert_ne!(a, signing_message(&[1; 6], &[2; 32], &[3; 16], false));
         assert_ne!(a, signing_message(&[1; 6], &[2; 32], &[4; 16], true));
         assert_eq!(&a[..DOMAIN.len()], DOMAIN);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    #[test]
+    fn profile_codes_and_names_round_trip() {
+        for p in Profile::ALL {
+            assert_eq!(Profile::from_code(p.code()), Some(p));
+            assert_eq!(Profile::parse(p.as_str()), Some(p));
+        }
+        assert_eq!(Profile::from_code(0), None, "erased flash (0x00) is no profile");
+        assert_eq!(Profile::from_code(0xff), None, "erased flash (0xff) is no profile");
     }
 }

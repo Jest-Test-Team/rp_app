@@ -395,6 +395,19 @@ enum ApproverCmd {
     List,
     /// Stop trusting a key (lost or stolen).
     Revoke { id: String },
+    /// Show what an rp board reports: chip, firmware, profile, key id.
+    Info {
+        /// Serial port of the board (default: approver.port).
+        #[arg(long)]
+        port: Option<PathBuf>,
+    },
+    /// Switch a board's profile (approver, oob, honeypot, sentry, csi). The
+    /// board restarts; only `approver` can approve requests.
+    Profile {
+        name: String,
+        #[arg(long)]
+        port: Option<PathBuf>,
+    },
     /// Approve without a key for a while (all keys lost or broken). Audited.
     Bypass {
         /// Minutes, 1-60.
@@ -1713,8 +1726,9 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
             let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
             let mut link = approver::Serial::open(&port)
                 .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
-            let (pk, version) = approver::hello(&mut link, std::time::Duration::from_secs(5))
+            let info = approver::handshake(&mut link, std::time::Duration::from_secs(5))
                 .map_err(anyhow::Error::msg)?;
+            let (pk, version) = (info.public_key, format!("{} on {}", info.version, info.chip));
             let mut keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
             let k = keys.add(name, &pk, now).map_err(anyhow::Error::msg)?;
             keys.save(&keys_path)?;
@@ -1723,6 +1737,43 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
             if cfg.approver.is_none() {
                 println!("add an [approver] section to the config to require it for approvals");
             }
+        }
+        ApproverCmd::Info { port } => {
+            let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
+            let mut link = approver::Serial::open(&port)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
+            let info = approver::handshake(&mut link, std::time::Duration::from_secs(5))
+                .map_err(anyhow::Error::msg)?;
+            let id = hwkey::key_id(&info.public_key);
+            let keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
+            let enrolled = keys.active().find(|k| k.id == id).map(|k| k.name.clone());
+            let supported: Vec<&str> = info.supported.iter().map(|p| p.as_str()).collect();
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "chip": info.chip, "firmware": info.version,
+                        "profile": info.profile.as_str(), "supported": supported,
+                        "key_id": id, "enrolled_as": enrolled,
+                    })
+                );
+            } else {
+                println!("chip      {}", info.chip);
+                println!("firmware  {}", info.version);
+                println!("profile   {} (supports {})", info.profile.as_str(), supported.join(", "));
+                println!("key       {id} ({})", enrolled.as_deref().unwrap_or("not enrolled"));
+            }
+        }
+        ApproverCmd::Profile { name, port } => {
+            let p = rp_wire::Profile::parse(name)
+                .ok_or_else(|| anyhow::anyhow!("unknown profile '{name}'"))?;
+            let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
+            let mut link = approver::Serial::open(&port)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
+            approver::set_profile(&mut link, p, std::time::Duration::from_secs(5))
+                .map_err(anyhow::Error::msg)?;
+            note("board-profile", &format!("port={} profile={}", port.display(), p.as_str()))?;
+            println!("{} now runs the {} profile (restarting)", port.display(), p.as_str());
         }
         ApproverCmd::List => {
             let keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
