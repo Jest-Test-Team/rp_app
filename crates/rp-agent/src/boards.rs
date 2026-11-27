@@ -34,6 +34,19 @@ pub const SOCKET: &str = "/run/rp-boards/boards.sock";
 pub const STATE_DIR: &str = "/var/lib/rp/boards";
 /// Log lines kept per board (plus one rotated file of the same size).
 pub const LOG_LINES: usize = 2000;
+/// oob boards get a heartbeat this often.
+pub const HEARTBEAT_S: u64 = 10;
+
+/// What rp-boards tells boards about their profile.
+#[derive(Debug, Clone, Default)]
+pub struct Setup {
+    /// sentry: the SSID to guard (the gateway's IoT access point).
+    pub watch: Option<Vec<u8>>,
+    /// oob: watchdog seconds (0 = off).
+    pub watchdog_seconds: u16,
+    /// honeypot: the decoy network's name.
+    pub decoy: Option<Vec<u8>>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BoardStatus {
@@ -159,15 +172,15 @@ struct Port {
     to_board: Option<mpsc::Sender<String>>,
     /// The attached client, with its id.
     client: Option<(u64, mpsc::Sender<String>)>,
-    /// A sentry board was told which SSID to guard since it (re)started.
-    watch_sent: bool,
+    /// The board was given its profile's settings since it (re)started.
+    setup_sent: bool,
+    last_heartbeat: Option<Instant>,
 }
 
 /// Shared state of all ports.
 pub struct Hub {
     root: PathBuf,
-    /// The SSID sentry boards guard (the gateway's IoT access point).
-    watch: Option<Vec<u8>>,
+    setup: Setup,
     ports: Mutex<HashMap<String, Port>>,
     next_client: AtomicU64,
 }
@@ -211,10 +224,10 @@ fn clean(s: &str) -> String {
 
 impl Hub {
     pub fn new(root: &Path, ports: &[String]) -> Arc<Self> {
-        Self::with_watch(root, ports, None)
+        Self::with_setup(root, ports, Setup::default())
     }
 
-    pub fn with_watch(root: &Path, ports: &[String], watch: Option<Vec<u8>>) -> Arc<Self> {
+    pub fn with_setup(root: &Path, ports: &[String], setup: Setup) -> Arc<Self> {
         let dir = state_dir(root);
         let _ = std::fs::create_dir_all(&dir);
         let map = ports
@@ -226,14 +239,15 @@ impl Hub {
                     log: LogFile::open(log_path(root, p)),
                     to_board: None,
                     client: None,
-                    watch_sent: false,
+                    setup_sent: false,
+                    last_heartbeat: None,
                 };
                 (p.clone(), port)
             })
             .collect();
         Arc::new(Self {
             root: root.to_path_buf(),
-            watch,
+            setup,
             ports: Mutex::new(map),
             next_client: AtomicU64::new(1),
         })
@@ -298,7 +312,7 @@ impl Hub {
                     if let Some(prof) = rp_wire::Profile::parse(name) {
                         self.with(port, |p| {
                             p.status.profile = Some(prof.as_str().into());
-                            p.watch_sent = false; // it restarted
+                            p.setup_sent = false; // it restarted
                         });
                     }
                 }
@@ -356,7 +370,7 @@ impl Hub {
                 let was = p.status.connected;
                 p.status.connected = up;
                 p.to_board = to_board;
-                p.watch_sent = false;
+                p.setup_sent = false;
                 if !up {
                     p.client = None;
                     p.status.profile = None;
@@ -370,16 +384,35 @@ impl Hub {
         }
     }
 
-    /// The WATCH line for a sentry board that has not been told yet.
-    fn pending_watch(&self, port: &str) -> Option<String> {
-        let ssid = self.watch.as_ref()?;
-        let line = HostMsg::watch(ssid)?.to_string();
+    /// Lines a board needs once per start for its profile: the SSID to
+    /// guard (sentry), watchdog and the console lines kept across a crash
+    /// (oob), the decoy name (honeypot). Plus the oob heartbeat.
+    fn pending(&self, port: &str) -> Vec<String> {
+        let s = &self.setup;
         self.with(port, |p| {
-            let due = p.status.profile.as_deref() == Some("sentry") && !p.watch_sent;
-            p.watch_sent |= due;
-            due.then_some(line)
+            let mut out = Vec::new();
+            let profile = p.status.profile.clone().unwrap_or_default();
+            if !p.setup_sent && !profile.is_empty() {
+                p.setup_sent = true;
+                match profile.as_str() {
+                    "sentry" => out.extend(s.watch.as_deref().and_then(HostMsg::watch)),
+                    "oob" => {
+                        out.push(HostMsg::Watchdog { seconds: s.watchdog_seconds });
+                        out.push(HostMsg::Tail { n: rp_board::oob::LINES as u8 });
+                    }
+                    "honeypot" => out.extend(s.decoy.as_deref().and_then(HostMsg::decoy)),
+                    _ => {}
+                }
+            }
+            if profile == "oob"
+                && p.last_heartbeat.is_none_or(|t| t.elapsed() >= Duration::from_secs(HEARTBEAT_S))
+            {
+                p.last_heartbeat = Some(Instant::now());
+                out.push(HostMsg::Heartbeat);
+            }
+            out.into_iter().map(|m| m.to_string()).collect()
         })
-        .flatten()
+        .unwrap_or_default()
     }
 
     fn needs_info(&self, port: &str) -> bool {
@@ -459,7 +492,7 @@ fn port_worker(hub: Arc<Hub>, port: String) {
                 next_query = Instant::now() + Duration::from_secs(if missing { 2 } else { 60 });
             }
             if !hub.attached(&port) {
-                if let Some(w) = hub.pending_watch(&port) {
+                for w in hub.pending(&port) {
                     if let Err(e) = link.send(&w) {
                         hub.log(&port, "warn", "gateway", &format!("write failed: {e}"));
                     }
@@ -510,7 +543,10 @@ fn serve_client(hub: Arc<Hub>, stream: UnixStream) -> io::Result<()> {
                 let l = line.trim_end();
                 // Only rp-wire requests pass, so a client cannot type raw
                 // text at the board.
-                if HostMsg::parse(l).is_some() && to_board.send(l.to_string()).is_err() {
+                // Never CONSOLE: raw passthrough is for a laptop plugged
+                // straight into the board, not for clients of this service.
+                let ok = HostMsg::parse(l).is_some_and(|m| m != HostMsg::Console);
+                if ok && to_board.send(l.to_string()).is_err() {
                     break;
                 }
             }
@@ -544,11 +580,30 @@ pub fn serve(hub: Arc<Hub>, socket: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The decoy network's name: `[boards] decoy_ssid`, else "<IoT SSID>-guest"
+/// (cut to 32 bytes on a character boundary).
+pub fn decoy_name(cfg: &Config) -> Option<Vec<u8>> {
+    if let Some(d) = cfg.boards.as_ref().and_then(|b| b.decoy_ssid.clone()) {
+        return Some(d.into_bytes());
+    }
+    let ap = cfg.ap.as_ref()?;
+    let mut name = ap.ssid.clone();
+    while name.len() + "-guest".len() > 32 {
+        name.pop();
+    }
+    Some(format!("{name}-guest").into_bytes())
+}
+
 /// `rp-agent boards`: run until killed.
 pub fn run(cfg: &Config, root: &Path) -> io::Result<()> {
     let ports = ports(cfg);
-    let watch = cfg.ap.as_ref().map(|a| a.ssid.as_bytes().to_vec());
-    let hub = Hub::with_watch(root, &ports, watch);
+    let b = cfg.boards.clone();
+    let setup = Setup {
+        watch: cfg.ap.as_ref().map(|a| a.ssid.as_bytes().to_vec()),
+        watchdog_seconds: b.as_ref().map_or(0, |b| b.watchdog_seconds),
+        decoy: decoy_name(cfg),
+    };
+    let hub = Hub::with_setup(root, &ports, setup);
     for p in ports {
         let hub = hub.clone();
         std::thread::spawn(move || port_worker(hub, p));
@@ -739,17 +794,29 @@ mod tests {
     }
 
     #[test]
-    fn sentry_boards_are_told_the_ssid_once_per_start() {
-        let r = root("watch");
-        let hub = Hub::with_watch(&r, &[P.to_string()], Some(b"iot".to_vec()));
-        assert_eq!(hub.pending_watch(P), None, "profile unknown yet");
+    fn boards_get_their_profile_settings_once_per_start() {
+        let r = root("setup");
+        let setup = Setup {
+            watch: Some(b"iot".to_vec()),
+            watchdog_seconds: 120,
+            decoy: Some(b"guest".to_vec()),
+        };
+        let hub = Hub::with_setup(&r, &[P.to_string()], setup);
+        assert!(hub.pending(P).is_empty(), "profile unknown yet");
         hub.from_board(P, "LOG info running profile=sentry firmware=0.2.0");
-        assert_eq!(hub.pending_watch(P).as_deref(), Some("WATCH 696f74"));
-        assert_eq!(hub.pending_watch(P), None, "once");
+        assert_eq!(hub.pending(P), ["WATCH 696f74"]);
+        assert!(hub.pending(P).is_empty(), "once");
         hub.from_board(P, "LOG info running profile=sentry firmware=0.2.0");
-        assert!(hub.pending_watch(P).is_some(), "again after a restart");
+        assert_eq!(hub.pending(P).len(), 1, "again after a restart");
         hub.from_board(P, "LOG info running profile=approver firmware=0.2.0");
-        assert_eq!(hub.pending_watch(P), None, "not for other profiles");
+        assert!(hub.pending(P).is_empty(), "nothing for an approval key");
+
+        hub.from_board(P, "LOG info running profile=oob firmware=0.2.0");
+        assert_eq!(hub.pending(P), ["WATCHDOG 120", "TAIL 64", "HB"]);
+        assert!(hub.pending(P).is_empty(), "heartbeat every few seconds, not every loop");
+
+        hub.from_board(P, "LOG info running profile=honeypot firmware=0.2.0");
+        assert_eq!(hub.pending(P), ["DECOY 6775657374"]);
     }
 
     #[test]

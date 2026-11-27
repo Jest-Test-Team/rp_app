@@ -23,6 +23,10 @@
 //! | gateway → board | `PROFILE <name>` (board answers `OK`, stores it and restarts) |
 //! | board → gateway | `LOG <error\|warn\|info> <text>` (any time; kept by rp-boards) |
 //! | gateway → board | `WATCH <ssid, hex>` (sentry: the network to guard against evil twins) |
+//! | gateway → board | `HB` (oob: the gateway is alive), `WATCHDOG <seconds>` (0 = off) |
+//! | gateway → board | `TAIL <n>` (oob: the last n gateway console lines, as `LOG info pi< ...`) |
+//! | gateway → board | `CONSOLE` (oob: raw passthrough to the gateway console; Ctrl-] three times ends it) |
+//! | gateway → board | `DECOY <ssid, hex>` (honeypot: the decoy network name) |
 //!
 //! Lines starting with `# ` are diagnostics; anything else a board prints
 //! (boot ROM, panic messages) is kept as raw log text by the gateway.
@@ -191,6 +195,23 @@ pub enum HostMsg {
         ssid: [u8; 32],
         len: u8,
     },
+    /// oob: the gateway is alive.
+    Heartbeat,
+    /// oob: act when no heartbeat came for this long (0 = off).
+    Watchdog {
+        seconds: u16,
+    },
+    /// oob: send the last `n` gateway console lines.
+    Tail {
+        n: u8,
+    },
+    /// oob: switch the link to raw passthrough to the gateway console.
+    Console,
+    /// honeypot: the decoy network's name (up to 32 bytes).
+    Decoy {
+        ssid: [u8; 32],
+        len: u8,
+    },
 }
 
 impl HostMsg {
@@ -202,6 +223,26 @@ impl HostMsg {
         b[..ssid.len()].copy_from_slice(ssid);
         Some(HostMsg::Watch { ssid: b, len: ssid.len() as u8 })
     }
+
+    pub fn decoy(ssid: &[u8]) -> Option<Self> {
+        match Self::watch(ssid)? {
+            HostMsg::Watch { ssid, len } => Some(HostMsg::Decoy { ssid, len }),
+            _ => None,
+        }
+    }
+}
+
+fn parse_ssid(hex: &str) -> Option<([u8; 32], u8)> {
+    let h = hex.as_bytes();
+    if h.is_empty() || h.len() > 64 || !h.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut ssid = [0u8; 32];
+    for i in 0..h.len() / 2 {
+        let pair = core::str::from_utf8(&h[2 * i..2 * i + 2]).ok()?;
+        ssid[i] = unhex::<1>(pair)?[0];
+    }
+    Some((ssid, (h.len() / 2) as u8))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,6 +303,11 @@ impl fmt::Display for HostMsg {
             HostMsg::Info => f.write_str("INFO"),
             HostMsg::SetProfile(p) => write!(f, "PROFILE {}", p.as_str()),
             HostMsg::Watch { ssid, len } => write!(f, "WATCH {}", Hex(&ssid[..*len as usize])),
+            HostMsg::Decoy { ssid, len } => write!(f, "DECOY {}", Hex(&ssid[..*len as usize])),
+            HostMsg::Heartbeat => f.write_str("HB"),
+            HostMsg::Watchdog { seconds } => write!(f, "WATCHDOG {seconds}"),
+            HostMsg::Tail { n } => write!(f, "TAIL {n}"),
+            HostMsg::Console => f.write_str("CONSOLE"),
             HostMsg::Ask { id, digest, nonce } => {
                 write!(f, "ASK {} {} {}", Hex(id), Hex(digest), Hex(nonce))
             }
@@ -277,18 +323,12 @@ impl HostMsg {
             ("CANCEL", 1) => Some(HostMsg::Cancel),
             ("INFO", 1) => Some(HostMsg::Info),
             ("PROFILE", 2) => Some(HostMsg::SetProfile(Profile::parse(f[1])?)),
-            ("WATCH", 2) => {
-                let h = f[1].as_bytes();
-                if h.is_empty() || h.len() > 64 || h.len() % 2 != 0 {
-                    return None;
-                }
-                let mut ssid = [0u8; 32];
-                for i in 0..h.len() / 2 {
-                    let pair = core::str::from_utf8(&h[2 * i..2 * i + 2]).ok()?;
-                    ssid[i] = unhex::<1>(pair)?[0];
-                }
-                Some(HostMsg::Watch { ssid, len: (h.len() / 2) as u8 })
-            }
+            ("WATCH", 2) => parse_ssid(f[1]).map(|(ssid, len)| HostMsg::Watch { ssid, len }),
+            ("DECOY", 2) => parse_ssid(f[1]).map(|(ssid, len)| HostMsg::Decoy { ssid, len }),
+            ("HB", 1) => Some(HostMsg::Heartbeat),
+            ("CONSOLE", 1) => Some(HostMsg::Console),
+            ("WATCHDOG", 2) => Some(HostMsg::Watchdog { seconds: f[1].parse().ok()? }),
+            ("TAIL", 2) => Some(HostMsg::Tail { n: f[1].parse().ok()? }),
             ("ASK", 4) => {
                 Some(HostMsg::Ask { id: unhex(f[1])?, digest: unhex(f[2])?, nonce: unhex(f[3])? })
             }
@@ -382,6 +422,17 @@ mod tests {
         let watch = HostMsg::watch(b"home-iot").unwrap();
         assert_eq!(watch.to_string(), "WATCH 686f6d652d696f74");
         assert!(HostMsg::watch(&[b'x'; 33]).is_none());
+        let more = [
+            HostMsg::Heartbeat,
+            HostMsg::Console,
+            HostMsg::Watchdog { seconds: 180 },
+            HostMsg::Tail { n: 50 },
+            HostMsg::decoy(b"guest").unwrap(),
+        ];
+        for m in more {
+            assert_eq!(HostMsg::parse(&m.to_string()), Some(m));
+        }
+        assert!(HostMsg::parse("WATCHDOG -1").is_none() && HostMsg::parse("TAIL 999").is_none());
         for m in [HostMsg::Hello, HostMsg::Cancel, HostMsg::Info, set, watch, ask] {
             assert_eq!(HostMsg::parse(&m.to_string()), Some(m));
         }

@@ -355,6 +355,9 @@ pub(crate) mod testkey {
                 Some(HostMsg::Watch { .. }) => {
                     self.out.push_back(KeyMsg::Err("not in the sentry profile").to_string())
                 }
+                Some(_) => {
+                    self.out.push_back(KeyMsg::Err("not supported by the soft key").to_string())
+                }
                 None => self.out.push_back(KeyMsg::Err("bad line").to_string()),
             }
             Ok(())

@@ -11,12 +11,27 @@
 //!   `approver`, slow blink in other profiles, fast blink while a request
 //!   waits, on while held long enough
 //! * flash: key seed at 0x9000, profile at 0xA000 (inside `nvs`)
+//! * honeypot profile (only then is the radio on): an access point under
+//!   the decoy name (rp-boards sends it; "<IoT SSID>-guest" by default) on
+//!   channel 11, WPA2 with a random passphrase only the board knows, so nobody
+//!   can join; join attempts seen promiscuously on that channel are reported.
+//! * oob profile: UART2 to the gateway's serial console — GPIO16 (RX) to Pi
+//!   GPIO14 (TXD), GPIO17 (TX) to Pi GPIO15 (RXD), GND to GND, 115200 8N1;
+//!   an optional relay on GPIO26 (active high) power-cycles the gateway when
+//!   the watchdog trips. `CONSOLE` turns the USB link into a raw passthrough
+//!   to the console until Ctrl-] is typed three times.
 
 #![no_std]
 #![no_main]
 #![deny(clippy::mem_forget)]
 
+extern crate alloc;
+
+use core::cell::RefCell;
 use core::fmt::Write as _;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use critical_section::Mutex;
 
 use ed25519_dalek::SigningKey;
 use esp_backtrace as _;
@@ -30,7 +45,7 @@ use esp_hal::{
     uart::{Config as UartConfig, Uart},
 };
 use esp_storage::FlashStorage;
-use rp_board::{Board, Light, Out};
+use rp_board::{Board, Effect, Light, Out, oob};
 use rp_wire::{KeyMsg, Level, Profile, Profiles};
 use sha2::{Digest, Sha256};
 
@@ -42,8 +57,8 @@ const PROFILE_OFFSET: u32 = 0xA000;
 const MAGIC: &[u8; 4] = b"RPK1";
 const PROFILE_MAGIC: &[u8; 4] = b"RPP1";
 
-/// No radio code in this firmware yet, so no sentry; oob, honeypot and csi
-/// switch and report but do nothing else so far.
+/// No sentry here (the S3 with its antenna does that); csi switches and
+/// reports but does nothing else so far.
 fn supported() -> Profiles {
     Profiles::empty()
         .with(Profile::Approver)
@@ -150,6 +165,49 @@ fn boot_log(out: &mut dyn Out, profile: Profile) {
 }
 
 
+const DECOY_CHANNEL: u8 = 11;
+
+/// Management frames copied out of the radio callback (header only).
+const PKT: usize = 32;
+struct Pkt {
+    len: u8,
+    data: [u8; PKT],
+}
+static FRAMES: Mutex<RefCell<heapless::Deque<Pkt, 32>>> = Mutex::new(RefCell::new(heapless::Deque::new()));
+static DROPPED: AtomicU32 = AtomicU32::new(0);
+
+fn on_packet(p: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
+    // Management frames only (type bits 2-3 of the first byte = 0).
+    if p.data.first().is_none_or(|fc| (fc >> 2) & 0b11 != 0) {
+        return;
+    }
+    let n = p.data.len().min(PKT);
+    let mut pkt = Pkt { len: n as u8, data: [0; PKT] };
+    pkt.data[..n].copy_from_slice(&p.data[..n]);
+    critical_section::with(|cs| {
+        if FRAMES.borrow_ref_mut(cs).push_back(pkt).is_err() {
+            DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
+
+/// (Re)start the decoy access point.
+fn start_decoy(
+    ctl: &mut esp_radio::wifi::WifiController<'_>,
+    ssid: &[u8],
+    pass: &str,
+) -> Result<(), esp_radio::wifi::WifiError> {
+    use esp_radio::wifi::{AuthenticationMethodConfig, Config, ap::AccessPointConfig};
+    let name = core::str::from_utf8(ssid).unwrap_or("rp-guest");
+    let cfg = AccessPointConfig::default()
+        .with_ssid(name.try_into().map_err(|_| esp_radio::wifi::WifiError::InvalidArguments)?)
+        .with_channel(DECOY_CHANNEL)
+        .with_authentication(AuthenticationMethodConfig::Wpa2Personal(
+            pass.try_into().map_err(|_| esp_radio::wifi::WifiError::InvalidArguments)?,
+        ));
+    ctl.set_config(&Config::AccessPoint(cfg))
+}
+
 struct UartOut<'a, 'd>(&'a mut Uart<'d, Blocking>);
 
 impl UartOut<'_, '_> {
@@ -179,6 +237,35 @@ impl Out for UartOut<'_, '_> {
     }
 }
 
+/// Raw passthrough between the USB link and the gateway's console, until the
+/// user types Ctrl-] three times. LED on meanwhile.
+fn passthrough(board: &mut Board, usb: &mut Uart<'_, Blocking>, con: &mut Uart<'_, Blocking>, led: &mut Output<'_>) {
+    let mut out = UartOut(usb);
+    out.write_all(b"\r\n# console: connected to the gateway; Ctrl-] three times to leave\r\n");
+    led.set_high();
+    let mut buf = [0u8; 64];
+    'outer: loop {
+        if out.0.read_ready() {
+            let n = out.0.read_buffered(&mut buf).unwrap_or(0);
+            for &b in &buf[..n] {
+                if board.escape(b) {
+                    break 'outer;
+                }
+                if b != oob::ESCAPE {
+                    let mut c = UartOut(con);
+                    c.write_all(&[b]);
+                }
+            }
+        }
+        if con.read_ready() {
+            let n = con.read_buffered(&mut buf).unwrap_or(0);
+            out.write_all(&buf[..n]);
+        }
+    }
+    out.write_all(b"\r\n# console closed\r\n");
+    led.set_low();
+}
+
 #[main]
 fn main() -> ! {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -190,12 +277,44 @@ fn main() -> ! {
     let stored = load_profile(&mut flash);
     let mut board = Board::new(key, "esp32", VERSION, supported(), stored);
 
+    // honeypot: radio on, decoy access point and promiscuous receive.
+    let mut radio = None;
+    let mut decoy_pass: heapless::String<32> = heapless::String::new();
+    if board.profile() == Profile::Honeypot {
+        let mut raw = [0u8; 16];
+        trng.read(&mut raw);
+        for b in raw {
+            let _ = write!(decoy_pass, "{b:02x}");
+        }
+        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
+        let timg0 = esp_hal::timer::timg::TimerGroup::new(p.TIMG0);
+        esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
+        let mut ctl = esp_radio::wifi::WifiController::new(p.WIFI, Default::default())
+            .expect("Wi-Fi controller");
+        let name = board.decoy_ssid().unwrap_or(rp_board::DEFAULT_DECOY);
+        start_decoy(&mut ctl, name, &decoy_pass).expect("decoy access point");
+        board.set_decoy_bssid(esp_radio::wifi::Interface::access_point().mac_address());
+        let mut sniffer = ctl.sniffer();
+        sniffer.set_receive_cb(on_packet);
+        sniffer.set_promiscuous_mode(true).expect("promiscuous mode");
+        radio = Some((ctl, sniffer));
+    }
+
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
     let mut led = Output::new(p.GPIO2, Pin::High, OutputConfig::default());
     let mut uart = Uart::new(p.UART0, UartConfig::default())
         .expect("UART0")
         .with_tx(p.GPIO1)
         .with_rx(p.GPIO3);
+
+    // oob: the gateway's console and the (optional) relay.
+    let mut console = (board.profile() == Profile::Oob).then(|| {
+        Uart::new(p.UART2, UartConfig::default())
+            .expect("UART2")
+            .with_tx(p.GPIO17)
+            .with_rx(p.GPIO16)
+    });
+    let mut relay = Output::new(p.GPIO26, Pin::Low, OutputConfig::default());
 
     // Boot: LED on for one second.
     let boot = Instant::now();
@@ -208,7 +327,20 @@ fn main() -> ! {
         if uart.read_ready() {
             let n = uart.read_buffered(&mut buf).unwrap_or(0);
             for &b in &buf[..n] {
-                if let Some(next) = board.on_byte(b, now, &mut UartOut(&mut uart)) {
+                let effect = board.on_byte(b, now, &mut UartOut(&mut uart));
+                if let (Some(Effect::Console), Some(con)) = (effect, console.as_mut()) {
+                    passthrough(&mut board, &mut uart, con, &mut led);
+                    continue;
+                }
+                if let (Some(Effect::Decoy(ssid, len)), Some((ctl, _))) = (effect, radio.as_mut()) {
+                    let ok = start_decoy(ctl, &ssid[..len as usize], &decoy_pass).is_ok();
+                    UartOut(&mut uart).msg(KeyMsg::Log {
+                        level: if ok { Level::Info } else { Level::Error },
+                        text: if ok { "honeypot: decoy renamed" } else { "honeypot: could not rename the decoy" },
+                    });
+                    continue;
+                }
+                if let Some(Effect::SwitchProfile(next)) = effect {
                     if !store_profile(&mut flash, next) {
                         UartOut(&mut uart).msg(KeyMsg::Log {
                             level: Level::Error,
@@ -222,7 +354,27 @@ fn main() -> ! {
                 }
             }
         }
+        if radio.is_some() {
+            while let Some(pkt) = critical_section::with(|cs| FRAMES.borrow_ref_mut(cs).pop_front()) {
+                board.on_frame(&pkt.data[..pkt.len as usize]);
+            }
+        }
+        if let Some(con) = console.as_mut() {
+            if con.read_ready() {
+                let n = con.read_buffered(&mut buf).unwrap_or(0);
+                for &b in &buf[..n] {
+                    board.console_byte(b, &mut UartOut(&mut uart));
+                }
+            }
+        }
         let light = board.tick(now, button.is_low(), &mut UartOut(&mut uart));
+        if let Some(oob::Action::PowerCycle) = board.take_action() {
+            // Relay (if wired) cuts the gateway's power for 3 s.
+            relay.set_high();
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(3) {}
+            relay.set_low();
+        }
         led.set_level(if lit(light, now) { Pin::High } else { Pin::Low });
     }
 }

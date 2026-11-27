@@ -15,6 +15,7 @@ rp-agent = { path = "../rp-agent" }
 rp-dns = { path = "../rp-dns" }
 rp-privd = { path = "../rp-privd" }
 rp-wire = { path = "../rp-wire" }
+rp-board = { path = "../rp-board" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

@@ -78,7 +78,7 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # 切換 profile（
 ```
 
 - 設定檔的 `backup_port`（預設 `/dev/rp-approver-backup`）在 `port` 沒插東西時使用；udev 規則請用板子的序號綁定（見 `99-rp-approver.rules`）。
-- 每塊板子一次跑一個 profile：S3 有 `approver`、`honeypot`、`sentry`、`csi`；WROOM 有 `approver`、`oob`、`honeypot`、`csi`。**只有 `approver` 會回應核准請求**；切到其他 profile 時核准會失敗（維持 pending），不會變寬鬆。已實作：`approver`、`sentry`（S3）；`oob`、`honeypot`、`csi` 目前只有切換與狀態回報。
+- 每塊板子一次跑一個 profile：S3 有 `approver`、`sentry`、`csi`；WROOM 有 `approver`、`oob`、`honeypot`、`csi`。**只有 `approver` 會回應核准請求**；切到其他 profile 時核准會失敗（維持 pending），不會變寬鬆。已實作：`approver`、`sentry`（S3）、`oob` 與 `honeypot`（WROOM）；`csi` 目前只有切換與狀態回報。
 - 開啟 USB-UART 時 Pi 會同時放掉 DTR/RTS，避免經典 ESP32 被自動下載電路卡在重置；核准前會先等板子回應 `INFO`，並確認它是已登記的鑰匙且在 `approver` profile。
 
 ## 板子狀態與錯誤記錄（rp-boards）
@@ -102,6 +102,30 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # 切換 profile（
 | 頻道擁擠度 | 每 60 秒 | `info sentry: channel load ch1=47f/2ap ...`（f＝訊框數、ap＝AP 數） |
 
 記錄一樣進 rp-boards，App 的「ESP32 板子」與 MCP `get_board_logs` 都看得到。台灣法規：只被動監聽；韌體從不送出訊框（不掃描、不連線）。
+
+## 帶外 console 與看門狗（WROOM 的 `oob` profile）
+
+**接線**（三條杜邦線）：WROOM GPIO16 (RX) ← Pi GPIO14 (TXD，實體腳 8)、WROOM GPIO17 (TX) → Pi GPIO15 (RXD，腳 10)、GND ↔ GND（腳 6）。兩邊都是 3.3 V，不需要電位轉換。Pi 端要開序列 console：`/boot/firmware/config.txt` 加 `enable_uart=1`，`cmdline.txt` 有 `console=serial0,115200`（`sudo raspi-config` › Interface › Serial：login shell 選「是」）。
+
+- **平時**（WROOM 的 USB 接在 Pi 上）：console 印出的每一行都以 `pi> ...` 進 rp-boards 記錄，板子另外保留最後 64 行；rp-boards 每次重新連上都會要 `TAIL 64`（`pi< ...`），所以 **Pi 當機前最後印出的東西**（kernel panic、OOM）在重開後看得到。
+- **救援**（防火牆／SSH／網路都壞了）：把 WROOM 的 USB 改插筆電，`rpctl approver console --port /dev/cu.usbserial-...`，就是 Pi 的登入畫面；Ctrl-] 連按三次離開。rp-boards 不會轉送 `CONSOLE`，遠端無法開啟直通。
+- **看門狗**：rp-boards 每 10 秒送 `HB`。`[boards] watchdog_seconds = 300`（0＝關，預設）時，超過時間沒收到就記錄 `watchdog: no heartbeat ...`（error，跨重開保留）；若 GPIO26 接了繼電器模組（高電位動作）會切斷 Pi 電源 3 秒。沒接繼電器就只記錄。
+
+## 誘餌網路（WROOM 的 `honeypot` profile）
+
+WROOM 開一個 AP，名稱預設「<IoT SSID>-guest」（`[boards] decoy_ssid` 可改），頻道 11，**WPA2 密碼由板子隨機產生、不告訴任何人**，所以沒有人連得上；正常使用者不會去連它，有人嘗試就是警訊。板子同時以 promiscuous 模式只看「送往誘餌 BSSID 的 authentication／association 請求」，每個裝置每 10 分鐘最多記一次：`warn honeypot: <mac> tried to authenticate with decoy '<名稱>'`。不記錄 probe request（不記路人）。注意：手機多半用隨機 MAC。
+
+## 換到最空的頻道
+
+有 S3 在 `sentry` 量測過（30 分鐘內）就能用：
+
+```bash
+sudo rpctl ap pick-channel                 # 列出 1,3,6,11 的干擾分數（含相鄰頻道重疊）
+sudo rpctl ap pick-channel --candidates 1,3 --apply   # 明顯更好（少 20% 以上）才切換
+sudo rpctl changeset confirm <id>          # 確認保留，否則自動復原
+```
+
+App 的「IoT Wi-Fi」頁在頻道選單下方顯示建議，「改用 N」後照常儲存（change set，會自動復原）。分數把相鄰頻道算進去：例如 ch3 本身很安靜，但夾在忙碌的 1、5、6 之間，實測分數 278，ch1 是 138。
 
 ## 鑰匙遺失或損壞
 

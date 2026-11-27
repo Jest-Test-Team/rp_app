@@ -94,7 +94,7 @@ class FakeDevice implements Transport {
       'chip': 'esp32s3',
       'firmware': '0.2.0',
       'profile': 'approver',
-      'supported': ['approver', 'honeypot', 'sentry', 'csi'],
+      'supported': ['approver', 'sentry', 'csi'],
       'key_id': 'd0a5c34d5a9a1bd2',
       'enrolled_as': 'main',
       'last_boot': 'boot reason=ChipPowerOn',
@@ -123,6 +123,18 @@ class FakeDevice implements Transport {
     {'ts': 1795789299, 'port': '/dev/rp-approver', 'level': 'debug', 'source': 'raw',
      'text': 'I (27) boot: chip revision: v0.2'},
   ];
+
+  /// Channel advice from a sentry board (null = no recent measurement).
+  Map<String, Object?>? channelAdvice = {
+    'best': 1,
+    'current': 6,
+    'switch_recommended': true,
+    'candidates': [
+      {'channel': 1, 'score': 138.0, 'frames': 65, 'aps': 2},
+      {'channel': 3, 'score': 278.0, 'frames': 12, 'aps': 1},
+      {'channel': 6, 'score': 677.6, 'frames': 224, 'aps': 4},
+    ],
+  };
 
   /// Hardware approval key (`[approver]`): absent = not required.
   Map<String, Object?> approver = {'required': false};
@@ -371,6 +383,7 @@ class FakeDevice implements Transport {
     }
     if (p == '/v1/firewall/rules') return {'rules': (config['firewall'] as Map?)?['rules'] ?? []};
     if (p == '/v1/actions/pending') return {'actions': actions, 'approver': approver};
+    if (p == '/v1/ap/channel-advice') return {'advice': channelAdvice};
     if (p == '/v1/boards') return {'boards': boards, 'managed': true, 'approver_required': approver['required'] == true};
     if (p == '/v1/boards/logs') return {'entries': boardLogs};
     if (p == '/v1/mcp/tools') {

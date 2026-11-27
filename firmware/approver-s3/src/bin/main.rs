@@ -16,7 +16,7 @@
 //! Nothing is transmitted.
 //!
 //! Light: white for 1 s at boot; idle colour per profile (approver green,
-//! sentry blue, csi purple, honeypot cyan); a waiting request blinks amber;
+//! sentry blue, csi purple); a waiting request blinks amber;
 //! held long enough = solid green; denied = red flash.
 
 #![no_std]
@@ -45,7 +45,7 @@ use esp_hal::{
 };
 use esp_hal_smartled::{RmtSmartLeds, buffer_size, color_order};
 use esp_storage::FlashStorage;
-use rp_board::{Board, Light, Out};
+use rp_board::{Board, Effect, Light, Out};
 use rp_wire::{KeyMsg, Level, Profile, Profiles};
 use sha2::{Digest, Sha256};
 use smart_leds::{RGB8, SmartLedsWrite};
@@ -64,11 +64,8 @@ const GREEN: RGB8 = RGB8 { r: 0, g: 40, b: 0 };
 const RED: RGB8 = RGB8 { r: 40, g: 0, b: 0 };
 
 fn supported() -> Profiles {
-    Profiles::empty()
-        .with(Profile::Approver)
-        .with(Profile::Honeypot)
-        .with(Profile::Sentry)
-        .with(Profile::Csi)
+    // The decoy network (honeypot) runs on the WROOM.
+    Profiles::empty().with(Profile::Approver).with(Profile::Sentry).with(Profile::Csi)
 }
 
 fn colour(l: Light) -> RGB8 {
@@ -321,7 +318,7 @@ fn main() -> ! {
             }
         }
         while let Ok(b) = usb.read_byte() {
-            if let Some(next) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
+            if let Some(Effect::SwitchProfile(next)) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
                 if !store_profile(&mut flash, next) {
                     UsbOut(&mut usb).msg(KeyMsg::Log {
                         level: Level::Error,

@@ -114,6 +114,23 @@ void main() {
     expect(setSecret, lessThan(create), reason: 'secret first, so preflight sees it');
   });
 
+  testWidgets('IoT Wi-Fi: use the least busy channel from the sentry board', (t) async {
+    final h = await onDevice(t, 'IoT Wi-Fi');
+    expect(find.byKey(const Key('ap-advice')), findsOneWidget);
+    await tapKey(t, 'ap-advice-use');
+    expect(find.byKey(const Key('ap-advice-use')), findsNothing, reason: 'channel 1 is now selected');
+    await enter(t, 'ap-ssid', 'Home-IoT');
+    await enter(t, 'ap-pass', 'correct horse battery');
+    await tapKey(t, 'ap-save');
+    await applySheet(t);
+    expect((h.device.changes.values.single['patch'] as Map)['ap.channel'], 1);
+  });
+
+  testWidgets('IoT Wi-Fi: without a measurement, the app says how to get one', (t) async {
+    await onDevice(t, 'IoT Wi-Fi', prep: (d) => d.channelAdvice = null);
+    expect(find.byKey(const Key('ap-advice-none')), findsOneWidget);
+  });
+
   testWidgets('IoT Wi-Fi is explained, not offered, on hardware that cannot run it', (t) async {
     await onDevice(
       t,

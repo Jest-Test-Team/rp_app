@@ -33,6 +33,9 @@ pub enum Kind {
     ProbeResponse,
     Deauth,
     Disassoc,
+    /// Authentication (the first step of joining a network).
+    Auth,
+    AssocRequest,
     OtherManagement,
     Control,
     Data,
@@ -42,6 +45,10 @@ pub enum Kind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Frame<'a> {
     pub kind: Kind,
+    /// Address 1 (receiver).
+    pub dst: [u8; 6],
+    /// Address 2 (transmitter).
+    pub src: [u8; 6],
     /// Address 3 (the BSSID for management frames).
     pub bssid: [u8; 6],
     /// SSID element of beacons and probe responses.
@@ -60,13 +67,15 @@ pub fn parse(data: &[u8]) -> Option<Frame<'_>> {
         (0, 5) => Kind::ProbeResponse,
         (0, 12) => Kind::Deauth,
         (0, 10) => Kind::Disassoc,
+        (0, 11) => Kind::Auth,
+        (0, 0) | (0, 2) => Kind::AssocRequest,
         (0, _) => Kind::OtherManagement,
         (1, _) => Kind::Control,
         (2, _) => Kind::Data,
         _ => return None,
     };
-    let mut bssid = [0u8; 6];
-    bssid.copy_from_slice(&data[16..22]);
+    let addr = |at: usize| -> [u8; 6] { data[at..at + 6].try_into().unwrap() };
+    let (dst, src, bssid) = (addr(4), addr(10), addr(16));
     let ssid = match kind {
         // Fixed fields (timestamp, interval, capabilities) then elements.
         Kind::Beacon | Kind::ProbeResponse => {
@@ -78,10 +87,10 @@ pub fn parse(data: &[u8]) -> Option<Frame<'_>> {
         }
         _ => None,
     };
-    Some(Frame { kind, bssid, ssid })
+    Some(Frame { kind, dst, src, bssid, ssid })
 }
 
-struct Mac([u8; 6]);
+pub(crate) struct Mac(pub [u8; 6]);
 impl core::fmt::Display for Mac {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let m = self.0;
@@ -90,7 +99,7 @@ impl core::fmt::Display for Mac {
 }
 
 /// Printable form of an SSID (non-ASCII bytes as `?`).
-struct Ssid<'a>(&'a [u8]);
+pub(crate) struct Ssid<'a>(pub &'a [u8]);
 impl core::fmt::Display for Ssid<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.iter().try_for_each(|&b| {
@@ -307,6 +316,9 @@ mod tests {
         let b = mgmt(8, AP, Some(b"home"));
         let f = parse(&b).unwrap();
         assert_eq!((f.kind, f.bssid, f.ssid), (Kind::Beacon, AP, Some(&b"home"[..])));
+        assert_eq!((f.dst, f.src), ([0xff; 6], AP));
+        assert_eq!(parse(&mgmt(11, AP, None)).unwrap().kind, Kind::Auth);
+        assert_eq!(parse(&mgmt(0, AP, None)).unwrap().kind, Kind::AssocRequest);
         assert_eq!(parse(&mgmt(12, AP, None)).unwrap().kind, Kind::Deauth);
         assert!(parse(&[0u8; 10]).is_none(), "too short");
         let mut bad = mgmt(8, AP, Some(b"x"));

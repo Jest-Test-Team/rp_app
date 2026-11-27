@@ -130,6 +130,12 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
         if b.ports.is_empty() || b.ports.len() > 8 {
             errs.push("boards.ports must list 1-8 serial ports".into());
         }
+        if b.watchdog_seconds != 0 && !(60..=3600).contains(&b.watchdog_seconds) {
+            errs.push("boards.watchdog_seconds must be 0 (off) or 60-3600".into());
+        }
+        if b.decoy_ssid.as_ref().is_some_and(|d| d.is_empty() || d.len() > 32) {
+            errs.push("boards.decoy_ssid must be 1-32 bytes".into());
+        }
         for p in &b.ports {
             if !p.starts_with("/dev/") || p.contains(['\'', ' ', '\n']) {
                 errs.push(format!("boards port '{p}' must be a /dev path without spaces"));

@@ -74,6 +74,15 @@ class _ApFormState extends State<ApForm> {
   late final subnet = TextEditingController(text: str(widget.cfg['subnet']));
   final pass = TextEditingController();
   late int channel = integer(widget.cfg['channel'], 6);
+  Map<String, Object?>? advice;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.client.channelAdvice().then((a) {
+      if (mounted) setState(() => advice = asMap(a['advice']).isEmpty ? null : asMap(a['advice']));
+    }).catchError((Object _) {});
+  }
   late bool blockDot = flag(widget.cfg['block_dot']);
   late bool lanReach = widget.cfg['lan_can_reach_clients'] != false;
   late String iface = str(widget.cfg['interface'], widget.cap.options.isEmpty ? 'wlan0' : widget.cap.options.first);
@@ -162,6 +171,11 @@ class _ApFormState extends State<ApForm> {
             ),
           ],
         ),
+        _ChannelAdvice(
+          advice: advice,
+          selected: channel,
+          onUse: (c) => setState(() => channel = c),
+        ),
         const SizedBox(height: 12),
         TextField(
           key: const Key('ap-subnet'),
@@ -223,6 +237,43 @@ class _ApFormState extends State<ApForm> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// "Least busy channel" from the sentry board, with a one-tap "use it"
+/// (saving still goes through the change sheet and its automatic rollback).
+class _ChannelAdvice extends StatelessWidget {
+  const _ChannelAdvice({required this.advice, required this.selected, required this.onUse});
+  final Map<String, Object?>? advice;
+  final int selected;
+  final ValueChanged<int> onUse;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S.of(context);
+    final a = advice;
+    if (a == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(s('ap.advice.none'), key: const Key('ap-advice-none'), style: Theme.of(context).textTheme.bodySmall),
+      );
+    }
+    final best = integer(a['best'], 0);
+    final scores = asList(a['candidates']).map(asMap).map((c) => 'ch${c['channel']} ${c['score']}').join(' · ');
+    return ListTile(
+      key: const Key('ap-advice'),
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.network_check),
+      title: Text(s(a['switch_recommended'] == true ? 'ap.advice.switch' : 'ap.advice.keep', {'ch': best})),
+      subtitle: Text('${s('ap.advice.scores')}: $scores'),
+      trailing: best == selected
+          ? null
+          : TextButton(
+              key: const Key('ap-advice-use'),
+              onPressed: () => onUse(best),
+              child: Text(s('ap.advice.use', {'ch': best})),
+            ),
     );
   }
 }

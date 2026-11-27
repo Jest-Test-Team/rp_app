@@ -408,6 +408,12 @@ enum ApproverCmd {
         #[arg(long)]
         port: Option<PathBuf>,
     },
+    /// Rescue: talk to the gateway's serial console through an oob board
+    /// plugged straight into this computer. Ctrl-] three times to leave.
+    Console {
+        #[arg(long)]
+        port: PathBuf,
+    },
     /// Approve without a key for a while (all keys lost or broken). Audited.
     Bypass {
         /// Minutes, 1-60.
@@ -427,6 +433,21 @@ enum AuditCmd {
 
 #[derive(Subcommand)]
 enum ApCmd {
+    /// Pick the least busy channel for the IoT access point from the newest
+    /// sentry measurement (an ESP32-S3 in the sentry profile), counting the
+    /// overlap of neighbouring channels. With --apply, switch through a change
+    /// set (confirm within the timer, or it rolls back by itself).
+    PickChannel {
+        /// Channels to choose from.
+        #[arg(long, default_value = "1,3,6,11")]
+        candidates: String,
+        /// Switch to the best channel (only if it is clearly better).
+        #[arg(long)]
+        apply: bool,
+        /// Ignore measurements older than this.
+        #[arg(long, default_value_t = 30)]
+        max_age_minutes: i64,
+    },
     /// Set the WPA2 passphrase (8-63 chars). Prompted without echo, or read
     /// from stdin with --stdin. Stored root-only, never printed or logged.
     SetPassphrase {
@@ -686,6 +707,76 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                     p.name,
                     p.host,
                     rp_core::vpn::wg_peer_addr(&cfg, p.host)
+                );
+            }
+        }
+        Cmd::Ap(ApCmd::PickChannel { candidates, apply, max_age_minutes }) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            let current = cfg.ap.as_ref().context("no [ap] section in the config")?.channel;
+            let cands = rp_agent::channels::parse_candidates(candidates)
+                .context("--candidates: channels 1-13, comma-separated")?;
+            let now = rp_policy::approvals::now();
+            let ports = rp_agent::boards::ports(&cfg);
+            let Some((ts, port, loads)) =
+                rp_agent::channels::latest(&cli.root, &ports, now, max_age_minutes * 60)
+            else {
+                anyhow::bail!(
+                    "no sentry measurement in the last {max_age_minutes} min: switch an ESP32-S3 to \
+                     the sentry profile for two minutes (rpctl approver profile sentry --port ...), then try again"
+                );
+            };
+            let a = rp_agent::channels::advise(&loads, &cands, Some(current), ts, &port)
+                .context("no usable candidate")?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&a)?);
+            } else {
+                println!("measured {} s ago by {port}; lower = less interference", now - ts);
+                for c in &a.candidates {
+                    let mark = if c.channel == current { " (current)" } else { "" };
+                    println!(
+                        "  ch{:<2} score {:>7.1}  own {:>4} frames / {:>2} APs{mark}",
+                        c.channel, c.score, c.frames, c.aps
+                    );
+                }
+                println!(
+                    "best: ch{}{}",
+                    a.best,
+                    if a.switch_recommended { "" } else { " (no switch needed)" }
+                );
+            }
+            if *apply && a.switch_recommended && a.best != current {
+                use rp_core::changeset as cs;
+                let by = format!(
+                    "admin:{}",
+                    std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into())
+                );
+                let mut patch = serde_json::Map::new();
+                patch.insert("ap.channel".into(), serde_json::json!(a.best));
+                let rev = cs::revision(&target, &cli.config)?;
+                let c = cs::create(&target, &cli.config, "ap", rev, patch, &by)?;
+                let c = cs::preflight(&target, &cli.config, &c.id, None)?;
+                if let Some(e) = &c.error {
+                    anyhow::bail!("preflight failed: {e}");
+                }
+                let c = cs::apply_cs(
+                    &target,
+                    &cli.config,
+                    &c.id,
+                    &cs::CsApplyOptions {
+                        confirm_secs: cs::DEFAULT_CONFIRM_SECS,
+                        rpctl_argv: self_argv(cli)?,
+                        install_packages: false,
+                    },
+                )?;
+                println!(
+                    "switched the access point to ch{}; keep it with: sudo rpctl changeset confirm {} \
+                     (otherwise it rolls back in {} s)",
+                    a.best,
+                    c.id,
+                    cs::DEFAULT_CONFIRM_SECS
                 );
             }
         }
@@ -1775,6 +1866,9 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
             note("board-profile", &format!("port={} profile={}", port.display(), p.as_str()))?;
             println!("{} now runs the {} profile (restarting)", port.display(), p.as_str());
         }
+        ApproverCmd::Console { port } => {
+            return oob_console(port);
+        }
         ApproverCmd::List => {
             let keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
             if cli.json {
@@ -1813,6 +1907,57 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
             }
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Raw terminal to the gateway console through an oob board on `port`.
+fn oob_console(port: &std::path::Path) -> anyhow::Result<ExitCode> {
+    use rp_agent::approver::{KeyLink, Serial};
+    use std::io::{Read, Write};
+
+    let mut link = Serial::open(port).map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
+    let info = rp_agent::approver::handshake(&mut link, std::time::Duration::from_secs(5))
+        .map_err(anyhow::Error::msg)?;
+    if info.profile != rp_wire::Profile::Oob {
+        anyhow::bail!(
+            "the board runs the {} profile; switch it first: rpctl approver profile oob --port {}",
+            info.profile.as_str(),
+            port.display()
+        );
+    }
+    link.send("CONSOLE")?;
+    // Our terminal in raw mode for the session; restored afterwards.
+    let saved = std::process::Command::new("stty").arg("-g").output()?;
+    let saved = String::from_utf8_lossy(&saved.stdout).trim().to_string();
+    std::process::Command::new("stty").args(["raw", "-echo"]).status()?;
+    eprint!("connected to the gateway console; Ctrl-] three times to leave\r\n");
+
+    let mut from = std::fs::OpenOptions::new().read(true).open(port)?;
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 256];
+        let mut out = std::io::stdout();
+        loop {
+            match from.read(&mut buf) {
+                Ok(0) => continue,
+                Ok(n) => {
+                    let _ = out.write_all(&buf[..n]);
+                    let _ = out.flush();
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let mut to = std::fs::OpenOptions::new().write(true).open(port)?;
+    let (mut stdin, mut esc, mut b) = (std::io::stdin(), 0, [0u8; 1]);
+    while stdin.read(&mut b)? == 1 {
+        to.write_all(&b)?;
+        esc = if b[0] == rp_board::oob::ESCAPE { esc + 1 } else { 0 };
+        if esc >= 3 {
+            break;
+        }
+    }
+    std::process::Command::new("stty").arg(&saved).status()?;
+    eprintln!("\nconsole closed");
     Ok(ExitCode::SUCCESS)
 }
 

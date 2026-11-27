@@ -135,6 +135,11 @@ class RpClient {
   Future<Map<String, Object?>> firewallRules() async => asMap(await _get('/v1/firewall/rules'));
   Future<Map<String, Object?>> auditEvents() async => asMap(await _get('/v1/audit/events'));
 
+  /// Which channel the IoT access point should use (from a sentry board's
+  /// newest measurement); `advice` is null without a recent one.
+  Future<Map<String, Object?>> channelAdvice({String candidates = '1,3,6,11'}) async =>
+      asMap(await _get('/v1/ap/channel-advice?candidates=$candidates'));
+
   /// rp ESP32 boards attached to the device (status per port).
   Future<Map<String, Object?>> boards() async => asMap(await _get('/v1/boards'));
 

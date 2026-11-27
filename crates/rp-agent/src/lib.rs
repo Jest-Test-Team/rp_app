@@ -6,4 +6,5 @@ pub mod admin_ops;
 pub mod api;
 pub mod approver;
 pub mod boards;
+pub mod channels;
 pub mod collect;
