@@ -302,6 +302,13 @@ void main() {
     expect(find.byKey(const Key('profile-oob')), findsNothing);
   });
 
+  testWidgets('Settings: an older device without board support says to update', (t) async {
+    await onDevice(t, 'Settings', prep: (d) => d.boardsSupported = false);
+    await tapKey(t, 'open-boards');
+    expect(find.byKey(const Key('boards-outdated')), findsOneWidget);
+    expect(find.textContaining('no such endpoint'), findsNothing);
+  });
+
   testWidgets('Settings: add another phone shows a one-time code', (t) async {
     await onDevice(t, 'Settings');
     await tapKey(t, 'add-phone');

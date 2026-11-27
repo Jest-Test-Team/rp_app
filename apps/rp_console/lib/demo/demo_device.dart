@@ -124,6 +124,9 @@ class FakeDevice implements Transport {
      'text': 'I (27) boot: chip revision: v0.2'},
   ];
 
+  /// False = an older release without /v1/boards (answers 404).
+  bool boardsSupported = true;
+
   /// Channel advice from a sentry board (null = no recent measurement).
   Map<String, Object?>? channelAdvice = {
     'best': 1,
@@ -384,6 +387,7 @@ class FakeDevice implements Transport {
     if (p == '/v1/firewall/rules') return {'rules': (config['firewall'] as Map?)?['rules'] ?? []};
     if (p == '/v1/actions/pending') return {'actions': actions, 'approver': approver};
     if (p == '/v1/ap/channel-advice') return {'advice': channelAdvice};
+    if (p.startsWith('/v1/boards') && !boardsSupported) throw _err(404, 'not_found', 'no such endpoint');
     if (p == '/v1/boards') return {'boards': boards, 'managed': true, 'approver_required': approver['required'] == true};
     if (p == '/v1/boards/logs') return {'entries': boardLogs};
     if (p == '/v1/mcp/tools') {
