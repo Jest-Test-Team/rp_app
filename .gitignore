@@ -8,3 +8,5 @@ test/results/
 __pycache__/
 .ignore/superset_bubble_fix_pr_guide.md
 .ignore/superset_bubble_fix_pr_description.md
+/.ignore
+.DS_Store
