@@ -308,6 +308,8 @@ fn main() -> ! {
                 board.on_channel(channel);
                 hop_at = now + 250;
             }
+            // Let the Wi-Fi task run instead of spinning.
+            esp_rtos::CurrentThreadHandle::get().delay(Duration::from_millis(2));
             let dropped = DROPPED.load(Ordering::Relaxed);
             if dropped >= dropped_reported + 1000 {
                 dropped_reported = dropped;

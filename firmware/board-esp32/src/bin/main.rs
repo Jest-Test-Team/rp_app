@@ -279,6 +279,7 @@ fn main() -> ! {
 
     // honeypot: radio on, decoy access point and promiscuous receive.
     let mut radio = None;
+    let mut decoy_status: Option<(bool, [u8; 6])> = None;
     let mut decoy_pass: heapless::String<32> = heapless::String::new();
     if board.profile() == Profile::Honeypot {
         let mut raw = [0u8; 16];
@@ -292,8 +293,10 @@ fn main() -> ! {
         let mut ctl = esp_radio::wifi::WifiController::new(p.WIFI, Default::default())
             .expect("Wi-Fi controller");
         let name = board.decoy_ssid().unwrap_or(rp_board::DEFAULT_DECOY);
-        start_decoy(&mut ctl, name, &decoy_pass).expect("decoy access point");
-        board.set_decoy_bssid(esp_radio::wifi::Interface::access_point().mac_address());
+        let started = start_decoy(&mut ctl, name, &decoy_pass);
+        let bssid = esp_radio::wifi::Interface::access_point().mac_address();
+        board.set_decoy_bssid(bssid);
+        decoy_status = Some((started.is_ok(), bssid));
         let mut sniffer = ctl.sniffer();
         sniffer.set_receive_cb(on_packet);
         sniffer.set_promiscuous_mode(true).expect("promiscuous mode");
@@ -320,6 +323,16 @@ fn main() -> ! {
     let boot = Instant::now();
     while boot.elapsed() < Duration::from_millis(1000) {}
     boot_log(&mut UartOut(&mut uart), board.profile());
+    if let Some((ok, m)) = decoy_status {
+        let mut t: heapless::String<{ rp_wire::MAX_LOG_TEXT }> = heapless::String::new();
+        let _ = write!(
+            t,
+            "honeypot: decoy {} on ch{DECOY_CHANNEL}, bssid {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            if ok { "up" } else { "FAILED to start" },
+            m[0], m[1], m[2], m[3], m[4], m[5]
+        );
+        UartOut(&mut uart).msg(KeyMsg::Log { level: if ok { Level::Info } else { Level::Error }, text: &t });
+    }
 
     let mut buf = [0u8; 64];
     loop {
@@ -358,6 +371,9 @@ fn main() -> ! {
             while let Some(pkt) = critical_section::with(|cs| FRAMES.borrow_ref_mut(cs).pop_front()) {
                 board.on_frame(&pkt.data[..pkt.len as usize]);
             }
+            // Let the Wi-Fi task run (beacons): a busy loop would starve it.
+            // 2 ms is ~23 bytes at 115200, well inside the 128-byte RX FIFO.
+            esp_rtos::CurrentThreadHandle::get().delay(Duration::from_millis(2));
         }
         if let Some(con) = console.as_mut() {
             if con.read_ready() {
