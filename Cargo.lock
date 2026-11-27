@@ -1138,12 +1138,15 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ed25519-dalek",
  "ipnet",
+ "rand_core",
  "rp-core",
  "rp-dns",
  "rp-http",
  "rp-policy",
  "rp-schema",
+ "rp-wire",
  "serde",
  "serde_json",
  "tokio",
@@ -1250,6 +1253,7 @@ dependencies = [
  "hmac",
  "ipnet",
  "rand_core",
+ "rp-wire",
  "serde",
  "serde_json",
  "sha2",
@@ -1307,6 +1311,10 @@ dependencies = [
  "serde",
  "toml",
 ]
+
+[[package]]
+name = "rp-wire"
+version = "0.3.0"
 
 [[package]]
 name = "rpassword"

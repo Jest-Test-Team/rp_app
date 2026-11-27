@@ -85,6 +85,17 @@ class FakeDevice implements Transport {
     'firewall': null,
   };
   final actions = <Map<String, Object?>>[];
+
+  /// Hardware approval key (`[approver]`): absent = not required.
+  Map<String, Object?> approver = {'required': false};
+
+  /// What the person does on the hardware key: 'approve', 'deny' or null
+  /// (nobody presses: the device answers with an error, request stays pending).
+  String? keyPress = 'approve';
+  Duration? lastTimeout;
+
+  /// The response timeout the app asked for on its last approval.
+  Duration? approveTimeout;
   List<Map<String, Object?>> healthAlerts = [];
   int feedUpdates = 0;
 
@@ -151,8 +162,9 @@ class FakeDevice implements Transport {
   ApiException _err(int s, String code, String msg, [Object? details]) => ApiException(s, code, msg, details);
 
   @override
-  Future<Object?> request(String method, String path, {Object? body, String? token}) async {
+  Future<Object?> request(String method, String path, {Object? body, String? token, Duration? timeout}) async {
     calls.add(Call(method, path, body, token));
+    lastTimeout = timeout;
     if (unreachable) throw const SocketLikeException();
     final p = path.split('?').first;
     if (method == 'GET' && p == '/v1/info') {
@@ -320,7 +332,7 @@ class FakeDevice implements Transport {
       };
     }
     if (p == '/v1/firewall/rules') return {'rules': (config['firewall'] as Map?)?['rules'] ?? []};
-    if (p == '/v1/actions/pending') return {'actions': actions};
+    if (p == '/v1/actions/pending') return {'actions': actions, 'approver': approver};
     if (p == '/v1/mcp/tools') {
       return {
         'tools': [
@@ -475,6 +487,15 @@ class FakeDevice implements Transport {
     if (act != null) {
       _bound(op, act.group(2)!, 'action_id', act.group(1));
       final a = actions.firstWhere((x) => x['id'] == act.group(1));
+      if (act.group(2) == 'approve') approveTimeout = lastTimeout;
+      if (act.group(2) == 'approve' && approver['required'] == true) {
+        if (keyPress == null) {
+          throw _err(400, 'invalid', 'nobody pressed the approval key within 60s; still pending');
+        }
+        a['status'] = keyPress == 'approve' ? 'executed' : 'denied';
+        a['decided_by'] = 'admin:demo+key:main';
+        return a;
+      }
       a['status'] = act.group(2) == 'approve' ? 'executed' : 'denied';
       return a;
     }

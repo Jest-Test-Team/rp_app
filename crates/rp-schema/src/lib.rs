@@ -38,6 +38,44 @@ pub struct Config {
     /// Typed firewall rules on top of the baseline (no raw nftables).
     #[serde(default)]
     pub firewall: Option<Firewall>,
+    /// Hardware approval key. Present = every approval of a privileged action
+    /// also needs a button press on an enrolled key. Absent = not required.
+    #[serde(default)]
+    pub approver: Option<Approver>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Approver {
+    /// Serial device of the key (a udev rule gives it a stable name).
+    #[serde(default = "default_approver_port")]
+    pub port: String,
+    /// Enrolled public keys (managed by `rpctl approver enroll/revoke`).
+    #[serde(default = "default_approver_keys")]
+    pub keys_file: String,
+    /// How long to wait for the button press.
+    #[serde(default = "default_approver_wait")]
+    pub wait_seconds: u64,
+}
+
+impl Default for Approver {
+    fn default() -> Self {
+        Self {
+            port: default_approver_port(),
+            keys_file: default_approver_keys(),
+            wait_seconds: default_approver_wait(),
+        }
+    }
+}
+
+fn default_approver_port() -> String {
+    "/dev/rp-approver".into()
+}
+fn default_approver_keys() -> String {
+    "/etc/rp/approver-keys.toml".into()
+}
+fn default_approver_wait() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

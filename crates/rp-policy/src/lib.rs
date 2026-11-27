@@ -5,6 +5,7 @@
 //! * [`validate`]: argument validation (CIDR allow-lists, subnets, MACs, bounds)
 //! * [`ratelimit`]: per-principal limits
 //! * [`approvals`]: privileged actions wait for a human `rpctl approve` on the device
+//! * [`hwkey`]: optional hardware approval keys (button press + Ed25519 signature)
 //! * [`audit`]: append-only, hash-chained audit log
 //! * [`admin`]: console admins (Ed25519 keys) and signed, single-use requests
 //! * [`pairing`]: one-time-secret pairing of a new console admin
@@ -13,6 +14,7 @@ pub mod admin;
 pub mod approvals;
 pub mod audit;
 pub mod auth;
+pub mod hwkey;
 pub mod pairing;
 pub mod ratelimit;
 pub mod validate;

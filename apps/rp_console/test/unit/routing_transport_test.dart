@@ -9,7 +9,7 @@ class Down implements Transport {
   @override
   String? get seenCert => null;
   @override
-  Future<Object?> request(String m, String p, {Object? body, String? token}) async => throw const SocketLikeException();
+  Future<Object?> request(String m, String p, {Object? body, String? token, Duration? timeout}) async => throw const SocketLikeException();
 }
 
 void main() {

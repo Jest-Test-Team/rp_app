@@ -13,9 +13,14 @@ rp-schema = { path = "../rp-schema" }
 rp-policy = { path = "../rp-policy" }
 rp-http = { path = "../rp-http" }
 rp-dns = { path = "../rp-dns" }
+rp-wire = { path = "../rp-wire" }
+rand_core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ipnet.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true

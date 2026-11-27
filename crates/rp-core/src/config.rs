@@ -113,6 +113,19 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
             }
         }
     }
+    if let Some(h) = &cfg.approver {
+        if cfg.agent.is_none() {
+            errs.push("[approver] needs an [agent] section".into());
+        }
+        if !(10..=300).contains(&h.wait_seconds) {
+            errs.push("approver.wait_seconds must be 10-300".into());
+        }
+        for p in [&h.port, &h.keys_file] {
+            if !p.starts_with('/') || p.contains(['\'', ' ']) {
+                errs.push(format!("approver path '{p}' must be absolute without quotes or spaces"));
+            }
+        }
+    }
     if let Some(m) = &cfg.mcp {
         if cfg.agent.is_none() {
             errs.push("[mcp] needs an [agent] section".into());

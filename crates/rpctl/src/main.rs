@@ -117,6 +117,9 @@ enum Cmd {
     /// Audit log tools.
     #[command(subcommand)]
     Audit(AuditCmd),
+    /// Hardware approval keys (ESP32-S3 running firmware/approver-s3).
+    #[command(subcommand)]
+    Approver(ApproverCmd),
     /// Revision-checked configuration changes with automatic rollback (what
     /// the console app uses).
     #[command(subcommand)]
@@ -375,6 +378,32 @@ enum DnsCmd {
     },
     /// The feed catalogue and the status of the last update.
     Feeds,
+}
+
+#[derive(Subcommand)]
+enum ApproverCmd {
+    /// Read the public key from a connected key and trust it.
+    Enroll {
+        /// A name for this key (e.g. main, backup).
+        #[arg(long)]
+        name: String,
+        /// Serial port of the key (default: approver.port).
+        #[arg(long)]
+        port: Option<PathBuf>,
+    },
+    /// List enrolled keys.
+    List,
+    /// Stop trusting a key (lost or stolen).
+    Revoke { id: String },
+    /// Approve without a key for a while (all keys lost or broken). Audited.
+    Bypass {
+        /// Minutes, 1-60.
+        #[arg(long, default_value_t = 15)]
+        minutes: i64,
+        /// Close an open bypass window now.
+        #[arg(long)]
+        close: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -932,7 +961,13 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
             let a = rp_agent::admin_ops::decide(&cfg, &cli.root, id, approve, &admin, runner)
                 .map_err(anyhow::Error::msg)?;
-            if approve {
+            if a.status == rp_policy::approvals::Status::Denied && approve {
+                println!(
+                    "denied on the hardware key ({}) {id}: {}",
+                    a.decided_by.as_deref().unwrap_or("?"),
+                    a.summary
+                );
+            } else if approve {
                 println!("approved and applied {id}: {} (expires automatically)", a.summary);
             } else {
                 println!("denied {id}: {}", a.summary);
@@ -956,6 +991,13 @@ fn run(cli: &Cli, runner: &dyn Runner) -> Result<ExitCode> {
                 }
             }
             println!("restored {restored} active quarantine(s)");
+        }
+        Cmd::Approver(c) => {
+            let cfg = match load_config(&cli.config) {
+                Ok(c) => c,
+                Err(code) => return Ok(code),
+            };
+            return approver_cmd(cli, &cfg, c);
         }
         Cmd::Audit(AuditCmd::Verify) => {
             let cfg = match load_config(&cli.config) {
@@ -1652,6 +1694,75 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::Result<ExitCode> {
+    use rp_agent::approver;
+    use rp_policy::hwkey::{self, HwKeys};
+
+    let h = cfg.approver.clone().unwrap_or_default();
+    let keys_path = approver::keys_path(&h, &cli.root);
+    let admin = format!("admin:{}", std::env::var("SUDO_USER").unwrap_or_else(|_| "root".into()));
+    let audit = rp_agent::admin_ops::audit(cfg, &cli.root)?;
+    let now = rp_policy::approvals::now();
+    let note = |what: &str, detail: &str| {
+        audit.record(&admin, "approver", &serde_json::json!({}), what, detail)
+    };
+    match c {
+        ApproverCmd::Enroll { name, port } => {
+            let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
+            let mut link = approver::Serial::open(&port)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
+            let (pk, version) = approver::hello(&mut link, std::time::Duration::from_secs(5))
+                .map_err(anyhow::Error::msg)?;
+            let mut keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
+            let k = keys.add(name, &pk, now).map_err(anyhow::Error::msg)?;
+            keys.save(&keys_path)?;
+            note("hwkey-enrolled", &format!("key={} name={}", k.id, k.name))?;
+            println!("enrolled key {} ({}), firmware {version}", k.id, k.name);
+            if cfg.approver.is_none() {
+                println!("add an [approver] section to the config to require it for approvals");
+            }
+        }
+        ApproverCmd::List => {
+            let keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&keys.keys)?);
+            } else if keys.keys.is_empty() {
+                println!("no hardware keys enrolled");
+            } else {
+                for k in &keys.keys {
+                    let state = if k.revoked { "revoked" } else { "active" };
+                    println!("{}  {:<8} {}", k.id, state, k.name);
+                }
+            }
+            if let Some(until) = hwkey::bypass_until(&approver::bypass_path(cfg, &cli.root), now) {
+                println!("bypass open for {} more minute(s)", (until - now + 59) / 60);
+            }
+        }
+        ApproverCmd::Revoke { id } => {
+            let mut keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
+            if !keys.revoke(id) {
+                anyhow::bail!("no active key with id '{id}'");
+            }
+            keys.save(&keys_path)?;
+            note("hwkey-revoked", &format!("key={id}"))?;
+            println!("revoked key {id}");
+        }
+        ApproverCmd::Bypass { minutes, close } => {
+            let path = approver::bypass_path(cfg, &cli.root);
+            if *close {
+                hwkey::close_bypass(&path);
+                note("hwkey-bypass-closed", "")?;
+                println!("bypass closed");
+            } else {
+                let until = hwkey::open_bypass(&path, *minutes, now).map_err(anyhow::Error::msg)?;
+                note("hwkey-bypass-opened", &format!("until={until}"))?;
+                println!("approvals do not need a hardware key for {minutes} minute(s)");
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

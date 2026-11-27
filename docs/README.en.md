@@ -22,6 +22,7 @@ Deployment status and to-dos for this device: [status.en.md](status.en.md).
 | [threat-model.en.md](threat-model.en.md) | Attackers, mitigations with their tests, known limitations |
 | [benchmarks.en.md](benchmarks.en.md) | Measurements: crypto, forwarding, DNS latency, detection rates, binary sizes |
 | [hardware-matrix.en.md](hardware-matrix.en.md) | Feature support per Pi generation and this device's measurements |
+| [approver.en.md](approver.en.md) | **Hardware approval key** (ESP32-S3): privileged actions need a physical button press |
 
 ## Environment
 

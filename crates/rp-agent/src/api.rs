@@ -129,7 +129,7 @@ fn route(st: &State, req: &Request) -> Response {
         ("GET", "/v1/actions") => {
             let list: Vec<Value> =
                 st.store.list().iter().map(|a| serde_json::to_value(a).unwrap()).collect();
-            Response::json(200, &json!({"actions": list}))
+            Response::json(200, &json!({"actions": list, "approver": approver_status(ctx)}))
         }
         ("GET", "/v1/audit") => {
             let limit =
@@ -150,6 +150,26 @@ fn route(st: &State, req: &Request) -> Response {
         (_, p) if p.starts_with("/v1/") => Response::error(405, "method not allowed"),
         _ => Response::error(404, "not found"),
     }
+}
+
+/// Whether approvals need the hardware key, so the console can tell the
+/// person to go and press it. Key details stay on the device.
+fn approver_status(ctx: &crate::collect::Ctx) -> Value {
+    let Some(h) = &ctx.cfg.approver else {
+        return json!({"required": false});
+    };
+    let now = rp_policy::approvals::now();
+    let bypass =
+        rp_policy::hwkey::bypass_until(&crate::approver::bypass_path(&ctx.cfg, &ctx.root), now);
+    let keys = rp_policy::hwkey::HwKeys::load(&crate::approver::keys_path(h, &ctx.root))
+        .ok()
+        .map(|k| k.active().count());
+    json!({
+        "required": true,
+        "wait_seconds": h.wait_seconds,
+        "keys": keys,
+        "bypass_until": bypass,
+    })
 }
 
 fn scan(st: &State, req: &Request) -> Response {

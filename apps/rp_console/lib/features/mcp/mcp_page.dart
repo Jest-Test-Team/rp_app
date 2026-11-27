@@ -3,6 +3,8 @@
 // Approving signs the request with this app's admin key; the device checks it
 // again (rp-privd) — MCP clients themselves can never approve.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/strings.dart';
@@ -46,17 +48,60 @@ class ApprovalQueue extends StatelessWidget {
   final Map<String, Object?> actions;
   final VoidCallback onChanged;
 
+  Map<String, Object?> get _approver => asMap(actions['approver']);
+  bool get _keyRequired => _approver['required'] == true && _approver['bypass_until'] == null;
+
   Future<void> _decide(BuildContext context, String id, bool approve) async {
+    final s = S.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    var dialogOpen = false;
     try {
-      if (approve) {
+      if (approve && _keyRequired) {
+        // The device answers only after someone presses its hardware key.
+        final wait = Duration(seconds: (_approver['wait_seconds'] as num?)?.toInt() ?? 60);
+        dialogOpen = true;
+        unawaited(
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => _PressKeyDialog(seconds: wait.inSeconds),
+          ),
+        );
+        final a = await client.approve(id, keyWait: wait + const Duration(seconds: 20));
+        if (dialogOpen) navigator.pop();
+        dialogOpen = false;
+        messenger.showSnackBar(
+          SnackBar(content: Text(s(str(a['status']) == 'denied' ? 'approver.denied' : 'approver.approved'))),
+        );
+      } else if (approve) {
         await client.approve(id);
       } else {
         await client.deny(id);
       }
       onChanged();
     } on ApiException catch (e) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      if (dialogOpen) navigator.pop();
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      onChanged();
+    } on TimeoutException {
+      if (dialogOpen) navigator.pop();
+      messenger.showSnackBar(SnackBar(content: Text(s('approver.timeout'))));
+      onChanged();
     }
+  }
+
+  Widget _keyBanner(BuildContext context) {
+    final s = S.of(context);
+    final bypass = _approver['bypass_until'] != null;
+    final keys = _approver['keys'];
+    return ListTile(
+      key: const Key('approver-banner'),
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(bypass ? Icons.lock_open_outlined : Icons.key, color: bypass ? Colors.orange : null),
+      title: Text(s(bypass ? 'approver.bypass' : 'approver.required')),
+      subtitle: keys is num ? Text(s('approver.keys', {'n': keys})) : null,
+    );
   }
 
   @override
@@ -66,6 +111,7 @@ class ApprovalQueue extends StatelessWidget {
     return Section(
       title: s('mcp.approvals'),
       children: [
+        if (_approver['required'] == true) _keyBanner(context),
         if (pending.isEmpty) Text(s('mcp.none'), key: const Key('mcp-none')),
         for (final a in pending)
           Card(
@@ -98,6 +144,53 @@ class ApprovalQueue extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Shown while the device waits for a press on its hardware approval key.
+class _PressKeyDialog extends StatefulWidget {
+  const _PressKeyDialog({required this.seconds});
+  final int seconds;
+  @override
+  State<_PressKeyDialog> createState() => _PressKeyDialogState();
+}
+
+class _PressKeyDialogState extends State<_PressKeyDialog> {
+  late int left = widget.seconds;
+  Timer? timer;
+
+  @override
+  void initState() {
+    super.initState();
+    timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (left > 0) setState(() => left--);
+    });
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S.of(context);
+    return AlertDialog(
+      key: const Key('approver-wait'),
+      icon: const Icon(Icons.key),
+      title: Text(s('approver.press.title')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(s('approver.press.body')),
+          const SizedBox(height: 16),
+          const LinearProgressIndicator(),
+          const SizedBox(height: 8),
+          Text(s('approver.press.left', {'s': left})),
+        ],
+      ),
     );
   }
 }

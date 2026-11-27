@@ -216,6 +216,46 @@ void main() {
     expect(h.device.mcpClients.single['capabilities'], containsAll(['read', 'active']));
   });
 
+  testWidgets('MCP: with a hardware key, approval waits for the press and reports a denial', (t) async {
+    final h = await onDevice(
+      t,
+      'MCP',
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 45, 'keys': 2, 'bypass_until': null};
+        d.keyPress = 'deny';
+        d.actions.add({
+          'id': 'act2',
+          'status': 'pending',
+          'tool': 'block_device',
+          'principal': 'mcp:claude',
+          'summary': 'block 198.51.100.151 for 60 min',
+        });
+      },
+    );
+    expect(find.byKey(const Key('approver-banner')), findsOneWidget);
+    await tapKey(t, 'approve-act2');
+    expect(h.device.approveTimeout, const Duration(seconds: 65), reason: 'waits for the key, not 15 s');
+    expect(h.device.actions.single['status'], 'denied', reason: 'a short press on the key denies');
+    expect(find.byKey(const Key('approver-wait')), findsNothing, reason: 'the wait dialog closes');
+    expect(find.byKey(const Key('mcp-none')), findsOneWidget);
+  });
+
+  testWidgets('MCP: nobody presses the hardware key, the request stays pending', (t) async {
+    final h = await onDevice(
+      t,
+      'MCP',
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 30, 'keys': 1};
+        d.keyPress = null;
+        d.actions.add({'id': 'act3', 'status': 'pending', 'tool': 'block_device', 'principal': 'p', 'summary': 'x'});
+      },
+    );
+    await tapKey(t, 'approve-act3');
+    expect(h.device.actions.single['status'], 'pending');
+    expect(find.byKey(const Key('approver-wait')), findsNothing);
+    expect(find.byKey(const Key('approve-act3')), findsOneWidget, reason: 'can be tried again');
+  });
+
   testWidgets('Settings: add another phone shows a one-time code', (t) async {
     await onDevice(t, 'Settings');
     await tapKey(t, 'add-phone');

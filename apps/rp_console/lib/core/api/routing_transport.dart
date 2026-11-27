@@ -78,10 +78,10 @@ class RoutingTransport implements Transport {
   }
 
   @override
-  Future<Object?> request(String method, String path, {Object? body, String? token}) async {
+  Future<Object?> request(String method, String path, {Object? body, String? token, Duration? timeout}) async {
     final t = _t ?? await _connect();
     try {
-      return await t.request(method, path, body: body, token: token);
+      return await t.request(method, path, body: body, token: token, timeout: timeout);
     } catch (e) {
       if (!_unreachable(e)) rethrow;
       // The network changed (VPN switched on/off, left home): pick again.
@@ -89,7 +89,7 @@ class RoutingTransport implements Transport {
       _t = null;
       _host = null;
       final next = await _connect(skip: failed);
-      return next.request(method, path, body: body, token: token);
+      return next.request(method, path, body: body, token: token, timeout: timeout);
     }
   }
 }
