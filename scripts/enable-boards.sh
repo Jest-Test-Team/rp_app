@@ -34,7 +34,8 @@ log() { printf '\n== %s\n' "$*"; }
 
 log "1/4 udev rule"
 wroom_serial=""
-for d in /dev/ttyUSB*; do
+# The WROOM's CH9102 shows up as ttyACM* (CDC-ACM) or ttyUSB*, by kernel.
+for d in /dev/ttyACM* /dev/ttyUSB*; do
   [[ -e $d ]] || continue
   props=$(udevadm info -q property -n "$d")
   if grep -q '^ID_VENDOR_ID=1a86$' <<<"$props" && grep -q '^ID_MODEL_ID=55d4$' <<<"$props"; then
