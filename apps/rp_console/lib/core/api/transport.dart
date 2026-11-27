@@ -38,7 +38,9 @@ class PinMismatch implements Exception {
 abstract class Transport {
   /// SHA-256 of the certificate seen on the last connection.
   String? get seenCert;
-  Future<Object?> request(String method, String path, {Object? body, String? token});
+  /// [timeout] overrides the default wait for the response (e.g. an approval
+  /// that waits for a button press on the device's hardware key).
+  Future<Object?> request(String method, String path, {Object? body, String? token, Duration? timeout});
 }
 
 class PinnedTransport implements Transport {
@@ -77,10 +79,11 @@ class PinnedTransport implements Transport {
   }
 
   @override
-  Future<Object?> request(String method, String path, {Object? body, String? token}) async {
+  Future<Object?> request(String method, String path, {Object? body, String? token, Duration? timeout}) async {
+    final wait = timeout ?? this.timeout;
     final client = _client();
     try {
-      final req = await client.openUrl(method, _uri(path)).timeout(timeout);
+      final req = await client.openUrl(method, _uri(path)).timeout(this.timeout);
       req.headers.set(HttpHeaders.acceptHeader, 'application/json');
       if (token != null) req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       if (body != null) {
@@ -89,8 +92,8 @@ class PinnedTransport implements Transport {
         req.contentLength = bytes.length;
         req.add(bytes);
       }
-      final resp = await req.close().timeout(timeout);
-      final text = await resp.transform(utf8.decoder).join().timeout(timeout);
+      final resp = await req.close().timeout(wait);
+      final text = await resp.transform(utf8.decoder).join().timeout(wait);
       Object? json;
       try {
         json = text.isEmpty ? null : jsonDecode(text);

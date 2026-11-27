@@ -96,9 +96,9 @@ class RpClient {
     }
   }
 
-  Future<Map<String, Object?>> _signed(String method, String path, Map<String, Object?> op) async {
+  Future<Map<String, Object?>> _signed(String method, String path, Map<String, Object?> op, {Duration? timeout}) async {
     final env = await _sign(op);
-    return asMap(await transport.request(method, path, body: env.toJson()));
+    return asMap(await transport.request(method, path, body: env.toJson(), timeout: timeout));
   }
 
   // ----------------------------------------------------------------- reads
@@ -134,6 +134,13 @@ class RpClient {
   Future<Map<String, Object?>> flows() async => asMap(await _get('/v1/flows'));
   Future<Map<String, Object?>> firewallRules() async => asMap(await _get('/v1/firewall/rules'));
   Future<Map<String, Object?>> auditEvents() async => asMap(await _get('/v1/audit/events'));
+
+  /// rp ESP32 boards attached to the device (status per port).
+  Future<Map<String, Object?>> boards() async => asMap(await _get('/v1/boards'));
+
+  /// What the boards logged, newest first; [level] is the minimum severity.
+  Future<Map<String, Object?>> boardLogs({String level = 'info', int limit = 200}) async =>
+      asMap(await _get('/v1/boards/logs?level=${Uri.encodeQueryComponent(level)}&limit=$limit'));
   Future<Map<String, Object?>> openapi() async => asMap(await transport.request('GET', '/v1/openapi.json'));
   Future<Map<String, Object?>> updateStatus() async => asMap(await _get('/v1/update'));
 
@@ -171,8 +178,14 @@ class RpClient {
   Future<Map<String, Object?>> setSecret(String name, String value) =>
       _signed('PUT', '/v1/secrets/${Uri.encodeComponent(name)}', {'op': 'set_secret', 'name': name, 'value': value});
 
-  Future<Map<String, Object?>> approve(String actionId) =>
-      _signed('POST', '/v1/actions/${Uri.encodeComponent(actionId)}/approve', {'op': 'approve', 'action_id': actionId});
+  /// With a hardware approval key on the device, the response only comes once
+  /// someone has pressed it (or it gave up): pass [keyWait] to wait that long.
+  Future<Map<String, Object?>> approve(String actionId, {Duration? keyWait}) => _signed(
+    'POST',
+    '/v1/actions/${Uri.encodeComponent(actionId)}/approve',
+    {'op': 'approve', 'action_id': actionId},
+    timeout: keyWait,
+  );
 
   Future<Map<String, Object?>> deny(String actionId) =>
       _signed('POST', '/v1/actions/${Uri.encodeComponent(actionId)}/deny', {'op': 'deny', 'action_id': actionId});
@@ -199,6 +212,10 @@ class RpClient {
   /// Returns the new client's token: show it once, never store it.
   Future<Map<String, Object?>> mcpAddClient(String name, List<String> capabilities) =>
       _signed('POST', '/v1/mcp/clients', {'op': 'mcp_add_client', 'name': name, 'capabilities': capabilities});
+
+  /// Switch a board's profile; it restarts. Only `approver` approves requests.
+  Future<Map<String, Object?>> setBoardProfile(String port, String profile) =>
+      _signed('POST', '/v1/boards/profile', {'op': 'set_board_profile', 'port': port, 'profile': profile});
 
   Future<Map<String, Object?>> mcpRemoveClient(String name) =>
       _signed('DELETE', '/v1/mcp/clients/${Uri.encodeComponent(name)}', {'op': 'mcp_remove_client', 'name': name});

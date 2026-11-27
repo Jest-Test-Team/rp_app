@@ -129,7 +129,7 @@ fn route(st: &State, req: &Request) -> Response {
         ("GET", "/v1/actions") => {
             let list: Vec<Value> =
                 st.store.list().iter().map(|a| serde_json::to_value(a).unwrap()).collect();
-            Response::json(200, &json!({"actions": list}))
+            Response::json(200, &json!({"actions": list, "approver": approver_status(ctx)}))
         }
         ("GET", "/v1/audit") => {
             let limit =
@@ -145,11 +145,92 @@ fn route(st: &State, req: &Request) -> Response {
             };
             Response::json(200, &json!({"chain": chain, "entries": entries}))
         }
+        ("GET", "/v1/boards") => Response::json(200, &boards_view(ctx)),
+        ("GET", "/v1/boards/logs") => {
+            let limit =
+                req.query_param("limit").and_then(|v| v.parse().ok()).unwrap_or(100usize).min(1000);
+            let level = req
+                .query_param("level")
+                .filter(|l| matches!(l.as_str(), "error" | "warn" | "info" | "debug"));
+            let port = req.query_param("port");
+            Response::json(200, &board_logs(ctx, port.as_deref(), level.as_deref(), limit))
+        }
         ("POST", "/v1/scan") => scan(st, req),
         ("POST", "/v1/actions") => request_action(st, req),
         (_, p) if p.starts_with("/v1/") => Response::error(405, "method not allowed"),
         _ => Response::error(404, "not found"),
     }
+}
+
+/// Whether approvals need the hardware key, so the console can tell the
+/// person to go and press it. Key details stay on the device.
+fn approver_status(ctx: &crate::collect::Ctx) -> Value {
+    let Some(h) = &ctx.cfg.approver else {
+        return json!({"required": false});
+    };
+    let now = rp_policy::approvals::now();
+    let bypass =
+        rp_policy::hwkey::bypass_until(&crate::approver::bypass_path(&ctx.cfg, &ctx.root), now);
+    let keys = rp_policy::hwkey::HwKeys::load(&crate::approver::keys_path(h, &ctx.root))
+        .ok()
+        .map(|k| k.active().count());
+    json!({
+        "required": true,
+        "wait_seconds": h.wait_seconds,
+        "keys": keys,
+        "bypass_until": bypass,
+    })
+}
+
+/// Board status from rp-boards, with the name each board's key is enrolled
+/// under (if it is) and its latest problems.
+fn boards_view(ctx: &crate::collect::Ctx) -> Value {
+    let keys = ctx
+        .cfg
+        .approver
+        .as_ref()
+        .and_then(|h| {
+            rp_policy::hwkey::HwKeys::load(&crate::approver::keys_path(h, &ctx.root)).ok()
+        })
+        .unwrap_or_default();
+    let boards: Vec<Value> = crate::boards::read_status(&ctx.root)
+        .into_iter()
+        .map(|b| {
+            let enrolled = b
+                .key_id
+                .as_ref()
+                .and_then(|id| keys.active().find(|k| &k.id == id))
+                .map(|k| k.name.clone());
+            let problems = crate::boards::read_logs(&ctx.root, &b.port, 5, Some("warn"));
+            let mut v = serde_json::to_value(&b).unwrap();
+            v["enrolled_as"] = json!(enrolled);
+            v["recent_problems"] = json!(problems);
+            v
+        })
+        .collect();
+    json!({
+        "boards": boards,
+        "managed": ctx.cfg.approver.is_some() || ctx.cfg.boards.is_some(),
+        "approver_required": ctx.cfg.approver.is_some(),
+    })
+}
+
+/// Recent log entries of one board, or of all of them merged (newest first).
+fn board_logs(
+    ctx: &crate::collect::Ctx,
+    port: Option<&str>,
+    level: Option<&str>,
+    limit: usize,
+) -> Value {
+    let ports = crate::boards::ports(&ctx.cfg);
+    let mut entries: Vec<crate::boards::LogEntry> = ports
+        .iter()
+        .filter(|p| port.is_none_or(|want| want == p.as_str()))
+        .flat_map(|p| crate::boards::read_logs(&ctx.root, p, limit, level))
+        .collect();
+    entries.sort_by_key(|e| std::cmp::Reverse(e.ts));
+    entries.truncate(limit);
+    json!({"entries": entries})
 }
 
 fn scan(st: &State, req: &Request) -> Response {

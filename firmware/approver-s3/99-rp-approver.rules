@@ -1,0 +1,11 @@
+# /etc/udev/rules.d/99-rp-approver.rules
+# Stable names for the rp hardware approval keys, readable only by root
+# (rpctl and rp-privd run as root).
+
+# Main key: ESP32-S3, native USB Serial/JTAG.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", SYMLINK+="rp-approver", MODE="0600", OWNER="root"
+
+# Backup key: classic ESP32 behind a USB-serial bridge. These bridge IDs are
+# generic (any CH9102/CH340/CP210x adapter matches), so pin it to the board's
+# serial number: `udevadm info -a /dev/ttyUSB0 | grep serial`.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="<BOARD_SERIAL>", SYMLINK+="rp-approver-backup", MODE="0600", OWNER="root"

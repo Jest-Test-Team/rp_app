@@ -267,6 +267,126 @@
         ]
       }
     },
+    "/v1/boards": {
+      "get": {
+        "tags": [
+          "boards"
+        ],
+        "summary": "rp ESP32 boards (hardware approval keys, sensors): status per port.",
+        "operationId": "boards",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/boards/logs": {
+      "get": {
+        "tags": [
+          "boards"
+        ],
+        "summary": "What the boards logged (newest first): LOG lines, panics, boot reasons.",
+        "operationId": "board_logs",
+        "parameters": [
+          {
+            "name": "level",
+            "in": "path",
+            "description": "Minimum severity: error | warn | info | debug (default info).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/boards/profile": {
+      "post": {
+        "tags": [
+          "boards"
+        ],
+        "summary": "Switch a board's profile (signed `set_board_profile`). The board restarts;\nonly `approver` can approve requests.",
+        "operationId": "board_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedEnvelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/capabilities": {
       "get": {
         "tags": [

@@ -30,6 +30,9 @@ enum Cmd {
     Run,
     /// Print one collector's output as JSON: health | inventory | arp | usb | vpn | flows | dns
     Snapshot { what: String },
+    /// Keep the rp ESP32 boards' serial ports open (rp-boards.service):
+    /// collect their logs and status, lend ports to rpctl / rp-privd.
+    Boards,
 }
 
 fn ctx(cli: &Cli) -> Result<Ctx> {
@@ -104,6 +107,11 @@ fn main() -> ExitCode {
                 other => anyhow::bail!("unknown snapshot '{other}'"),
             };
             println!("{}", serde_json::to_string_pretty(&v)?);
+            Ok(())
+        })(),
+        Some(Cmd::Boards) => (|| -> Result<()> {
+            let c = ctx(&cli)?;
+            rp_agent::boards::run(&c.cfg, &c.root)?;
             Ok(())
         })(),
         _ => tokio::runtime::Builder::new_multi_thread()

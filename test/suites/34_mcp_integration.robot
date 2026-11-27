@@ -24,7 +24,7 @@ Notifications Get No Reply
 Tools List Advertises All Tools With Strict Schemas
     ${r}=    MCP    RP_TEST_VIEWER    tools/list
     ${tools}=    Set Variable    ${r['body']['result']['tools']}
-    Length Should Be    ${tools}    12
+    Length Should Be    ${tools}    14
     ${names}=    Evaluate    [t['name'] for t in $tools]
     FOR    ${n}    IN    get_system_health    get_device_inventory    scan_network    block_device    isolate_client
         Should Contain    ${names}    ${n}
@@ -37,6 +37,7 @@ Tools List Advertises All Tools With Strict Schemas
 Every Read Tool Works For A Read-Only Client
     FOR    ${tool}    IN    get_system_health    get_device_inventory    inspect_arp_table    inspect_usb
     ...    get_vpn_status    query_dns_events    get_flows    get_audit_log    list_pending_actions
+    ...    get_boards    get_board_logs
         ${res}=    Call Tool    RP_TEST_VIEWER    ${tool}
         Should Be Equal    ${res['isError']}    ${False}    msg=${tool}: ${res}
     END

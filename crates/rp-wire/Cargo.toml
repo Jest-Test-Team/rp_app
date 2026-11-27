@@ -1,0 +1,12 @@
+[package]
+name = "rp-wire"
+description = "no_std line protocol between the gateway and a hardware approval key (ESP32)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No dependencies on purpose: the same source builds for the Pi and for the
+# ESP32 firmware (Xtensa toolchain, no_std, no allocator).
+[dependencies]

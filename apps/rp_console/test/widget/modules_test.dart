@@ -216,6 +216,75 @@ void main() {
     expect(h.device.mcpClients.single['capabilities'], containsAll(['read', 'active']));
   });
 
+  testWidgets('MCP: with a hardware key, approval waits for the press and reports a denial', (t) async {
+    final h = await onDevice(
+      t,
+      'MCP',
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 45, 'keys': 2, 'bypass_until': null};
+        d.keyPress = 'deny';
+        d.actions.add({
+          'id': 'act2',
+          'status': 'pending',
+          'tool': 'block_device',
+          'principal': 'mcp:claude',
+          'summary': 'block 198.51.100.151 for 60 min',
+        });
+      },
+    );
+    expect(find.byKey(const Key('approver-banner')), findsOneWidget);
+    await tapKey(t, 'approve-act2');
+    expect(h.device.approveTimeout, const Duration(seconds: 65), reason: 'waits for the key, not 15 s');
+    expect(h.device.actions.single['status'], 'denied', reason: 'a short press on the key denies');
+    expect(find.byKey(const Key('approver-wait')), findsNothing, reason: 'the wait dialog closes');
+    expect(find.byKey(const Key('mcp-none')), findsOneWidget);
+  });
+
+  testWidgets('MCP: nobody presses the hardware key, the request stays pending', (t) async {
+    final h = await onDevice(
+      t,
+      'MCP',
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 30, 'keys': 1};
+        d.keyPress = null;
+        d.actions.add({'id': 'act3', 'status': 'pending', 'tool': 'block_device', 'principal': 'p', 'summary': 'x'});
+      },
+    );
+    await tapKey(t, 'approve-act3');
+    expect(h.device.actions.single['status'], 'pending');
+    expect(find.byKey(const Key('approver-wait')), findsNothing);
+    expect(find.byKey(const Key('approve-act3')), findsOneWidget, reason: 'can be tried again');
+  });
+
+  testWidgets('Settings: ESP32 boards show status and errors, and switch profile signed', (t) async {
+    final h = await onDevice(t, 'Settings');
+    await tapKey(t, 'open-boards');
+    expect(find.byKey(const Key('board-/dev/rp-approver')), findsOneWidget);
+    expect(find.byKey(const Key('board-/dev/rp-approver-backup')), findsOneWidget);
+    expect(find.byKey(const Key('board-errors-/dev/rp-approver-backup')), findsOneWidget);
+    expect(find.textContaining('“main”'), findsOneWidget);
+    // Default level: warnings and errors only.
+    expect(find.textContaining('SysBrownOut'), findsWidgets);
+    expect(find.text('running profile=approver firmware=0.2.0'), findsNothing);
+    expect(find.text('I (27) boot: chip revision: v0.2'), findsNothing);
+    await t.tap(find.text('All'));
+    await settle(t);
+    expect(find.text('I (27) boot: chip revision: v0.2'), findsOneWidget);
+
+    await tapKey(t, 'board-switch-/dev/rp-approver');
+    await tapKey(t, 'profile-sentry');
+    expect(find.byKey(const Key('profile-confirm')), findsOneWidget, reason: 'leaving approver is confirmed');
+    await tapKey(t, 'profile-confirm');
+    expect(h.device.boards.first['profile'], 'sentry');
+    final call = h.device.calls.lastWhere((c) => c.path == '/v1/boards/profile');
+    expect(jsonDecode((call.body as Map)['payload'] as String),
+        {'op': 'set_board_profile', 'port': '/dev/rp-approver', 'profile': 'sentry'});
+
+    // A profile the board does not support is not offered.
+    await tapKey(t, 'board-switch-/dev/rp-approver');
+    expect(find.byKey(const Key('profile-oob')), findsNothing);
+  });
+
   testWidgets('Settings: add another phone shows a one-time code', (t) async {
     await onDevice(t, 'Settings');
     await tapKey(t, 'add-phone');

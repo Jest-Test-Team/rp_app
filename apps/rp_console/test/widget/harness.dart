@@ -100,7 +100,7 @@ class DownTransport implements Transport {
   @override
   String? get seenCert => null;
   @override
-  Future<Object?> request(String method, String path, {Object? body, String? token}) async =>
+  Future<Object?> request(String method, String path, {Object? body, String? token, Duration? timeout}) async =>
       throw const SocketLikeException();
 }
 

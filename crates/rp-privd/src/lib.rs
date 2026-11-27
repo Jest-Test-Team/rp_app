@@ -113,6 +113,11 @@ pub enum SignedOp {
     McpRemoveClient {
         name: String,
     },
+    /// Switch an rp ESP32 board to another profile (it restarts).
+    SetBoardProfile {
+        port: String,
+        profile: String,
+    },
     /// Install a signed release (all binaries at once, automatic switch-back).
     InstallUpdate {
         tag: String,
@@ -144,6 +149,7 @@ impl SignedOp {
             Self::OpenPairing { .. } => "open_pairing",
             Self::McpAddClient { .. } => "mcp_add_client",
             Self::McpRemoveClient { .. } => "mcp_remove_client",
+            Self::SetBoardProfile { .. } => "set_board_profile",
             Self::InstallUpdate { .. } => "install_update",
             Self::RollbackUpdate {} => "rollback_update",
             Self::UpdateDnsFeeds {} => "update_dns_feeds",
@@ -638,6 +644,33 @@ fn run_op(
             let _ = std::fs::remove_file(ctx.p(ADMINS));
             let _ = std::fs::remove_file(ctx.p(PAIRING));
             Response::ok(json!({"removed": removed, "admins_removed": true}))
+        }
+        SignedOp::SetBoardProfile { port, profile } => {
+            let c = match cfg() {
+                Ok(c) => c,
+                Err(r) => return r,
+            };
+            if !rp_agent::boards::ports(&c).contains(port) {
+                return Response::err("not_found", "not a configured board port");
+            }
+            let Some(p) = rp_wire::Profile::parse(profile) else {
+                return Response::err("invalid", "unknown profile");
+            };
+            let set = rp_agent::boards::open_port(&ctx.root, port)
+                .map_err(|e| e.to_string())
+                .and_then(|mut l| {
+                    rp_agent::approver::set_profile(
+                        l.as_mut(),
+                        p,
+                        std::time::Duration::from_secs(5),
+                    )
+                });
+            match set {
+                Ok(()) => {
+                    Response::ok(json!({"port": port, "profile": p.as_str(), "restarting": true}))
+                }
+                Err(e) => Response::err("unavailable", e),
+            }
         }
         SignedOp::McpRemoveClient { name } => {
             let c = match cfg() {

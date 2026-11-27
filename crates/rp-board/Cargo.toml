@@ -1,0 +1,15 @@
+[package]
+name = "rp-board"
+description = "Chip-independent logic of the rp ESP32 boards: rp-wire session, approval button, profiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# no_std, and no workspace dependencies: the firmware (Xtensa toolchain)
+# builds this crate too, and the workspace's ed25519-dalek enables std.
+[dependencies]
+rp-wire = { path = "../rp-wire" }
+ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+heapless = "0.8"

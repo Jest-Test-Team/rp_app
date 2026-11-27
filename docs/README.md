@@ -22,6 +22,7 @@
 | [threat-model.md](threat-model.md) | 攻擊者、對策與對應測試、已知限制 |
 | [benchmarks.md](benchmarks.md) | 實測：加密、轉發、DNS 延遲、偵測率、binary 大小 |
 | [hardware-matrix.md](hardware-matrix.md) | 各代 Pi 的功能對照與這台裝置的實測 |
+| [approver.md](approver.md) | **實體核准鑰匙**（ESP32-S3）：特權動作要按實體按鍵才放行 |
 
 ## 環境
 

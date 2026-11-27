@@ -1,0 +1,51 @@
+# Not part of the root workspace: it builds with the Xtensa `esp` toolchain.
+[workspace]
+
+[package]
+edition      = "2024"
+name         = "approver-s3"
+rust-version = "1.95"
+version      = "0.2.0"
+
+[[bin]]
+name = "approver-s3"
+path = "./src/bin/main.rs"
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["esp32s3", "unstable"] }
+
+
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3"] }
+
+critical-section = "1.2.0"
+esp-backtrace = { version = "0.20.0", features = [
+  "esp32s3",
+  "panic-handler",
+  "custom-halt",
+  "println",
+] }
+esp-println = { version = "0.18.0", features = ["esp32s3"] }
+esp-storage = { version = "0.10.0", features = ["esp32s3"] }
+esp-hal-smartled = { version = "0.18.0", features = ["esp32s3"] }
+smart-leds = "0.4"
+ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+sha2 = { version = "0.10", default-features = false }
+heapless = "0.8"
+esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
+esp-rtos = { version = "0.4.0", features = ["esp-alloc", "esp-radio", "esp32s3"] }
+esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp32s3", "unstable", "wifi", "sniffer"] }
+rp-wire = { path = "../../crates/rp-wire" }
+rp-board = { path = "../../crates/rp-board" }
+
+
+# For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
+[profile.dev]
+# The default debug profile is too slow and too big for resource-constrained devices.
+# Always build with some optimizations enabled.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1     # LLVM can perform better optimizations using a single thread
+debug         = 2     # prefer slower builds but better debugging experience
+lto           = 'fat'
+opt-level     = 's'

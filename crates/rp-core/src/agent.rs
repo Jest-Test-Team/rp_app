@@ -8,6 +8,12 @@ use crate::module::{Module, Step};
 
 pub const AGENT_UNIT: &str = "/etc/systemd/system/rp-agent.service";
 pub const MCP_UNIT: &str = "/etc/systemd/system/rp-mcp.service";
+pub const BOARDS_UNIT: &str = "/etc/systemd/system/rp-boards.service";
+
+/// rp-boards runs when there are boards to look after.
+pub fn boards_enabled(cfg: &Config) -> bool {
+    cfg.agent.is_some() && (cfg.approver.is_some() || cfg.boards.is_some())
+}
 /// Group allowed to read the agent token. Must differ from the unit name:
 /// `DynamicUser=` in rp-mcp.service allocates a user *and group* named rp-mcp.
 pub const TOKEN_GROUP: &str = "rp-mcp-clients";
@@ -106,6 +112,53 @@ WantedBy=multi-user.target
     )
 }
 
+fn boards_unit() -> String {
+    format!(
+        "# {HEADER}
+[Unit]
+Description=rp boards (keeps the ESP32 boards' serial ports open: logs, status, approvals)
+After=systemd-udev-settle.service
+
+[Service]
+ExecStart=/usr/local/bin/rp-agent --config /etc/rp/rp.toml boards
+Restart=always
+RestartSec=2
+# Root for the root-only tty nodes; only tty devices, no network at all.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+DevicePolicy=closed
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-ttyUSB rw
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rp/boards
+StateDirectory=rp/boards
+StateDirectoryMode=0750
+RuntimeDirectory=rp-boards
+RuntimeDirectoryMode=0700
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=32M
+
+[Install]
+WantedBy=multi-user.target
+"
+    )
+}
+
 impl Module for Agent {
     fn name(&self) -> &'static str {
         "agent"
@@ -122,6 +175,9 @@ impl Module for Agent {
         let mut f = vec![ManagedFile::new(AGENT_UNIT, 0o644, agent_unit(cfg))];
         if cfg.mcp.is_some() {
             f.push(ManagedFile::new(MCP_UNIT, 0o644, mcp_unit(cfg)));
+        }
+        if boards_enabled(cfg) {
+            f.push(ManagedFile::new(BOARDS_UNIT, 0o644, boards_unit()));
         }
         f
     }
@@ -180,6 +236,12 @@ impl Module for Agent {
             steps.push(Step::cmd(&["systemctl", "enable", "rp-mcp.service"]));
             steps.push(Step::cmd(&["systemctl", "restart", "rp-mcp.service"]));
         }
+        if boards_enabled(cfg) {
+            steps.push(Step::cmd(&["systemctl", "enable", "rp-boards.service"]));
+            steps.push(Step::cmd(&["systemctl", "restart", "rp-boards.service"]));
+        } else {
+            steps.push(Step::best_effort(&["systemctl", "disable", "--now", "rp-boards.service"]));
+        }
         steps
     }
 
@@ -189,6 +251,7 @@ impl Module for Agent {
             "disable",
             "--now",
             "rp-mcp.service",
+            "rp-boards.service",
             "rp-agent.service",
         ])]
     }
@@ -249,6 +312,29 @@ mod tests {
             "no local sockets for mcp"
         );
         assert_eq!(Agent.render(&cfg(false)).len(), 1);
+    }
+
+    #[test]
+    fn boards_service_only_with_boards_and_without_network() {
+        assert!(!Agent.render(&cfg(false)).iter().any(|f| f.path == BOARDS_UNIT));
+        let c = parse(
+            "[device]\nwan_if = \"eth0\"\nlan_cidrs = [\"192.0.2.0/24\"]\n[agent]\n[approver]\n",
+        )
+        .unwrap();
+        let f = Agent.render(&c);
+        let unit = &f.iter().find(|f| f.path == BOARDS_UNIT).expect("boards unit").content;
+        for want in [
+            "PrivateNetwork=yes",
+            "DevicePolicy=closed",
+            "DeviceAllow=char-ttyACM rw",
+            "DeviceAllow=char-ttyUSB rw",
+            "CapabilityBoundingSet=\n",
+            "RuntimeDirectory=rp-boards",
+        ] {
+            assert!(unit.contains(want), "missing {want}");
+        }
+        let steps: Vec<String> = Agent.post_apply(&c).iter().map(|s| s.display()).collect();
+        assert!(steps.iter().any(|s| s.contains("restart rp-boards.service")));
     }
 
     #[test]
