@@ -42,6 +42,21 @@ pub struct Config {
     /// also needs a button press on an enrolled key. Absent = not required.
     #[serde(default)]
     pub approver: Option<Approver>,
+    /// rp ESP32 boards kept connected by rp-boards (logs, status, profiles).
+    /// Absent = the approver's two ports, when `[approver]` is present.
+    #[serde(default)]
+    pub boards: Option<Boards>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Boards {
+    #[serde(default = "default_board_ports")]
+    pub ports: Vec<String>,
+}
+
+fn default_board_ports() -> Vec<String> {
+    vec![default_approver_port(), default_approver_backup_port()]
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -12,6 +12,7 @@ rp-core = { path = "../rp-core" }
 rp-schema = { path = "../rp-schema" }
 rp-policy = { path = "../rp-policy" }
 rp-agent = { path = "../rp-agent" }
+rp-wire = { path = "../rp-wire" }
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

@@ -23,7 +23,7 @@ use esp_backtrace as _;
 use esp_hal::{
     Blocking,
     clock::CpuClock,
-    gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
+    gpio::{Input, InputConfig, Level as Pin, Output, OutputConfig, Pull},
     main,
     rng::{Trng, TrngSource},
     time::{Duration, Instant},
@@ -31,7 +31,7 @@ use esp_hal::{
 };
 use esp_storage::FlashStorage;
 use rp_board::{Board, Light, Out};
-use rp_wire::{KeyMsg, Profile, Profiles};
+use rp_wire::{KeyMsg, Level, Profile, Profiles};
 use sha2::{Digest, Sha256};
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -82,12 +82,67 @@ fn load_profile(flash: &mut FlashStorage<'_>) -> Option<Profile> {
     (&rec[..4] == PROFILE_MAGIC).then(|| Profile::from_code(rec[4])).flatten()
 }
 
-fn store_profile(flash: &mut FlashStorage<'_>, p: Profile) {
+fn store_profile(flash: &mut FlashStorage<'_>, p: Profile) -> bool {
     let mut rec = [0u8; 5];
     rec[..4].copy_from_slice(PROFILE_MAGIC);
     rec[4] = p.code();
-    let _ = flash.write(PROFILE_OFFSET, &rec);
+    flash.write(PROFILE_OFFSET, &rec).is_ok() && load_profile(flash) == Some(p)
 }
+/// Set just before the panic handler restarts the chip; survives the reset.
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut PANIC_MARK: u32 = 0;
+const PANICKED: u32 = 0x5041_4e43; // "PANC"
+
+/// esp-backtrace (feature `custom-halt`) calls this after printing the panic:
+/// mark it, give the message time to leave, and restart instead of hanging.
+#[unsafe(no_mangle)]
+pub fn custom_halt() -> ! {
+    unsafe { PANIC_MARK = PANICKED };
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_millis(300) {}
+    esp_hal::system::software_reset()
+}
+
+/// Why the board started, as a log line for the gateway.
+fn boot_log(out: &mut dyn Out, profile: Profile) {
+    let panicked = unsafe { core::ptr::addr_of!(PANIC_MARK).read_volatile() } == PANICKED;
+    unsafe { PANIC_MARK = 0 };
+    let reason = esp_hal::system::reset_reason();
+    let mut s: heapless::String<{ rp_wire::MAX_LOG_TEXT }> = heapless::String::new();
+    let level = if panicked {
+        let _ = write!(s, "restarted after a panic (message above)");
+        Level::Error
+    } else {
+        match reason {
+            Some(r) => {
+                let name = {
+                    let mut n: heapless::String<24> = heapless::String::new();
+                    let _ = write!(n, "{r:?}");
+                    n
+                };
+                let _ = write!(s, "boot reason={name}");
+                if name.contains("BrownOut") {
+                    let _ = write!(s, " (supply voltage dropped: use a powered hub)");
+                    Level::Error
+                } else if name.contains("Wdt") {
+                    let _ = write!(s, " (watchdog: the firmware hung)");
+                    Level::Error
+                } else {
+                    Level::Info
+                }
+            }
+            None => {
+                let _ = write!(s, "boot reason=unknown");
+                Level::Warn
+            }
+        }
+    };
+    out.msg(KeyMsg::Log { level, text: &s });
+    let mut p: heapless::String<{ rp_wire::MAX_LOG_TEXT }> = heapless::String::new();
+    let _ = write!(p, "running profile={} firmware={VERSION}", profile.as_str());
+    out.msg(KeyMsg::Log { level: Level::Info, text: &p });
+}
+
 
 struct UartOut<'a, 'd>(&'a mut Uart<'d, Blocking>);
 
@@ -130,7 +185,7 @@ fn main() -> ! {
     let mut board = Board::new(key, "esp32", VERSION, supported(), stored);
 
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
-    let mut led = Output::new(p.GPIO2, Level::High, OutputConfig::default());
+    let mut led = Output::new(p.GPIO2, Pin::High, OutputConfig::default());
     let mut uart = Uart::new(p.UART0, UartConfig::default())
         .expect("UART0")
         .with_tx(p.GPIO1)
@@ -139,6 +194,7 @@ fn main() -> ! {
     // Boot: LED on for one second.
     let boot = Instant::now();
     while boot.elapsed() < Duration::from_millis(1000) {}
+    boot_log(&mut UartOut(&mut uart), board.profile());
 
     let mut buf = [0u8; 64];
     loop {
@@ -147,7 +203,13 @@ fn main() -> ! {
             let n = uart.read_buffered(&mut buf).unwrap_or(0);
             for &b in &buf[..n] {
                 if let Some(next) = board.on_byte(b, now, &mut UartOut(&mut uart)) {
-                    store_profile(&mut flash, next);
+                    if !store_profile(&mut flash, next) {
+                        UartOut(&mut uart).msg(KeyMsg::Log {
+                            level: Level::Error,
+                            text: "could not store the new profile in flash; not restarting",
+                        });
+                        continue;
+                    }
                     let t = Instant::now();
                     while t.elapsed() < Duration::from_millis(50) {} // let OK drain
                     esp_hal::system::software_reset();
@@ -155,6 +217,6 @@ fn main() -> ! {
             }
         }
         let light = board.tick(now, button.is_low(), &mut UartOut(&mut uart));
-        led.set_level(if lit(light, now) { Level::High } else { Level::Low });
+        led.set_level(if lit(light, now) { Pin::High } else { Pin::Low });
     }
 }

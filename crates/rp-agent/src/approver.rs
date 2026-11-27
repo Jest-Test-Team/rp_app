@@ -217,11 +217,11 @@ impl Serial {
         Ok(Self { port, buf: Vec::new() })
     }
 
-    /// The main key's port, or the backup key's when the main one is absent.
+    /// The main key's port, or the backup key's when the main one is absent;
+    /// through rp-boards when it runs.
     pub fn opener(a: &Approver, root: &Path) -> io::Result<Box<dyn KeyLink>> {
-        let main = under_root(root, &a.port);
-        let port = if main.exists() { main } else { under_root(root, &a.backup_port) };
-        Ok(Box::new(Self::open(&port)?))
+        crate::boards::open_port(root, &a.port)
+            .or_else(|_| crate::boards::open_port(root, &a.backup_port))
     }
 }
 

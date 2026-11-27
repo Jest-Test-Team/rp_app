@@ -36,7 +36,7 @@ use esp_hal::{
 use esp_hal_smartled::{RmtSmartLeds, buffer_size, color_order};
 use esp_storage::FlashStorage;
 use rp_board::{Board, Light, Out};
-use rp_wire::{KeyMsg, Profile, Profiles};
+use rp_wire::{KeyMsg, Level, Profile, Profiles};
 use sha2::{Digest, Sha256};
 use smart_leds::{RGB8, SmartLedsWrite};
 
@@ -100,26 +100,98 @@ fn load_profile(flash: &mut FlashStorage<'_>) -> Option<Profile> {
     (&rec[..4] == PROFILE_MAGIC).then(|| Profile::from_code(rec[4])).flatten()
 }
 
-fn store_profile(flash: &mut FlashStorage<'_>, p: Profile) {
+fn store_profile(flash: &mut FlashStorage<'_>, p: Profile) -> bool {
     let mut rec = [0u8; 5];
     rec[..4].copy_from_slice(PROFILE_MAGIC);
     rec[4] = p.code();
-    let _ = flash.write(PROFILE_OFFSET, &rec);
+    flash.write(PROFILE_OFFSET, &rec).is_ok() && load_profile(flash) == Some(p)
+}
+/// Set just before the panic handler restarts the chip; survives the reset.
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut PANIC_MARK: u32 = 0;
+const PANICKED: u32 = 0x5041_4e43; // "PANC"
+
+/// esp-backtrace (feature `custom-halt`) calls this after printing the panic:
+/// mark it, give the message time to leave, and restart instead of hanging.
+#[unsafe(no_mangle)]
+pub fn custom_halt() -> ! {
+    unsafe { PANIC_MARK = PANICKED };
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_millis(300) {}
+    esp_hal::system::software_reset()
 }
 
+/// Why the board started, as a log line for the gateway.
+fn boot_log(out: &mut dyn Out, profile: Profile) {
+    let panicked = unsafe { core::ptr::addr_of!(PANIC_MARK).read_volatile() } == PANICKED;
+    unsafe { PANIC_MARK = 0 };
+    let reason = esp_hal::system::reset_reason();
+    let mut s: heapless::String<{ rp_wire::MAX_LOG_TEXT }> = heapless::String::new();
+    let level = if panicked {
+        let _ = write!(s, "restarted after a panic (message above)");
+        Level::Error
+    } else {
+        match reason {
+            Some(r) => {
+                let name = {
+                    let mut n: heapless::String<24> = heapless::String::new();
+                    let _ = write!(n, "{r:?}");
+                    n
+                };
+                let _ = write!(s, "boot reason={name}");
+                if name.contains("BrownOut") {
+                    let _ = write!(s, " (supply voltage dropped: use a powered hub)");
+                    Level::Error
+                } else if name.contains("Wdt") {
+                    let _ = write!(s, " (watchdog: the firmware hung)");
+                    Level::Error
+                } else {
+                    Level::Info
+                }
+            }
+            None => {
+                let _ = write!(s, "boot reason=unknown");
+                Level::Warn
+            }
+        }
+    };
+    out.msg(KeyMsg::Log { level, text: &s });
+    let mut p: heapless::String<{ rp_wire::MAX_LOG_TEXT }> = heapless::String::new();
+    let _ = write!(p, "running profile={} firmware={VERSION}", profile.as_str());
+    out.msg(KeyMsg::Log { level: Level::Info, text: &p });
+}
+
+
 struct UsbOut<'a, 'd>(&'a mut UsbSerialJtag<'d, Blocking>);
+
+impl UsbOut<'_, '_> {
+    /// With no host reading (powered from a charger) the USB FIFO never
+    /// drains and a blocking write would hang the key: give up after 50 ms.
+    fn write_all(&mut self, data: &[u8]) {
+        let start = Instant::now();
+        for &b in data {
+            loop {
+                match self.0.write_byte_nb(b) {
+                    Ok(()) => break,
+                    Err(_) if start.elapsed() < Duration::from_millis(50) => {}
+                    Err(_) => return,
+                }
+            }
+        }
+        let _ = self.0.flush_tx_nb();
+    }
+}
 
 impl Out for UsbOut<'_, '_> {
     fn msg(&mut self, m: KeyMsg<'_>) {
         let mut s: heapless::String<{ rp_wire::MAX_LINE + 2 }> = heapless::String::new();
         let _ = write!(s, "{m}\n");
-        let _ = self.0.write(s.as_bytes());
-        let _ = self.0.flush_tx();
+        self.write_all(s.as_bytes());
     }
     fn note(&mut self, text: &str) {
-        let _ = self.0.write(b"# ");
-        let _ = self.0.write(text.as_bytes());
-        let _ = self.0.write(b"\n");
+        self.write_all(b"# ");
+        self.write_all(text.as_bytes());
+        self.write_all(b"\n");
     }
 }
 
@@ -168,12 +240,19 @@ fn main() -> ! {
     set(RGB8 { r: 30, g: 30, b: 30 });
     let boot = Instant::now();
     while boot.elapsed() < Duration::from_millis(1000) {}
+    boot_log(&mut UsbOut(&mut usb), board.profile());
 
     loop {
         let now = boot.elapsed().as_millis();
         while let Ok(b) = usb.read_byte() {
             if let Some(next) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
-                store_profile(&mut flash, next);
+                if !store_profile(&mut flash, next) {
+                    UsbOut(&mut usb).msg(KeyMsg::Log {
+                        level: Level::Error,
+                        text: "could not store the new profile in flash; not restarting",
+                    });
+                    continue;
+                }
                 let t = Instant::now();
                 while t.elapsed() < Duration::from_millis(50) {} // let OK drain
                 esp_hal::system::software_reset();

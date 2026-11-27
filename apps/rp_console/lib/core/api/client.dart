@@ -134,6 +134,13 @@ class RpClient {
   Future<Map<String, Object?>> flows() async => asMap(await _get('/v1/flows'));
   Future<Map<String, Object?>> firewallRules() async => asMap(await _get('/v1/firewall/rules'));
   Future<Map<String, Object?>> auditEvents() async => asMap(await _get('/v1/audit/events'));
+
+  /// rp ESP32 boards attached to the device (status per port).
+  Future<Map<String, Object?>> boards() async => asMap(await _get('/v1/boards'));
+
+  /// What the boards logged, newest first; [level] is the minimum severity.
+  Future<Map<String, Object?>> boardLogs({String level = 'info', int limit = 200}) async =>
+      asMap(await _get('/v1/boards/logs?level=${Uri.encodeQueryComponent(level)}&limit=$limit'));
   Future<Map<String, Object?>> openapi() async => asMap(await transport.request('GET', '/v1/openapi.json'));
   Future<Map<String, Object?>> updateStatus() async => asMap(await _get('/v1/update'));
 
@@ -205,6 +212,10 @@ class RpClient {
   /// Returns the new client's token: show it once, never store it.
   Future<Map<String, Object?>> mcpAddClient(String name, List<String> capabilities) =>
       _signed('POST', '/v1/mcp/clients', {'op': 'mcp_add_client', 'name': name, 'capabilities': capabilities});
+
+  /// Switch a board's profile; it restarts. Only `approver` approves requests.
+  Future<Map<String, Object?>> setBoardProfile(String port, String profile) =>
+      _signed('POST', '/v1/boards/profile', {'op': 'set_board_profile', 'port': port, 'profile': profile});
 
   Future<Map<String, Object?>> mcpRemoveClient(String name) =>
       _signed('DELETE', '/v1/mcp/clients/${Uri.encodeComponent(name)}', {'op': 'mcp_remove_client', 'name': name});

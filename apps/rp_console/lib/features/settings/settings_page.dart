@@ -10,6 +10,7 @@ import '../../core/api/models.dart';
 import '../../core/storage/vault.dart';
 import '../../widgets/common.dart';
 import '../../widgets/language.dart';
+import 'boards_page.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.app, required this.device, required this.client});
@@ -94,6 +95,22 @@ class SettingsPage extends StatelessWidget {
                 onPressed: () => _addPhone(context),
                 icon: const Icon(Icons.qr_code),
                 label: Text(s('set.addphone')),
+              ),
+            ],
+          ),
+          Section(
+            title: s('boards.title'),
+            children: [
+              ListTile(
+                key: const Key('open-boards'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.developer_board),
+                title: Text(s('boards.open')),
+                subtitle: Text(s('boards.open.hint')),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => BoardsPage(client: client)),
+                ),
               ),
             ],
           ),

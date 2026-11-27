@@ -21,6 +21,10 @@
 //! | gateway → board | `INFO` |
 //! | board → gateway | `INFO <chip> <profile> <version> <supported profiles, comma-separated>` |
 //! | gateway → board | `PROFILE <name>` (board answers `OK`, stores it and restarts) |
+//! | board → gateway | `LOG <error\|warn\|info> <text>` (any time; kept by rp-boards) |
+//!
+//! Lines starting with `# ` are diagnostics; anything else a board prints
+//! (boot ROM, panic messages) is kept as raw log text by the gateway.
 //!
 //! A board runs one [`Profile`] at a time. Only `approver` answers `ASK`; in
 //! any other profile the board answers `ERR`, so approvals fail closed.
@@ -31,7 +35,7 @@
 
 #![no_std]
 
-use core::fmt;
+use core::fmt::{self, Write as _};
 
 /// Domain separation tag; bump the version if the message layout changes.
 pub const DOMAIN: &[u8; 15] = b"rp-approver-v1\0";
@@ -146,6 +150,30 @@ impl Profiles {
     }
 }
 
+/// Severity of a board log line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Error,
+    Warn,
+    Info,
+}
+
+impl Level {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Level::Error => "error",
+            Level::Warn => "warn",
+            Level::Info => "info",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        [Level::Error, Level::Warn, Level::Info].into_iter().find(|l| l.as_str() == s)
+    }
+}
+
+/// Longest log text a board sends (the rest is cut).
+pub const MAX_LOG_TEXT: usize = 120;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostMsg {
     Hello,
@@ -163,6 +191,7 @@ pub enum KeyMsg<'a> {
     Ok,
     Err(&'a str),
     Info { chip: &'a str, profile: Profile, version: &'a str, supported: Profiles },
+    Log { level: Level, text: &'a str },
 }
 
 struct Hex<'a>(&'a [u8]);
@@ -248,6 +277,14 @@ impl fmt::Display for KeyMsg<'_> {
             KeyMsg::Timeout { id } => write!(f, "TIMEOUT {}", Hex(id)),
             KeyMsg::Ok => f.write_str("OK"),
             KeyMsg::Err(e) => write!(f, "ERR {e}"),
+            KeyMsg::Log { level, text } => {
+                // One line, printable ASCII, bounded.
+                write!(f, "LOG {} ", level.as_str())?;
+                text.chars()
+                    .take(MAX_LOG_TEXT)
+                    .map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { '?' })
+                    .try_for_each(|c| f.write_char(c))
+            }
             KeyMsg::Info { chip, profile, version, supported } => {
                 write!(f, "INFO {chip} {} {version} {supported}", profile.as_str())
             }
@@ -260,6 +297,10 @@ impl<'a> KeyMsg<'a> {
         let line = line.trim_end_matches(['\r', '\n']);
         if let Some(e) = line.strip_prefix("ERR ") {
             return Some(KeyMsg::Err(e));
+        }
+        if let Some(rest) = line.strip_prefix("LOG ") {
+            let (level, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            return Some(KeyMsg::Log { level: Level::parse(level)?, text });
         }
         let (f, n) = fields::<5>(line)?;
         match (f[0], n) {
@@ -319,6 +360,7 @@ mod tests {
             KeyMsg::Timeout { id: [2; 6] },
             KeyMsg::Ok,
             KeyMsg::Err("no key"),
+            KeyMsg::Log { level: Level::Warn, text: "flash write failed at 0xa000" },
             KeyMsg::Info {
                 chip: "esp32s3",
                 profile: Profile::Sentry,
@@ -350,6 +392,7 @@ mod tests {
             "INFO esp32 approver 1.0",
             "INFO esp32 approver 1.0 approver,nope",
             "INFO esp32 nope 1.0 approver",
+            "LOG fatal boom",
         ] {
             assert!(HostMsg::parse(bad).is_none() && KeyMsg::parse(bad).is_none(), "{bad:?}");
         }
@@ -376,5 +419,21 @@ mod profile_tests {
         }
         assert_eq!(Profile::from_code(0), None, "erased flash (0x00) is no profile");
         assert_eq!(Profile::from_code(0xff), None, "erased flash (0xff) is no profile");
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    extern crate std;
+    use super::*;
+    use std::string::ToString;
+
+    #[test]
+    fn log_text_is_one_bounded_printable_line() {
+        let long = "x".repeat(500);
+        let s = KeyMsg::Log { level: Level::Error, text: &long }.to_string();
+        assert_eq!(s.len(), "LOG error ".len() + MAX_LOG_TEXT);
+        let s = KeyMsg::Log { level: Level::Info, text: "a\nb\u{7}c" }.to_string();
+        assert_eq!(s, "LOG info a?b?c");
     }
 }

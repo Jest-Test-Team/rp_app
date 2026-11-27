@@ -126,6 +126,16 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
             }
         }
     }
+    if let Some(b) = &cfg.boards {
+        if b.ports.is_empty() || b.ports.len() > 8 {
+            errs.push("boards.ports must list 1-8 serial ports".into());
+        }
+        for p in &b.ports {
+            if !p.starts_with("/dev/") || p.contains(['\'', ' ', '\n']) {
+                errs.push(format!("boards port '{p}' must be a /dev path without spaces"));
+            }
+        }
+    }
     if let Some(m) = &cfg.mcp {
         if cfg.agent.is_none() {
             errs.push("[mcp] needs an [agent] section".into());

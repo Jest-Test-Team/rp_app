@@ -21,6 +21,7 @@ critical-section = "1.2.0"
 esp-backtrace = { version = "0.20.0", features = [
   "esp32",
   "panic-handler",
+  "custom-halt",
   "println",
 ] }
 esp-println = { version = "0.18.0", features = ["esp32"] }

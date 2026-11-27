@@ -1723,10 +1723,10 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
     };
     match c {
         ApproverCmd::Enroll { name, port } => {
-            let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
-            let mut link = approver::Serial::open(&port)
+            let port = port.clone().unwrap_or_else(|| PathBuf::from(&h.port));
+            let mut link = rp_agent::boards::open_port(&cli.root, &port.to_string_lossy())
                 .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
-            let info = approver::handshake(&mut link, std::time::Duration::from_secs(5))
+            let info = approver::handshake(link.as_mut(), std::time::Duration::from_secs(5))
                 .map_err(anyhow::Error::msg)?;
             let (pk, version) = (info.public_key, format!("{} on {}", info.version, info.chip));
             let mut keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
@@ -1739,10 +1739,10 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
             }
         }
         ApproverCmd::Info { port } => {
-            let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
-            let mut link = approver::Serial::open(&port)
+            let port = port.clone().unwrap_or_else(|| PathBuf::from(&h.port));
+            let mut link = rp_agent::boards::open_port(&cli.root, &port.to_string_lossy())
                 .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
-            let info = approver::handshake(&mut link, std::time::Duration::from_secs(5))
+            let info = approver::handshake(link.as_mut(), std::time::Duration::from_secs(5))
                 .map_err(anyhow::Error::msg)?;
             let id = hwkey::key_id(&info.public_key);
             let keys = HwKeys::load(&keys_path).map_err(anyhow::Error::msg)?;
@@ -1767,10 +1767,10 @@ fn approver_cmd(cli: &Cli, cfg: &rp_schema::Config, c: &ApproverCmd) -> anyhow::
         ApproverCmd::Profile { name, port } => {
             let p = rp_wire::Profile::parse(name)
                 .ok_or_else(|| anyhow::anyhow!("unknown profile '{name}'"))?;
-            let port = port.clone().unwrap_or_else(|| under_root(&cli.root, &h.port));
-            let mut link = approver::Serial::open(&port)
+            let port = port.clone().unwrap_or_else(|| PathBuf::from(&h.port));
+            let mut link = rp_agent::boards::open_port(&cli.root, &port.to_string_lossy())
                 .map_err(|e| anyhow::anyhow!("{}: {e}", port.display()))?;
-            approver::set_profile(&mut link, p, std::time::Duration::from_secs(5))
+            approver::set_profile(link.as_mut(), p, std::time::Duration::from_secs(5))
                 .map_err(anyhow::Error::msg)?;
             note("board-profile", &format!("port={} profile={}", port.display(), p.as_str()))?;
             println!("{} now runs the {} profile (restarting)", port.display(), p.as_str());

@@ -86,6 +86,44 @@ class FakeDevice implements Transport {
   };
   final actions = <Map<String, Object?>>[];
 
+  /// rp ESP32 boards (rp-boards status) and their logs, newest first.
+  List<Map<String, Object?>> boards = [
+    {
+      'port': '/dev/rp-approver',
+      'connected': true,
+      'chip': 'esp32s3',
+      'firmware': '0.2.0',
+      'profile': 'approver',
+      'supported': ['approver', 'honeypot', 'sentry', 'csi'],
+      'key_id': 'd0a5c34d5a9a1bd2',
+      'enrolled_as': 'main',
+      'last_boot': 'boot reason=ChipPowerOn',
+      'errors': 0,
+      'recent_problems': <Object?>[],
+    },
+    {
+      'port': '/dev/rp-approver-backup',
+      'connected': true,
+      'chip': 'esp32',
+      'firmware': '0.2.0',
+      'profile': 'approver',
+      'supported': ['approver', 'oob', 'honeypot', 'sentry', 'csi'],
+      'key_id': '4f186fe903930e9a',
+      'enrolled_as': 'backup',
+      'last_boot': 'boot reason=SysBrownOut (supply voltage dropped: use a powered hub)',
+      'errors': 1,
+      'recent_problems': <Object?>[],
+    },
+  ];
+  List<Map<String, Object?>> boardLogs = [
+    {'ts': 1795789304, 'port': '/dev/rp-approver-backup', 'level': 'error', 'source': 'board',
+     'text': 'boot reason=SysBrownOut (supply voltage dropped: use a powered hub)'},
+    {'ts': 1795789300, 'port': '/dev/rp-approver', 'level': 'info', 'source': 'board',
+     'text': 'running profile=approver firmware=0.2.0'},
+    {'ts': 1795789299, 'port': '/dev/rp-approver', 'level': 'debug', 'source': 'raw',
+     'text': 'I (27) boot: chip revision: v0.2'},
+  ];
+
   /// Hardware approval key (`[approver]`): absent = not required.
   Map<String, Object?> approver = {'required': false};
 
@@ -333,6 +371,8 @@ class FakeDevice implements Transport {
     }
     if (p == '/v1/firewall/rules') return {'rules': (config['firewall'] as Map?)?['rules'] ?? []};
     if (p == '/v1/actions/pending') return {'actions': actions, 'approver': approver};
+    if (p == '/v1/boards') return {'boards': boards, 'managed': true, 'approver_required': approver['required'] == true};
+    if (p == '/v1/boards/logs') return {'entries': boardLogs};
     if (p == '/v1/mcp/tools') {
       return {
         'tools': [
@@ -498,6 +538,14 @@ class FakeDevice implements Transport {
       }
       a['status'] = act.group(2) == 'approve' ? 'executed' : 'denied';
       return a;
+    }
+    if (method == 'POST' && p == '/v1/boards/profile') {
+      _bound(op, 'set_board_profile');
+      final b = boards.firstWhere((b) => b['port'] == op['port'], orElse: () => throw _err(404, 'not_found', 'not a configured board port'));
+      if (!(b['supported'] as List).contains(op['profile'])) throw _err(400, 'unavailable', 'profile not supported on this board');
+      b['profile'] = op['profile'];
+      boardLogs.insert(0, {'ts': 1795789400, 'port': b['port'], 'level': 'info', 'source': 'board', 'text': 'running profile=${op['profile']} firmware=0.2.0'});
+      return {'port': b['port'], 'profile': op['profile'], 'restarting': true};
     }
     if (method == 'POST' && p == '/v1/mcp/clients') {
       _bound(op, 'mcp_add_client');

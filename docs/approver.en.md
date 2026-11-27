@@ -81,6 +81,16 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # switch profile (t
 - A board runs one profile at a time: `approver`, `oob`, `honeypot`, `sentry`, `csi` (the S3 has no `oob`). **Only `approver` answers approval requests**; in any other profile approvals fail and stay pending. Apart from `approver`, profiles so far only switch and report; their functions are not implemented yet.
 - When opening a USB-UART port the gateway drops DTR and RTS together so the auto-download circuit does not hold a classic ESP32 in reset; before asking, it waits for the board's `INFO` and checks that it is an enrolled key in the `approver` profile.
 
+## Board status and error log (rp-boards)
+
+With `[approver]` (or `[boards] ports = [...]`) in the config, `sudo rpctl apply agent` also installs **`rp-boards.service`** (`rp-agent boards`). It keeps the boards' serial ports open, so whatever a board says at any time is kept.
+
+- **Boards report on their own**: why they started (`boot reason=...`; brownouts and watchdog resets are errors), `restarted after a panic` (the panic message itself is captured too), flash write failures and other `LOG error|warn|info` lines. After a panic the board restarts instead of hanging.
+- **Storage**: `/var/lib/rp/boards/<port name>.jsonl` (2000 lines per board plus one rotated file) and `status.json` (chip, firmware, profile, key id, last start reason, error count).
+- **Viewing**: the console app's Settings › ESP32 boards (status, log filtered by level, copy, profile switch); Claude's read-only MCP tools `get_boards` and `get_board_logs`; the API `GET /v1/boards` and `GET /v1/boards/logs?level=warn`.
+- **Switching profiles**: the app sends an admin-signed `set_board_profile`, which rp-privd passes to the board through rp-boards. Approvals and `rpctl approver info|profile|enroll` also go through rp-boards (`/run/rp-boards/boards.sock`, root only), so nothing fights over a port; only rp-wire requests pass, never raw text.
+- **Sandbox**: no network (`PrivateNetwork=yes`), only ttyACM/ttyUSB devices, no capabilities. Text from boards is displayed as data, never acted on.
+
 ## Lost or broken key
 
 Both mechanisms are available:

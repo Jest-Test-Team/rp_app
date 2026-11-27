@@ -81,6 +81,16 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # 切換 profile（
 - 每塊板子一次跑一個 profile：`approver`、`oob`、`honeypot`、`sentry`、`csi`（S3 不支援 `oob`）。**只有 `approver` 會回應核准請求**；切到其他 profile 時核准會失敗（維持 pending），不會變寬鬆。目前除了 `approver` 以外的 profile 只有切換與狀態回報，功能尚未實作。
 - 開啟 USB-UART 時 Pi 會同時放掉 DTR/RTS，避免經典 ESP32 被自動下載電路卡在重置；核准前會先等板子回應 `INFO`，並確認它是已登記的鑰匙且在 `approver` profile。
 
+## 板子狀態與錯誤記錄（rp-boards）
+
+設定了 `[approver]`（或 `[boards] ports = [...]`）時，`sudo rpctl apply agent` 會一併安裝 **`rp-boards.service`**（`rp-agent boards`）：它一直開著板子的序列埠，所以板子在任何時候說的話都會被留下來。
+
+- **板子會主動回報**：開機原因（`boot reason=...`；電壓不足 brownout、看門狗會標成 error）、`restarted after a panic`（panic 訊息本身也會被收下）、flash 寫入失敗等 `LOG error|warn|info` 訊息。panic 後板子會自動重開，不會卡死。
+- **存放**：`/var/lib/rp/boards/<埠名>.jsonl`（每塊板子 2000 行，另保留一份輪替檔）與 `status.json`（晶片、韌體、profile、金鑰 id、上次開機原因、錯誤數）。
+- **查看**：手機 App「設定 › ESP32 板子」（狀態、依等級篩選的記錄、複製、切換 profile）；Claude 的唯讀 MCP 工具 `get_boards`、`get_board_logs`；API `GET /v1/boards`、`GET /v1/boards/logs?level=warn`。
+- **切換 profile**：App 送出管理員簽章的 `set_board_profile`，由 rp-privd 透過 rp-boards 轉給板子。核准請求、`rpctl approver info|profile|enroll` 也都經由 rp-boards（`/run/rp-boards/boards.sock`，只有 root 能連），不會和它搶序列埠；只接受 rp-wire 指令，不能對板子打任意文字。
+- **沙箱**：沒有網路（`PrivateNetwork=yes`）、只能開 ttyACM／ttyUSB 裝置、沒有任何 capability。板子送來的文字一律當作資料顯示。
+
 ## 鑰匙遺失或損壞
 
 兩種方式並存：

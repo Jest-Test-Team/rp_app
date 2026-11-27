@@ -256,6 +256,35 @@ void main() {
     expect(find.byKey(const Key('approve-act3')), findsOneWidget, reason: 'can be tried again');
   });
 
+  testWidgets('Settings: ESP32 boards show status and errors, and switch profile signed', (t) async {
+    final h = await onDevice(t, 'Settings');
+    await tapKey(t, 'open-boards');
+    expect(find.byKey(const Key('board-/dev/rp-approver')), findsOneWidget);
+    expect(find.byKey(const Key('board-/dev/rp-approver-backup')), findsOneWidget);
+    expect(find.byKey(const Key('board-errors-/dev/rp-approver-backup')), findsOneWidget);
+    expect(find.textContaining('“main”'), findsOneWidget);
+    // Default level: warnings and errors only.
+    expect(find.textContaining('SysBrownOut'), findsWidgets);
+    expect(find.text('running profile=approver firmware=0.2.0'), findsNothing);
+    expect(find.text('I (27) boot: chip revision: v0.2'), findsNothing);
+    await t.tap(find.text('All'));
+    await settle(t);
+    expect(find.text('I (27) boot: chip revision: v0.2'), findsOneWidget);
+
+    await tapKey(t, 'board-switch-/dev/rp-approver');
+    await tapKey(t, 'profile-sentry');
+    expect(find.byKey(const Key('profile-confirm')), findsOneWidget, reason: 'leaving approver is confirmed');
+    await tapKey(t, 'profile-confirm');
+    expect(h.device.boards.first['profile'], 'sentry');
+    final call = h.device.calls.lastWhere((c) => c.path == '/v1/boards/profile');
+    expect(jsonDecode((call.body as Map)['payload'] as String),
+        {'op': 'set_board_profile', 'port': '/dev/rp-approver', 'profile': 'sentry'});
+
+    // A profile the board does not support is not offered.
+    await tapKey(t, 'board-switch-/dev/rp-approver');
+    expect(find.byKey(const Key('profile-oob')), findsNothing);
+  });
+
   testWidgets('Settings: add another phone shows a one-time code', (t) async {
     await onDevice(t, 'Settings');
     await tapKey(t, 'add-phone');

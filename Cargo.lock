@@ -1282,6 +1282,7 @@ dependencies = [
  "rp-core",
  "rp-policy",
  "rp-schema",
+ "rp-wire",
  "serde",
  "serde_json",
  "sha2",
