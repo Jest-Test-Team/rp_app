@@ -1164,6 +1164,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ed25519-dalek",
+ "hex",
  "ipnet",
  "libc",
  "rand_core",
