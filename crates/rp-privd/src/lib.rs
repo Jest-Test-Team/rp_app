@@ -96,6 +96,14 @@ pub enum SignedOp {
     },
     Approve {
         action_id: String,
+        /// The hardware key's `DECIDE` line, relayed by the app (answering
+        /// a `hwkey_challenge`); absent = ask the key on its serial port.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hwkey_decide: Option<String>,
+    },
+    /// The `ASK` line the app must have the hardware key sign.
+    HwkeyChallenge {
+        action_id: String,
     },
     Deny {
         action_id: String,
@@ -144,6 +152,7 @@ impl SignedOp {
             Self::Rollback { .. } => "rollback",
             Self::SetSecret { .. } => "set_secret",
             Self::Approve { .. } => "approve",
+            Self::HwkeyChallenge { .. } => "hwkey_challenge",
             Self::Deny { .. } => "deny",
             Self::RevokeAdmin { .. } => "revoke_admin",
             Self::OpenPairing { .. } => "open_pairing",
@@ -528,13 +537,42 @@ fn run_op(
                 Err(e) => Response::err("invalid", e.to_string()),
             }
         }
-        SignedOp::Approve { action_id } | SignedOp::Deny { action_id } => {
-            let approve = matches!(op, SignedOp::Approve { .. });
+        SignedOp::HwkeyChallenge { action_id } => {
             let c = match cfg() {
                 Ok(c) => c,
                 Err(r) => return r,
             };
-            match rp_agent::admin_ops::decide(&c, &ctx.root, action_id, approve, by, ctx.runner) {
+            if c.approver.is_none() {
+                return Response::err("invalid", "approvals do not need a hardware key here");
+            }
+            let store = rp_agent::admin_ops::action_store(&c, &ctx.root);
+            let action = match store.get(action_id) {
+                Ok(a) => a,
+                Err(e) => return Response::err("not_found", e.to_string()),
+            };
+            match rp_agent::approver::challenge(&c, &ctx.root, &action) {
+                Ok((ask, expires)) => Response::ok(json!({"ask": ask, "expires": expires})),
+                Err(e) => Response::err("invalid", e),
+            }
+        }
+        SignedOp::Approve { action_id, .. } | SignedOp::Deny { action_id } => {
+            let approve = matches!(op, SignedOp::Approve { .. });
+            let relayed = match op {
+                SignedOp::Approve { hwkey_decide, .. } => hwkey_decide.as_deref(),
+                _ => None,
+            };
+            let c = match cfg() {
+                Ok(c) => c,
+                Err(r) => return r,
+            };
+            let local = rp_agent::approver::Serial::opener;
+            let hw = match relayed {
+                Some(line) => rp_agent::approver::HwPath::Relayed(line),
+                None => rp_agent::approver::HwPath::Local(&local),
+            };
+            match rp_agent::admin_ops::decide_with(
+                &c, &ctx.root, action_id, approve, by, ctx.runner, &hw,
+            ) {
                 Ok(a) => Response::ok(serde_json::to_value(a).unwrap()),
                 Err(e) => Response::err("invalid", e),
             }

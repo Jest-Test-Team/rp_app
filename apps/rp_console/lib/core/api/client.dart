@@ -185,11 +185,20 @@ class RpClient {
 
   /// With a hardware approval key on the device, the response only comes once
   /// someone has pressed it (or it gave up): pass [keyWait] to wait that long.
-  Future<Map<String, Object?>> approve(String actionId, {Duration? keyWait}) => _signed(
+  /// [hwkeyDecide]: the hardware key's DECIDE line, relayed by this app
+  /// (see [hwkeyChallenge]); without it the device asks its own key.
+  Future<Map<String, Object?>> approve(String actionId, {Duration? keyWait, String? hwkeyDecide}) => _signed(
     'POST',
     '/v1/actions/${Uri.encodeComponent(actionId)}/approve',
-    {'op': 'approve', 'action_id': actionId},
+    {'op': 'approve', 'action_id': actionId, 'hwkey_decide': ?hwkeyDecide},
     timeout: keyWait,
+  );
+
+  /// The ASK line the hardware key must sign for [actionId] (valid 3 min).
+  Future<Map<String, Object?>> hwkeyChallenge(String actionId) => _signed(
+    'POST',
+    '/v1/actions/${Uri.encodeComponent(actionId)}/hwkey-challenge',
+    {'op': 'hwkey_challenge', 'action_id': actionId},
   );
 
   Future<Map<String, Object?>> deny(String actionId) =>

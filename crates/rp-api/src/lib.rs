@@ -706,6 +706,21 @@ async fn approve(
     signed(&st, peer, env).await
 }
 
+/// The `ASK` line for the hardware key, for an app relaying it over BLE
+/// (signed `hwkey_challenge`). Send the key's `DECIDE` back in the signed
+/// `approve` as `hwkey_decide`.
+#[utoipa::path(post, path = "/v1/actions/{id}/hwkey-challenge", tag = "mcp", params(("id" = String, Path)), request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 400, body = ApiError)))]
+async fn hwkey_challenge(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "hwkey_challenge", &[("action_id", &id)])?;
+    signed(&st, peer, env).await
+}
+
 /// Deny a privileged request (signed `deny`).
 #[utoipa::path(post, path = "/v1/actions/{id}/deny", tag = "mcp", params(("id" = String, Path)), request_body = SignedEnvelope,
     responses((status = 200, body = Object), (status = 400, body = ApiError)))]
@@ -996,7 +1011,7 @@ impl utoipa::Modify for SecurityAddon {
     paths(info, pair, pairing_open, session, logout, me, capabilities, status, modules, config, module_config,
           list_changesets, get_changeset, create_changeset, cs_preflight, cs_apply, cs_confirm, cs_rollback,
           set_secret, admins, revoke_admin, actions, approve, deny, mcp_tools, mcp_run, mcp_clients, mcp_add, mcp_remove,
-          boards, board_logs, board_profile, channel_advice,
+          boards, board_logs, board_profile, channel_advice, hwkey_challenge,
           health, inventory, ap_clients, vpn_status, dns_events, dns_stats, dns_feeds_update, flows, firewall_rules, audit,
           update_status, update_install, update_rollback, uninstall, openapi_json),
     components(schemas(SignedEnvelope, PairRequest, ApiError)),
@@ -1029,6 +1044,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/v1/actions/pending", get(actions))
         .route("/v1/actions/{id}/approve", post(approve))
         .route("/v1/actions/{id}/deny", post(deny))
+        .route("/v1/actions/{id}/hwkey-challenge", post(hwkey_challenge))
         .route("/v1/boards", get(boards))
         .route("/v1/boards/logs", get(board_logs))
         .route("/v1/boards/profile", post(board_profile))

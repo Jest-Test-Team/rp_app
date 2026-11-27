@@ -16,6 +16,7 @@ rp-dns = { path = "../rp-dns" }
 rp-wire = { path = "../rp-wire" }
 rp-board = { path = "../rp-board" }
 rand_core.workspace = true
+hex.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

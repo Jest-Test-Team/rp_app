@@ -509,6 +509,7 @@ fn openapi_documents_every_route() {
         "GET /v1/boards/logs",
         "POST /v1/boards/profile",
         "GET /v1/ap/channel-advice",
+        "POST /v1/actions/{id}/hwkey-challenge",
         "GET /v1/health",
         "GET /v1/inventory",
         "GET /v1/ap/clients",

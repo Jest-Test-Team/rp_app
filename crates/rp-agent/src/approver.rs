@@ -43,6 +43,81 @@ pub trait KeyLink {
 
 pub type Opener<'a> = &'a dyn Fn(&Approver, &Path) -> io::Result<Box<dyn KeyLink>>;
 
+/// How the hardware key's answer reaches the gateway.
+pub enum HwPath<'a> {
+    /// The key is on a serial port here (directly or through rp-boards).
+    Local(Opener<'a>),
+    /// Someone relayed the key's `DECIDE` line (the console app over BLE),
+    /// answering a challenge issued with [`challenge`].
+    Relayed(&'a str),
+}
+
+/// How long a relayed challenge stays valid.
+pub const CHALLENGE_SECS: i64 = 180;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Challenge {
+    nonce: String,
+    expires: i64,
+}
+
+fn challenge_path(cfg: &Config, root: &Path, action_id: &str) -> PathBuf {
+    crate::admin_ops::agent_state(cfg, root)
+        .join("hwkey-challenges")
+        .join(format!("{action_id}.json"))
+}
+
+/// Issue the `ASK` line for `action` that a relayed key must sign. A new
+/// challenge replaces the previous one for the same action.
+pub fn challenge(cfg: &Config, root: &Path, action: &Action) -> Result<(String, i64), String> {
+    if action.status != rp_policy::approvals::Status::Pending {
+        return Err("the request is not pending".into());
+    }
+    let id = hwkey::id_bytes(action).ok_or("malformed action id")?;
+    let mut nonce = [0u8; rp_wire::NONCE_LEN];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);
+    let expires = rp_policy::approvals::now() + CHALLENGE_SECS;
+    let c = Challenge { nonce: hex::encode(nonce), expires };
+    rp_policy::admin::write_private(
+        &challenge_path(cfg, root, &action.id),
+        &serde_json::to_string(&c).expect("serializable"),
+    )
+    .map_err(|e| e.to_string())?;
+    let ask = HostMsg::Ask { id, digest: hwkey::action_digest(action), nonce };
+    Ok((ask.to_string(), expires))
+}
+
+/// Check a relayed `DECIDE` line against the stored challenge (single use).
+fn relayed(
+    cfg: &Config,
+    a: &Approver,
+    root: &Path,
+    action: &Action,
+    line: &str,
+) -> Result<Outcome, String> {
+    let path = challenge_path(cfg, root, &action.id);
+    let text =
+        std::fs::read_to_string(&path).map_err(|_| "no challenge issued for this request")?;
+    let _ = std::fs::remove_file(&path); // one answer per challenge
+    let c: Challenge = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if rp_policy::approvals::now() > c.expires {
+        return Err("the challenge expired; ask the key again".into());
+    }
+    let nonce: [u8; rp_wire::NONCE_LEN] =
+        hex::decode(&c.nonce).ok().and_then(|b| b.try_into().ok()).ok_or("corrupt challenge")?;
+    let Some(KeyMsg::Decide { id, approve, signature }) = KeyMsg::parse(line.trim()) else {
+        return Err("not a DECIDE line from the key".into());
+    };
+    let keys = HwKeys::load(&keys_path(a, root))?;
+    let k = keys.verify(action, &nonce, &id, approve, &signature).map_err(|e| e.to_string())?;
+    let (id, name) = (k.id.clone(), k.name.clone());
+    Ok(if approve {
+        Outcome::Approved(Proof::Key { id, name })
+    } else {
+        Outcome::DeniedOnKey { id, name }
+    })
+}
+
 pub fn keys_path(a: &Approver, root: &Path) -> PathBuf {
     under_root(root, &a.keys_file)
 }
@@ -129,12 +204,16 @@ pub fn confirm(
     a: &Approver,
     root: &Path,
     action: &Action,
-    open: Opener<'_>,
+    path: &HwPath<'_>,
 ) -> Result<Outcome, String> {
     let now = rp_policy::approvals::now();
     if let Some(until) = hwkey::bypass_until(&bypass_path(cfg, root), now) {
         return Ok(Outcome::Approved(Proof::Bypass { until }));
     }
+    let open = match path {
+        HwPath::Relayed(line) => return relayed(cfg, a, root, action, line),
+        HwPath::Local(open) => *open,
+    };
     let keys = HwKeys::load(&keys_path(a, root))?;
     if keys.active().next().is_none() {
         return Err(hwkey::HwError::NoKeys.to_string());

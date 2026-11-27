@@ -138,6 +138,57 @@
         }
       }
     },
+    "/v1/actions/{id}/hwkey-challenge": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "The `ASK` line for the hardware key, for an app relaying it over BLE\n(signed `hwkey_challenge`). Send the key's `DECIDE` back in the signed\n`approve` as `hwkey_decide`.",
+        "operationId": "hwkey_challenge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedEnvelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/admins": {
       "get": {
         "tags": [

@@ -35,7 +35,8 @@ pub fn decide(
     admin: &str,
     runner: &dyn Runner,
 ) -> Result<Action, String> {
-    decide_with(cfg, root, id, approve, admin, runner, &crate::approver::Serial::opener)
+    let open = crate::approver::HwPath::Local(&crate::approver::Serial::opener);
+    decide_with(cfg, root, id, approve, admin, runner, &open)
 }
 
 pub fn decide_with(
@@ -45,7 +46,7 @@ pub fn decide_with(
     approve: bool,
     admin: &str,
     runner: &dyn Runner,
-    open_key: crate::approver::Opener<'_>,
+    hw: &crate::approver::HwPath<'_>,
 ) -> Result<Action, String> {
     use crate::approver::{Outcome, Proof};
 
@@ -67,7 +68,7 @@ pub fn decide_with(
         .map_err(|e| format!("request no longer valid: {e}"))?;
     let (by, detail) = match &cfg.approver {
         None => (admin.to_string(), format!("id={id}")),
-        Some(h) => match crate::approver::confirm(cfg, h, root, &pending, open_key) {
+        Some(h) => match crate::approver::confirm(cfg, h, root, &pending, hw) {
             Ok(Outcome::Approved(Proof::Key { id: key, name })) => {
                 (format!("{admin}+key:{name}"), format!("id={id} hwkey={key}"))
             }
@@ -182,7 +183,7 @@ pub fn mcp_remove_client(cfg: &Config, root: &Path, name: &str) -> Result<(), St
 mod tests {
     use super::*;
     use crate::approver::testkey::{Press, SoftKey};
-    use crate::approver::KeyLink;
+    use crate::approver::{HwPath, KeyLink};
     use rp_core::runner::RecordingRunner;
     use rp_policy::approvals::Status;
     use rp_policy::hwkey::HwKeys;
@@ -233,7 +234,15 @@ mod tests {
             let open = move |_: &Approver, _: &Path| -> std::io::Result<Box<dyn KeyLink>> {
                 Ok(Box::new(SoftKey::new(seed, press)))
             };
-            let r = decide_with(&self.cfg, &self.root, id, true, "admin:test", &runner, &open);
+            let r = decide_with(
+                &self.cfg,
+                &self.root,
+                id,
+                true,
+                "admin:test",
+                &runner,
+                &HwPath::Local(&open),
+            );
             (r, runner.calls().len())
         }
 
@@ -250,7 +259,16 @@ mod tests {
             panic!("the key must not be contacted")
         };
         let runner = RecordingRunner::default();
-        let a = decide_with(&f.cfg, &f.root, &id, true, "admin:t", &runner, &unreachable).unwrap();
+        let a = decide_with(
+            &f.cfg,
+            &f.root,
+            &id,
+            true,
+            "admin:t",
+            &runner,
+            &HwPath::Local(&unreachable),
+        )
+        .unwrap();
         assert_eq!(a.status, Status::Executed);
     }
 
@@ -311,9 +329,84 @@ mod tests {
             k.profile = rp_wire::Profile::Sentry;
             Ok(Box::new(k))
         };
-        let e = decide_with(&f.cfg, &f.root, &id, true, "admin:t", &runner, &open).unwrap_err();
+        let e = decide_with(&f.cfg, &f.root, &id, true, "admin:t", &runner, &HwPath::Local(&open))
+            .unwrap_err();
         assert!(e.contains("sentry profile"), "{e}");
         assert_eq!((runner.calls().len(), f.status(&id)), (0, Status::Pending));
+    }
+
+    /// What the console app does: get the challenge, have the key sign it
+    /// (here a soft key), hand the DECIDE line back.
+    fn relay(f: &Fixture, id: &str, seed: u8, press: Press) -> String {
+        let action = action_store(&f.cfg, &f.root).get(id).unwrap();
+        let (ask, _) = crate::approver::challenge(&f.cfg, &f.root, &action).unwrap();
+        let mut key = SoftKey::new(seed, press);
+        key.send(&ask).unwrap();
+        let deadline = std::time::Instant::now();
+        loop {
+            let l = key.recv(deadline).unwrap().expect("the key answers");
+            if l.starts_with("DECIDE") {
+                return l;
+            }
+        }
+    }
+
+    #[test]
+    fn a_relayed_key_answer_approves_once() {
+        let f = fixture("relay", true);
+        f.enroll(1);
+        let id = f.request();
+        let line = relay(&f, &id, 1, Press::Approve);
+        let runner = RecordingRunner::default();
+        let a =
+            decide_with(&f.cfg, &f.root, &id, true, "admin:app", &runner, &HwPath::Relayed(&line))
+                .unwrap();
+        assert_eq!(a.status, Status::Executed);
+        assert_eq!(a.decided_by.as_deref(), Some("admin:app+key:key1"));
+
+        // The same answer cannot be used again, nor for another request.
+        let id2 = f.request();
+        let runner = RecordingRunner::default();
+        let e =
+            decide_with(&f.cfg, &f.root, &id2, true, "admin:app", &runner, &HwPath::Relayed(&line));
+        assert!(e.unwrap_err().contains("no challenge"));
+        crate::approver::challenge(
+            &f.cfg,
+            &f.root,
+            &action_store(&f.cfg, &f.root).get(&id2).unwrap(),
+        )
+        .unwrap();
+        let e =
+            decide_with(&f.cfg, &f.root, &id2, true, "admin:app", &runner, &HwPath::Relayed(&line));
+        assert!(e.is_err(), "an answer for another request");
+        assert_eq!((runner.calls().len(), f.status(&id2)), (0, Status::Pending));
+    }
+
+    #[test]
+    fn a_relayed_answer_needs_an_enrolled_key_and_can_deny() {
+        let f = fixture("relay2", true);
+        f.enroll(1);
+        let id = f.request();
+        let stranger = relay(&f, &id, 9, Press::Approve);
+        let runner = RecordingRunner::default();
+        let e = decide_with(
+            &f.cfg,
+            &f.root,
+            &id,
+            true,
+            "admin:app",
+            &runner,
+            &HwPath::Relayed(&stranger),
+        );
+        assert!(e.unwrap_err().contains("signature"));
+        let deny = relay(&f, &id, 1, Press::Deny);
+        let a =
+            decide_with(&f.cfg, &f.root, &id, true, "admin:app", &runner, &HwPath::Relayed(&deny))
+                .unwrap();
+        assert_eq!((a.status, runner.calls().len()), (Status::Denied, 0));
+        let e =
+            decide_with(&f.cfg, &f.root, &id, true, "a", &runner, &HwPath::Relayed("DECIDE junk"));
+        assert!(e.is_err());
     }
 
     #[test]
@@ -326,12 +419,29 @@ mod tests {
             Err(std::io::Error::other("unplugged"))
         };
         let runner = RecordingRunner::default();
-        let a = decide_with(&f.cfg, &f.root, &id, true, "admin:t", &runner, &unreachable).unwrap();
+        let a = decide_with(
+            &f.cfg,
+            &f.root,
+            &id,
+            true,
+            "admin:t",
+            &runner,
+            &HwPath::Local(&unreachable),
+        )
+        .unwrap();
         assert_eq!(a.decided_by.as_deref(), Some("admin:t+bypass"));
 
         rp_policy::hwkey::close_bypass(&path);
         let id = f.request();
-        let e = decide_with(&f.cfg, &f.root, &id, true, "admin:t", &runner, &unreachable);
+        let e = decide_with(
+            &f.cfg,
+            &f.root,
+            &id,
+            true,
+            "admin:t",
+            &runner,
+            &HwPath::Local(&unreachable),
+        );
         assert!(e.is_err());
     }
 }
