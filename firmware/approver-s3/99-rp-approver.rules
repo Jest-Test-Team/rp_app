@@ -1,0 +1,4 @@
+# /etc/udev/rules.d/99-rp-approver.rules
+# Gives the ESP32-S3 approval key (native USB Serial/JTAG) a stable name,
+# readable only by root (rpctl and rp-privd run as root).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", SYMLINK+="rp-approver", MODE="0600", OWNER="root"
