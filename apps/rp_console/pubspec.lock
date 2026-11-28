@@ -25,6 +25,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.13.1"
+  bluez:
+    dependency: transitive
+    description:
+      name: bluez
+      sha256: "4747e4f25abf91a9a341a1c3f83a9081be9bdd189d913e391b6707db4214b4d2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.9.0"
   boolean_selector:
     dependency: transitive
     description:
@@ -105,6 +113,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.0"
+  dbus:
+    dependency: transitive
+    description:
+      name: dbus
+      sha256: fe6b46eae35441227e9e750656d06a4f40c230fe96e4390da7d7ebc69a60f0b3
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.8.1"
   fake_async:
     dependency: transitive
     description:
@@ -200,6 +216,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_web_bluetooth:
+    dependency: transitive
+    description:
+      name: flutter_web_bluetooth
+      sha256: "71fa37f699032b4416d56aeb5214363ba057f6aed4eba544cc26293e2582b85d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.0"
   flutter_web_plugins:
     dependency: transitive
     description: flutter
@@ -397,6 +421,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.3.0"
+  petitparser:
+    dependency: transitive
+    description:
+      name: petitparser
+      sha256: "91bd59303e9f769f108f8df05e371341b15d59e995e6806aefab827b58336675"
+      url: "https://pub.dev"
+    source: hosted
+    version: "7.0.2"
   pinenacl:
     dependency: transitive
     description:
@@ -522,6 +554,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.0"
+  universal_ble:
+    dependency: "direct main"
+    description:
+      name: universal_ble
+      sha256: "4903b9a434739658ff21dd05e66f7c561d5045b52f57907788d9e5cb87d16060"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.4.2"
   vector_math:
     dependency: transitive
     description:
@@ -562,6 +602,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.0"
+  xml:
+    dependency: transitive
+    description:
+      name: xml
+      sha256: "67f0aff7be013d107995e9b75bf4e7f2c3ef2dfdb2c8e68024bba0a7fd5756a4"
+      url: "https://pub.dev"
+    source: hosted
+    version: "7.0.1"
   yaml:
     dependency: "direct dev"
     description:

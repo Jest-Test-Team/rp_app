@@ -385,6 +385,12 @@ pub struct PairRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct ChannelQuery {
+    /// Channels to choose from, e.g. `1,3,6,11` (default).
+    pub candidates: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct BoardLogQuery {
     /// Minimum severity: error | warn | info | debug (default info).
     pub level: Option<String>,
@@ -700,6 +706,21 @@ async fn approve(
     signed(&st, peer, env).await
 }
 
+/// The `ASK` line for the hardware key, for an app relaying it over BLE
+/// (signed `hwkey_challenge`). Send the key's `DECIDE` back in the signed
+/// `approve` as `hwkey_decide`.
+#[utoipa::path(post, path = "/v1/actions/{id}/hwkey-challenge", tag = "mcp", params(("id" = String, Path)), request_body = SignedEnvelope,
+    responses((status = 200, body = Object), (status = 400, body = ApiError)))]
+async fn hwkey_challenge(
+    State(st): St,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    Body(env): Body<SignedEnvelope>,
+) -> ApiResult {
+    expect_op(&env, "hwkey_challenge", &[("action_id", &id)])?;
+    signed(&st, peer, env).await
+}
+
 /// Deny a privileged request (signed `deny`).
 #[utoipa::path(post, path = "/v1/actions/{id}/deny", tag = "mcp", params(("id" = String, Path)), request_body = SignedEnvelope,
     responses((status = 200, body = Object), (status = 400, body = ApiError)))]
@@ -728,6 +749,19 @@ async fn board_logs(State(st): St, _a: Authed, Query(q): Query<BoardLogQuery>) -
         .unwrap_or_else(|| "info".into());
     let lim = q.limit.unwrap_or(200).min(1000);
     observe(&st, format!("/v1/boards/logs?level={level}&limit={lim}")).await
+}
+
+/// Which channel the IoT access point should use, from the newest sentry
+/// measurement (neighbouring channels' overlap counted).
+#[utoipa::path(get, path = "/v1/ap/channel-advice", tag = "boards", params(ChannelQuery), responses((status = 200, body = Object)), security(("session" = [])))]
+async fn channel_advice(State(st): St, _a: Authed, Query(q): Query<ChannelQuery>) -> ApiResult {
+    let c = q
+        .candidates
+        .filter(|c| {
+            c.len() <= 40 && !c.is_empty() && c.chars().all(|ch| ch.is_ascii_digit() || ch == ',')
+        })
+        .unwrap_or_else(|| "1,3,6,11".into());
+    observe(&st, format!("/v1/ap/channel-advice?candidates={c}")).await
 }
 
 /// Switch a board's profile (signed `set_board_profile`). The board restarts;
@@ -977,7 +1011,7 @@ impl utoipa::Modify for SecurityAddon {
     paths(info, pair, pairing_open, session, logout, me, capabilities, status, modules, config, module_config,
           list_changesets, get_changeset, create_changeset, cs_preflight, cs_apply, cs_confirm, cs_rollback,
           set_secret, admins, revoke_admin, actions, approve, deny, mcp_tools, mcp_run, mcp_clients, mcp_add, mcp_remove,
-          boards, board_logs, board_profile,
+          boards, board_logs, board_profile, channel_advice, hwkey_challenge,
           health, inventory, ap_clients, vpn_status, dns_events, dns_stats, dns_feeds_update, flows, firewall_rules, audit,
           update_status, update_install, update_rollback, uninstall, openapi_json),
     components(schemas(SignedEnvelope, PairRequest, ApiError)),
@@ -1010,9 +1044,11 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/v1/actions/pending", get(actions))
         .route("/v1/actions/{id}/approve", post(approve))
         .route("/v1/actions/{id}/deny", post(deny))
+        .route("/v1/actions/{id}/hwkey-challenge", post(hwkey_challenge))
         .route("/v1/boards", get(boards))
         .route("/v1/boards/logs", get(board_logs))
         .route("/v1/boards/profile", post(board_profile))
+        .route("/v1/ap/channel-advice", get(channel_advice))
         .route("/v1/mcp/tools", get(mcp_tools))
         .route("/v1/mcp/tools/{name}/run", post(mcp_run))
         .route("/v1/mcp/clients", get(mcp_clients).post(mcp_add))

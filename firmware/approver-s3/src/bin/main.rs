@@ -16,7 +16,7 @@
 //! Nothing is transmitted.
 //!
 //! Light: white for 1 s at boot; idle colour per profile (approver green,
-//! sentry blue, csi purple, honeypot cyan); a waiting request blinks amber;
+//! sentry blue, csi purple); a waiting request blinks amber;
 //! held long enough = solid green; denied = red flash.
 
 #![no_std]
@@ -24,6 +24,8 @@
 #![deny(clippy::mem_forget)]
 
 extern crate alloc;
+
+mod ble;
 
 use core::cell::RefCell;
 use core::fmt::Write as _;
@@ -33,11 +35,11 @@ use critical_section::Mutex;
 
 use ed25519_dalek::SigningKey;
 use esp_backtrace as _;
+use embassy_time::Timer;
 use esp_hal::{
     Blocking,
     clock::CpuClock,
     gpio::{Input, InputConfig, Pull},
-    main,
     rmt::Rmt,
     rng::{Trng, TrngSource},
     time::{Duration, Instant, Rate},
@@ -45,7 +47,7 @@ use esp_hal::{
 };
 use esp_hal_smartled::{RmtSmartLeds, buffer_size, color_order};
 use esp_storage::FlashStorage;
-use rp_board::{Board, Light, Out};
+use rp_board::{Board, Effect, Light, Out};
 use rp_wire::{KeyMsg, Level, Profile, Profiles};
 use sha2::{Digest, Sha256};
 use smart_leds::{RGB8, SmartLedsWrite};
@@ -64,11 +66,8 @@ const GREEN: RGB8 = RGB8 { r: 0, g: 40, b: 0 };
 const RED: RGB8 = RGB8 { r: 40, g: 0, b: 0 };
 
 fn supported() -> Profiles {
-    Profiles::empty()
-        .with(Profile::Approver)
-        .with(Profile::Honeypot)
-        .with(Profile::Sentry)
-        .with(Profile::Csi)
+    // The decoy network (honeypot) runs on the WROOM.
+    Profiles::empty().with(Profile::Approver).with(Profile::Sentry).with(Profile::Csi)
 }
 
 fn colour(l: Light) -> RGB8 {
@@ -199,6 +198,28 @@ fn on_packet(p: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
     });
 }
 
+/// Sends to USB, except replies to a request that came over BLE, which go
+/// back to the phone (logs and notes always go to USB).
+struct Route<'a, 'd> {
+    usb: UsbOut<'a, 'd>,
+    to_ble: bool,
+}
+
+impl Out for Route<'_, '_> {
+    fn msg(&mut self, m: KeyMsg<'_>) {
+        if self.to_ble && !matches!(m, KeyMsg::Log { .. }) {
+            let mut l = ble::Line::new();
+            let _ = write!(l, "{m}");
+            let _ = ble::BLE_OUT.try_send(l);
+        } else {
+            self.usb.msg(m);
+        }
+    }
+    fn note(&mut self, text: &str) {
+        self.usb.note(text);
+    }
+}
+
 struct UsbOut<'a, 'd>(&'a mut UsbSerialJtag<'d, Blocking>);
 
 impl UsbOut<'_, '_> {
@@ -232,9 +253,13 @@ impl Out for UsbOut<'_, '_> {
     }
 }
 
-#[main]
-fn main() -> ! {
+#[esp_rtos::main]
+async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    // The scheduler runs in every profile (BLE for approver, Wi-Fi for sentry).
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
+    let timg0 = esp_hal::timer::timg::TimerGroup::new(p.TIMG0);
+    esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
 
     let _trng_source = TrngSource::new(p.RNG, p.ADC1);
     let trng = Trng::try_new().expect("TRNG");
@@ -243,12 +268,9 @@ fn main() -> ! {
     let stored = load_profile(&mut flash);
     let mut board = Board::new(key, "esp32s3", VERSION, supported(), stored);
 
-    // Radio only in the sentry profile; an approval key keeps it off.
+    // Wi-Fi only in the sentry profile; BLE only in the approver profile.
     let mut radio = None;
     if board.profile() == Profile::Sentry {
-        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
-        let timg0 = esp_hal::timer::timg::TimerGroup::new(p.TIMG0);
-        esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
         let mut ctl = esp_radio::wifi::WifiController::new(p.WIFI, Default::default())
             .expect("Wi-Fi controller");
         ctl.set_config(&esp_radio::wifi::Config::Station(Default::default())).expect("station mode");
@@ -291,14 +313,42 @@ fn main() -> ! {
     // Boot: one second of white, so a wrong LED pin is obvious.
     set(RGB8 { r: 30, g: 30, b: 30 });
     let boot = Instant::now();
-    while boot.elapsed() < Duration::from_millis(1000) {}
+    Timer::after_millis(1000).await;
     boot_log(&mut UsbOut(&mut usb), board.profile());
 
+    // BLE name "rp-key-<first 4 hex of the key id>", address from the key.
+    let pk = board.public_key();
+    static NAME: static_cell::StaticCell<heapless::String<16>> = static_cell::StaticCell::new();
+    let name = NAME.init({
+        let mut n = heapless::String::new();
+        let id = Sha256::digest(pk);
+        let _ = write!(n, "rp-key-{:02x}{:02x}", id[0], id[1]);
+        n
+    });
+    let addr = [pk[0], pk[1], pk[2], pk[3], pk[4], pk[5] | 0xc0];
+    let ble_on = board.profile() == Profile::Approver;
+    let ble_task = async move {
+        if ble_on {
+            ble::run(p.BT, name.as_str(), addr).await
+        }
+        core::future::pending::<()>().await
+    };
+
+    let main_loop = async move {
     let mut channel = 1u8;
     let mut hop_at = 0u64;
     let mut dropped_reported = 0u32;
+    // Where the pending ASK came from: its DECIDE / TIMEOUT go back there.
+    let mut ask_over_ble = false;
     loop {
+        Timer::after_millis(2).await;
         let now = boot.elapsed().as_millis();
+        while let Ok(line) = ble::BLE_IN.try_receive() {
+            ask_over_ble = line.starts_with("ASK ") || (ask_over_ble && !line.starts_with("CANCEL"));
+            for b in line.bytes().chain(Some(b'\n')) {
+                let _ = board.on_byte(b, now, &mut Route { usb: UsbOut(&mut usb), to_ble: true });
+            }
+        }
         if let Some((ctl, _)) = &mut radio {
             // Count what arrived on the channel we are leaving, then hop.
             board.on_traffic(TRAFFIC.swap(0, Ordering::Relaxed));
@@ -321,7 +371,10 @@ fn main() -> ! {
             }
         }
         while let Ok(b) = usb.read_byte() {
-            if let Some(next) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
+            if b == b'A' {
+                ask_over_ble = false; // an ASK from the gateway's port
+            }
+            if let Some(Effect::SwitchProfile(next)) = board.on_byte(b, now, &mut UsbOut(&mut usb)) {
                 if !store_profile(&mut flash, next) {
                     UsbOut(&mut usb).msg(KeyMsg::Log {
                         level: Level::Error,
@@ -334,7 +387,10 @@ fn main() -> ! {
                 esp_hal::system::software_reset();
             }
         }
-        let light = board.tick(now, button.is_low(), &mut UsbOut(&mut usb));
+        let light = board.tick(now, button.is_low(), &mut Route { usb: UsbOut(&mut usb), to_ble: ask_over_ble });
         set(colour(light));
     }
+    };
+    embassy_futures::join::join(ble_task, main_loop).await;
+    unreachable!()
 }

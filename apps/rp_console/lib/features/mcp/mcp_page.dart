@@ -11,12 +11,17 @@ import '../../app/strings.dart';
 import '../../core/api/client.dart';
 import '../../core/api/models.dart';
 import '../../core/api/transport.dart';
+import '../../core/hwkey/key_relay.dart';
 import '../../widgets/common.dart';
 import 'tool_runner.dart';
 
 class McpPage extends StatelessWidget {
-  const McpPage({super.key, required this.client});
+  const McpPage({super.key, required this.client, this.keyRelay});
   final RpClient client;
+
+  /// Reaches a hardware key next to the user (Bluetooth); null = only the
+  /// key plugged into the device.
+  final KeyRelay? keyRelay;
 
   @override
   Widget build(BuildContext context) =>
@@ -31,7 +36,7 @@ class McpPage extends StatelessWidget {
           onRefresh: () async => reload(),
           child: ListView(
             children: [
-              ApprovalQueue(client: client, actions: d.$3, onChanged: reload),
+              ApprovalQueue(client: client, actions: d.$3, onChanged: reload, keyRelay: keyRelay),
               _Tools(client: client, tools: d.$1, onRequested: reload),
               _Clients(client: client, data: d.$2, onChanged: reload),
               _Audit(audit: d.$4),
@@ -43,8 +48,9 @@ class McpPage extends StatelessWidget {
 }
 
 class ApprovalQueue extends StatelessWidget {
-  const ApprovalQueue({super.key, required this.client, required this.actions, required this.onChanged});
+  const ApprovalQueue({super.key, required this.client, required this.actions, required this.onChanged, this.keyRelay});
   final RpClient client;
+  final KeyRelay? keyRelay;
   final Map<String, Object?> actions;
   final VoidCallback onChanged;
 
@@ -57,7 +63,42 @@ class ApprovalQueue extends StatelessWidget {
     final navigator = Navigator.of(context);
     var dialogOpen = false;
     try {
+      if (approve && _keyRequired && keyRelay != null) {
+        // Default: the key next to the user, over Bluetooth. The app only
+        // carries the device's challenge and the key's signed answer.
+        dialogOpen = true;
+        unawaited(
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const _PressKeyDialog(seconds: 120, nearby: true),
+          ),
+        );
+        try {
+          final ch = await client.hwkeyChallenge(id);
+          final line = await keyRelay!.sign(str(ch['ask']));
+          final a = await client.approve(id, hwkeyDecide: line);
+          navigator.pop();
+          dialogOpen = false;
+          messenger.showSnackBar(
+            SnackBar(content: Text(s(str(a['status']) == 'denied' ? 'approver.denied' : 'approver.approved'))),
+          );
+          onChanged();
+          return;
+        } on KeyRelayException catch (e) {
+          navigator.pop();
+          dialogOpen = false;
+          if (e.error != KeyRelayError.noKey && e.error != KeyRelayError.unavailable) {
+            messenger.showSnackBar(SnackBar(content: Text(s('approver.relay.${e.error.name}'))));
+            onChanged();
+            return;
+          }
+          // No key nearby: ask the one plugged into the device instead.
+          messenger.showSnackBar(SnackBar(content: Text(s('approver.relay.fallback'))));
+        }
+      }
       if (approve && _keyRequired) {
+        if (!context.mounted) return;
         // The device answers only after someone presses its hardware key.
         final wait = Duration(seconds: (_approver['wait_seconds'] as num?)?.toInt() ?? 60);
         dialogOpen = true;
@@ -150,8 +191,11 @@ class ApprovalQueue extends StatelessWidget {
 
 /// Shown while the device waits for a press on its hardware approval key.
 class _PressKeyDialog extends StatefulWidget {
-  const _PressKeyDialog({required this.seconds});
+  const _PressKeyDialog({required this.seconds, this.nearby = false});
   final int seconds;
+
+  /// The key next to the user (Bluetooth), not the one at the device.
+  final bool nearby;
   @override
   State<_PressKeyDialog> createState() => _PressKeyDialogState();
 }
@@ -184,7 +228,7 @@ class _PressKeyDialogState extends State<_PressKeyDialog> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(s('approver.press.body')),
+          Text(s(widget.nearby ? 'approver.press.nearby' : 'approver.press.body')),
           const SizedBox(height: 16),
           const LinearProgressIndicator(),
           const SizedBox(height: 8),

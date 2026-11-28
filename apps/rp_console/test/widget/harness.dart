@@ -1,3 +1,4 @@
+import 'package:rp_console/demo/fake_key_relay.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -15,7 +16,7 @@ import 'package:rp_console/core/vpn/vpn_platform.dart';
 import '../support/fakes.dart';
 
 class Harness {
-  Harness({FakeDevice? device, this.desktop = false, FakeShell? shell, this.scanQr, this.vpn})
+  Harness({FakeDevice? device, this.desktop = false, FakeShell? shell, this.scanQr, this.vpn, this.keyRelay})
     : device = device ?? FakeDevice(),
       shell = shell ?? FakeShell([]);
 
@@ -24,6 +25,7 @@ class Harness {
   final FakeShell shell;
   final Future<String?> Function(BuildContext)? scanQr;
   final FakeVpn? vpn;
+  final FakeKeyRelay? keyRelay;
 
   /// Addresses that do not answer (e.g. the home address behind an exit node).
   final down = <String>{};
@@ -42,6 +44,7 @@ class Harness {
     latest: () async => latestRelease,
     desktop: desktop,
     scanQr: scanQr,
+    keyRelay: keyRelay,
     publicIp: () async => publicIp,
     vpn: vpn,
   );

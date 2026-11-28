@@ -7,6 +7,7 @@ import '../core/api/routing_transport.dart';
 import '../core/api/transport.dart';
 import '../core/vpn/vpn_platform.dart';
 import '../core/discovery/discovery.dart';
+import '../core/hwkey/key_relay.dart';
 import '../core/provision/ssh_bootstrap.dart';
 import '../core/storage/vault.dart';
 import 'release.dart';
@@ -32,6 +33,7 @@ class Services {
     this.scanQr,
     Future<String?> Function()? publicIp,
     this.vpn,
+    this.keyRelay,
   }) : transport = transport ?? ((h, p, pin) => PinnedTransport(host: h, port: p, pin: pin)),
        shell =
            shell ??
@@ -42,6 +44,9 @@ class Services {
        publicIp = publicIp ?? fetchPublicIp;
 
   final Vault vault;
+
+  /// Hardware approval key next to the user (Bluetooth); null = none.
+  final KeyRelay? keyRelay;
   final Discoverer discoverer;
   final TransportFactory transport;
   final ShellFactory shell;

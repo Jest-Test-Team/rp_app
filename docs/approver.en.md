@@ -78,7 +78,7 @@ sudo rpctl approver profile sentry --port /dev/ttyUSB0       # switch profile (t
 ```
 
 - `backup_port` (default `/dev/rp-approver-backup`) is used when nothing is plugged in at `port`; pin the udev rule to the board's serial number (see `99-rp-approver.rules`).
-- A board runs one profile at a time: the S3 has `approver`, `honeypot`, `sentry`, `csi`; the WROOM has `approver`, `oob`, `honeypot`, `csi`. **Only `approver` answers approval requests**; in any other profile approvals fail and stay pending. Implemented: `approver` and `sentry` (S3); `oob`, `honeypot` and `csi` so far only switch and report.
+- A board runs one profile at a time: the S3 has `approver`, `sentry`, `csi`; the WROOM has `approver`, `oob`, `honeypot`, `csi`. **Only `approver` answers approval requests**; in any other profile approvals fail and stay pending. Implemented: `approver`, `sentry` (S3), `oob` and `honeypot` (WROOM); `csi` so far only switches and reports.
 - When opening a USB-UART port the gateway drops DTR and RTS together so the auto-download circuit does not hold a classic ESP32 in reset; before asking, it waits for the board's `INFO` and checks that it is an enrolled key in the `approver` profile.
 
 ## Board status and error log (rp-boards)
@@ -102,6 +102,30 @@ Only in `sentry` does the S3 (with its external antenna) turn the radio on (neve
 | channel load | every 60 s | `info sentry: channel load ch1=47f/2ap ...` (f = frames, ap = access points) |
 
 The lines go through rp-boards like any other board log: the app's ESP32 boards page and the MCP tool `get_board_logs` show them. Passive listening only; the firmware never sends frames (it does not scan or connect).
+
+## Out-of-band console and watchdog (the WROOM's `oob` profile)
+
+**Wiring** (three jumper wires): WROOM GPIO16 (RX) ← Pi GPIO14 (TXD, pin 8), WROOM GPIO17 (TX) → Pi GPIO15 (RXD, pin 10), GND ↔ GND (pin 6). Both sides are 3.3 V, no level shifter. Enable the Pi's serial console: `enable_uart=1` in `/boot/firmware/config.txt` and `console=serial0,115200` in `cmdline.txt` (`sudo raspi-config` › Interface › Serial: login shell "yes").
+
+- **Normally** (the WROOM's USB on the Pi): every console line goes to rp-boards as `pi> ...`, and the board keeps the last 64; rp-boards asks `TAIL 64` (`pi< ...`) each time it reconnects, so **what the Pi printed just before it crashed** (kernel panic, OOM) can be read after the restart.
+- **Rescue** (firewall, SSH or network broken): plug the WROOM's USB into a laptop and run `rpctl approver console --port /dev/cu.usbserial-...`: that is the Pi's login prompt. Ctrl-] three times leaves. rp-boards never forwards `CONSOLE`, so passthrough cannot be opened remotely.
+- **Watchdog**: rp-boards sends `HB` every 10 s. With `[boards] watchdog_seconds = 300` (0 = off, the default) the board logs `watchdog: no heartbeat ...` (error, kept across restarts) when they stop; with a relay module on GPIO26 (active high) it also cuts the Pi's power for 3 s. Without a relay it only logs.
+
+## Decoy network (the WROOM's `honeypot` profile)
+
+The WROOM runs an access point named "<IoT SSID>-guest" by default (`[boards] decoy_ssid` to change), on channel 11, **with a random WPA2 passphrase only the board knows**, so nobody can join; legitimate users have no reason to try, so an attempt is a signal. Listening promiscuously, it only looks at **authentication / association requests sent to the decoy's BSSID**, logged at most once per device per 10 minutes: `warn honeypot: <mac> tried to authenticate with decoy '<name>'`. Probe requests are ignored (no logging of passers-by). Phones usually use random MACs.
+
+## Switching to the quietest channel
+
+Works with a sentry measurement from an S3 in the last 30 minutes:
+
+```bash
+sudo rpctl ap pick-channel                 # scores for 1,3,6,11 (neighbours' overlap counted)
+sudo rpctl ap pick-channel --candidates 1,3 --apply   # switches only if clearly better (>= 20% less)
+sudo rpctl changeset confirm <id>          # keep it, or it rolls back by itself
+```
+
+The console app's IoT Wi-Fi page shows the advice under the channel picker; "Use N", then save as usual (change set with automatic rollback). Neighbours count: channel 3 was quiet on its own but sits between busy 1, 5 and 6 (measured score 278 vs 138 for channel 1).
 
 ## Lost or broken key
 

@@ -135,6 +135,11 @@ class RpClient {
   Future<Map<String, Object?>> firewallRules() async => asMap(await _get('/v1/firewall/rules'));
   Future<Map<String, Object?>> auditEvents() async => asMap(await _get('/v1/audit/events'));
 
+  /// Which channel the IoT access point should use (from a sentry board's
+  /// newest measurement); `advice` is null without a recent one.
+  Future<Map<String, Object?>> channelAdvice({String candidates = '1,3,6,11'}) async =>
+      asMap(await _get('/v1/ap/channel-advice?candidates=$candidates'));
+
   /// rp ESP32 boards attached to the device (status per port).
   Future<Map<String, Object?>> boards() async => asMap(await _get('/v1/boards'));
 
@@ -180,11 +185,20 @@ class RpClient {
 
   /// With a hardware approval key on the device, the response only comes once
   /// someone has pressed it (or it gave up): pass [keyWait] to wait that long.
-  Future<Map<String, Object?>> approve(String actionId, {Duration? keyWait}) => _signed(
+  /// [hwkeyDecide]: the hardware key's DECIDE line, relayed by this app
+  /// (see [hwkeyChallenge]); without it the device asks its own key.
+  Future<Map<String, Object?>> approve(String actionId, {Duration? keyWait, String? hwkeyDecide}) => _signed(
     'POST',
     '/v1/actions/${Uri.encodeComponent(actionId)}/approve',
-    {'op': 'approve', 'action_id': actionId},
+    {'op': 'approve', 'action_id': actionId, 'hwkey_decide': ?hwkeyDecide},
     timeout: keyWait,
+  );
+
+  /// The ASK line the hardware key must sign for [actionId] (valid 3 min).
+  Future<Map<String, Object?>> hwkeyChallenge(String actionId) => _signed(
+    'POST',
+    '/v1/actions/${Uri.encodeComponent(actionId)}/hwkey-challenge',
+    {'op': 'hwkey_challenge', 'action_id': actionId},
   );
 
   Future<Map<String, Object?>> deny(String actionId) =>

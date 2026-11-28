@@ -146,6 +146,13 @@ fn route(st: &State, req: &Request) -> Response {
             Response::json(200, &json!({"chain": chain, "entries": entries}))
         }
         ("GET", "/v1/boards") => Response::json(200, &boards_view(ctx)),
+        ("GET", "/v1/ap/channel-advice") => {
+            let cands = req
+                .query_param("candidates")
+                .and_then(|c| crate::channels::parse_candidates(&c))
+                .unwrap_or_else(|| crate::channels::DEFAULT_CANDIDATES.to_vec());
+            Response::json(200, &channel_advice(ctx, &cands))
+        }
         ("GET", "/v1/boards/logs") => {
             let limit =
                 req.query_param("limit").and_then(|v| v.parse().ok()).unwrap_or(100usize).min(1000);
@@ -213,6 +220,22 @@ fn boards_view(ctx: &crate::collect::Ctx) -> Value {
         "managed": ctx.cfg.approver.is_some() || ctx.cfg.boards.is_some(),
         "approver_required": ctx.cfg.approver.is_some(),
     })
+}
+
+/// Which channel the IoT AP should use, from the newest sentry measurement.
+fn channel_advice(ctx: &crate::collect::Ctx, candidates: &[u8]) -> Value {
+    let now = rp_policy::approvals::now();
+    let current = ctx.cfg.ap.as_ref().map(|a| a.channel);
+    let ports = crate::boards::ports(&ctx.cfg);
+    match crate::channels::latest(&ctx.root, &ports, now, 30 * 60) {
+        Some((ts, port, loads)) => {
+            match crate::channels::advise(&loads, candidates, current, ts, &port) {
+                Some(a) => json!({"advice": a, "loads": loads}),
+                None => json!({"advice": null, "reason": "no_candidates"}),
+            }
+        }
+        None => json!({"advice": null, "current": current, "reason": "no_recent_measurement"}),
+    }
 }
 
 /// Recent log entries of one board, or of all of them merged (newest first).

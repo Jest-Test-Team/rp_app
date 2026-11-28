@@ -86,8 +86,29 @@ class _BoardsPageState extends State<BoardsPage> {
     return Scaffold(
       appBar: AppBar(title: Text(s('boards.title'))),
       body: Loader<(Map<String, Object?>, Map<String, Object?>)>(
-        load: () async => (await widget.client.boards(), await widget.client.boardLogs(level: level, limit: 300)),
+        load: () async {
+          try {
+            return (await widget.client.boards(), await widget.client.boardLogs(level: level, limit: 300));
+          } on ApiException catch (e) {
+            // A device still running an older release has no /v1/boards.
+            if (e.status == 404) return (<String, Object?>{'outdated': true}, <String, Object?>{});
+            rethrow;
+          }
+        },
         builder: (context, d, reload) {
+          if (d.$1['outdated'] == true) {
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                ListTile(
+                  key: const Key('boards-outdated'),
+                  leading: const Icon(Icons.system_update),
+                  title: Text(s('boards.outdated')),
+                  subtitle: Text(s('boards.outdated.hint')),
+                ),
+              ],
+            );
+          }
           final boards = asList(d.$1['boards']).map(asMap).toList();
           final entries = asList(d.$2['entries'])
               .map(asMap)

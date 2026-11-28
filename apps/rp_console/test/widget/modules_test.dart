@@ -1,3 +1,5 @@
+import 'package:rp_console/core/hwkey/key_relay.dart';
+import 'package:rp_console/demo/fake_key_relay.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,10 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import '../support/fakes.dart';
 import 'harness.dart';
 
-Future<Harness> onDevice(WidgetTester t, String tab, {void Function(FakeDevice)? prep}) async {
+Future<Harness> onDevice(WidgetTester t, String tab, {void Function(FakeDevice)? prep, FakeKeyRelay? keyRelay}) async {
   await t.binding.setSurfaceSize(const Size(900, 1600));
   addTearDown(() => t.binding.setSurfaceSize(null));
-  final h = Harness();
+  final h = Harness(keyRelay: keyRelay);
   prep?.call(h.device);
   await h.start(t);
   await pairViaCode(t, h);
@@ -112,6 +114,23 @@ void main() {
     final setSecret = h.device.calls.indexWhere((c) => c.path == '/v1/secrets/ap_passphrase');
     final create = h.device.calls.indexWhere((c) => c.method == 'POST' && c.path == '/v1/changesets');
     expect(setSecret, lessThan(create), reason: 'secret first, so preflight sees it');
+  });
+
+  testWidgets('IoT Wi-Fi: use the least busy channel from the sentry board', (t) async {
+    final h = await onDevice(t, 'IoT Wi-Fi');
+    expect(find.byKey(const Key('ap-advice')), findsOneWidget);
+    await tapKey(t, 'ap-advice-use');
+    expect(find.byKey(const Key('ap-advice-use')), findsNothing, reason: 'channel 1 is now selected');
+    await enter(t, 'ap-ssid', 'Home-IoT');
+    await enter(t, 'ap-pass', 'correct horse battery');
+    await tapKey(t, 'ap-save');
+    await applySheet(t);
+    expect((h.device.changes.values.single['patch'] as Map)['ap.channel'], 1);
+  });
+
+  testWidgets('IoT Wi-Fi: without a measurement, the app says how to get one', (t) async {
+    await onDevice(t, 'IoT Wi-Fi', prep: (d) => d.channelAdvice = null);
+    expect(find.byKey(const Key('ap-advice-none')), findsOneWidget);
   });
 
   testWidgets('IoT Wi-Fi is explained, not offered, on hardware that cannot run it', (t) async {
@@ -240,6 +259,42 @@ void main() {
     expect(find.byKey(const Key('mcp-none')), findsOneWidget);
   });
 
+  testWidgets('MCP: approve with the key next to the user, relayed over Bluetooth', (t) async {
+    final relay = FakeKeyRelay();
+    final h = await onDevice(
+      t,
+      'MCP',
+      keyRelay: relay,
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 45, 'keys': 2};
+        d.actions.add({'id': 'act5', 'status': 'pending', 'tool': 'block_device', 'principal': 'p', 'summary': 'x'});
+      },
+    );
+    await tapKey(t, 'approve-act5');
+    expect(relay.asked.single, startsWith('ASK act5 '), reason: 'the device challenge went to the key');
+    expect(h.device.relayedApprovals, 1);
+    expect(h.device.actions.single['status'], 'executed');
+    final call = h.device.calls.lastWhere((c) => c.path == '/v1/actions/act5/approve');
+    expect(jsonDecode((call.body as Map)['payload'] as String)['hwkey_decide'], startsWith('DECIDE act5 A '));
+  });
+
+  testWidgets('MCP: no key nearby falls back to the key plugged into the device', (t) async {
+    final relay = FakeKeyRelay()..press = KeyRelayError.noKey;
+    final h = await onDevice(
+      t,
+      'MCP',
+      keyRelay: relay,
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 45, 'keys': 2};
+        d.keyPress = 'approve';
+        d.actions.add({'id': 'act6', 'status': 'pending', 'tool': 'block_device', 'principal': 'p', 'summary': 'x'});
+      },
+    );
+    await tapKey(t, 'approve-act6');
+    expect(h.device.relayedApprovals, 0);
+    expect(h.device.actions.single['status'], 'executed', reason: 'the device asked its own key');
+  });
+
   testWidgets('MCP: nobody presses the hardware key, the request stays pending', (t) async {
     final h = await onDevice(
       t,
@@ -283,6 +338,13 @@ void main() {
     // A profile the board does not support is not offered.
     await tapKey(t, 'board-switch-/dev/rp-approver');
     expect(find.byKey(const Key('profile-oob')), findsNothing);
+  });
+
+  testWidgets('Settings: an older device without board support says to update', (t) async {
+    await onDevice(t, 'Settings', prep: (d) => d.boardsSupported = false);
+    await tapKey(t, 'open-boards');
+    expect(find.byKey(const Key('boards-outdated')), findsOneWidget);
+    expect(find.textContaining('no such endpoint'), findsNothing);
   });
 
   testWidgets('Settings: add another phone shows a one-time code', (t) async {

@@ -94,7 +94,7 @@ class FakeDevice implements Transport {
       'chip': 'esp32s3',
       'firmware': '0.2.0',
       'profile': 'approver',
-      'supported': ['approver', 'honeypot', 'sentry', 'csi'],
+      'supported': ['approver', 'sentry', 'csi'],
       'key_id': 'd0a5c34d5a9a1bd2',
       'enrolled_as': 'main',
       'last_boot': 'boot reason=ChipPowerOn',
@@ -124,6 +124,21 @@ class FakeDevice implements Transport {
      'text': 'I (27) boot: chip revision: v0.2'},
   ];
 
+  /// False = an older release without /v1/boards (answers 404).
+  bool boardsSupported = true;
+
+  /// Channel advice from a sentry board (null = no recent measurement).
+  Map<String, Object?>? channelAdvice = {
+    'best': 1,
+    'current': 6,
+    'switch_recommended': true,
+    'candidates': [
+      {'channel': 1, 'score': 138.0, 'frames': 65, 'aps': 2},
+      {'channel': 3, 'score': 278.0, 'frames': 12, 'aps': 1},
+      {'channel': 6, 'score': 677.6, 'frames': 224, 'aps': 4},
+    ],
+  };
+
   /// Hardware approval key (`[approver]`): absent = not required.
   Map<String, Object?> approver = {'required': false};
 
@@ -131,6 +146,10 @@ class FakeDevice implements Transport {
   /// (nobody presses: the device answers with an error, request stays pending).
   String? keyPress = 'approve';
   Duration? lastTimeout;
+
+  /// Challenges issued for relayed hardware-key answers (action id -> nonce).
+  final hwkeyChallenges = <String, String>{};
+  int relayedApprovals = 0;
 
   /// The response timeout the app asked for on its last approval.
   Duration? approveTimeout;
@@ -371,6 +390,8 @@ class FakeDevice implements Transport {
     }
     if (p == '/v1/firewall/rules') return {'rules': (config['firewall'] as Map?)?['rules'] ?? []};
     if (p == '/v1/actions/pending') return {'actions': actions, 'approver': approver};
+    if (p == '/v1/ap/channel-advice') return {'advice': channelAdvice};
+    if (p.startsWith('/v1/boards') && !boardsSupported) throw _err(404, 'not_found', 'no such endpoint');
     if (p == '/v1/boards') return {'boards': boards, 'managed': true, 'approver_required': approver['required'] == true};
     if (p == '/v1/boards/logs') return {'entries': boardLogs};
     if (p == '/v1/mcp/tools') {
@@ -523,11 +544,31 @@ class FakeDevice implements Transport {
       secretValues[sec.group(1)!] = op['value'] as String;
       return {'name': sec.group(1), 'set': true, 'fingerprint': 'abc123'};
     }
+    final ch = RegExp(r'^/v1/actions/(\w+)/hwkey-challenge$').firstMatch(p);
+    if (ch != null) {
+      _bound(op, 'hwkey_challenge', 'action_id', ch.group(1));
+      final nonce = randomHex(16);
+      hwkeyChallenges[ch.group(1)!] = nonce;
+      return {'ask': 'ASK ${ch.group(1)} $nonce', 'expires': 1795790000};
+    }
     final act = RegExp(r'^/v1/actions/(\w+)/(approve|deny)$').firstMatch(p);
     if (act != null) {
       _bound(op, act.group(2)!, 'action_id', act.group(1));
       final a = actions.firstWhere((x) => x['id'] == act.group(1));
       if (act.group(2) == 'approve') approveTimeout = lastTimeout;
+      final relayed = op['hwkey_decide'];
+      if (act.group(2) == 'approve' && relayed is String) {
+        // The fake key answers "DECIDE <id> A|D <nonce>".
+        final nonce = hwkeyChallenges.remove(act.group(1));
+        final parts = relayed.split(' ');
+        if (nonce == null || parts.length != 4 || parts[1] != act.group(1) || parts[3] != nonce) {
+          throw _err(400, 'invalid', 'signature does not match any enrolled hardware key');
+        }
+        relayedApprovals++;
+        a['status'] = parts[2] == 'A' ? 'executed' : 'denied';
+        a['decided_by'] = 'admin:demo+key:main';
+        return a;
+      }
       if (act.group(2) == 'approve' && approver['required'] == true) {
         if (keyPress == null) {
           throw _err(400, 'invalid', 'nobody pressed the approval key within 60s; still pending');

@@ -53,6 +53,13 @@ pub struct Config {
 pub struct Boards {
     #[serde(default = "default_board_ports")]
     pub ports: Vec<String>,
+    /// oob boards: act (log, and pulse a relay if one is wired) when the
+    /// gateway sends no heartbeat for this long. 0 = off.
+    #[serde(default)]
+    pub watchdog_seconds: u16,
+    /// honeypot boards: the decoy network's name. Absent = "<IoT SSID>-guest".
+    #[serde(default)]
+    pub decoy_ssid: Option<String>,
 }
 
 fn default_board_ports() -> Vec<String> {

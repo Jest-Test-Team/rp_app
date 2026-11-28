@@ -17,7 +17,24 @@
 
 #![no_std]
 
+pub mod honeypot;
+pub mod oob;
 pub mod sentry;
+
+/// The decoy's name until the gateway sends `DECOY`.
+pub const DEFAULT_DECOY: &[u8] = b"rp-guest";
+
+/// What the firmware must do after a received line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// Store this profile and restart.
+    SwitchProfile(Profile),
+    /// oob: hand the link over to raw passthrough to the gateway console
+    /// until [`Board::escape`] says to stop.
+    Console,
+    /// honeypot: (re)start the decoy network under this name.
+    Decoy([u8; 32], u8),
+}
 
 use ed25519_dalek::{Signer, SigningKey};
 use rp_wire::{HostMsg, KeyMsg, Profile, Profiles};
@@ -72,6 +89,10 @@ pub struct Board {
     was_down: bool,
     result: Option<(Light, u64)>,
     sentry: Option<sentry::Sentry>,
+    oob: Option<oob::Oob>,
+    action: Option<oob::Action>,
+    honeypot: Option<honeypot::Honeypot>,
+    now: u64,
 }
 
 impl Board {
@@ -103,7 +124,29 @@ impl Board {
             was_down: false,
             result: None,
             sentry: (profile == Profile::Sentry).then(sentry::Sentry::new),
+            oob: (profile == Profile::Oob).then(oob::Oob::new),
+            action: None,
+            honeypot: (profile == Profile::Honeypot)
+                .then(|| honeypot::Honeypot::new(DEFAULT_DECOY)),
+            now: 0,
         }
+    }
+
+    /// oob profile: a byte from the gateway's console (outside passthrough).
+    pub fn console_byte(&mut self, b: u8, out: &mut dyn Out) {
+        if let Some(o) = &mut self.oob {
+            o.console_byte(b, out);
+        }
+    }
+
+    /// oob passthrough: a byte typed by the user; true = leave passthrough.
+    pub fn escape(&mut self, b: u8) -> bool {
+        self.oob.as_mut().is_some_and(|o| o.escape(b))
+    }
+
+    /// oob: what the watchdog asks the firmware to do (taken once).
+    pub fn take_action(&mut self) -> Option<oob::Action> {
+        self.action.take()
     }
 
     /// Sentry profile: the radio moved to channel `ch`.
@@ -120,10 +163,25 @@ impl Board {
         }
     }
 
-    /// Sentry profile: one received 802.11 frame (header and SSID only are used).
+    /// Sentry / honeypot: one received 802.11 frame (header and SSID only).
     pub fn on_frame(&mut self, data: &[u8]) {
-        if let (Some(s), Some(f)) = (&mut self.sentry, sentry::parse(data)) {
+        let Some(f) = sentry::parse(data) else { return };
+        if let Some(s) = &mut self.sentry {
             s.frame(&f);
+        }
+        if let Some(h) = &mut self.honeypot {
+            h.frame(&f, self.now);
+        }
+    }
+
+    /// honeypot: the decoy's current name and, once it runs, its address.
+    pub fn decoy_ssid(&self) -> Option<&[u8]> {
+        self.honeypot.as_ref().map(|h| h.ssid())
+    }
+
+    pub fn set_decoy_bssid(&mut self, bssid: [u8; 6]) {
+        if let Some(h) = &mut self.honeypot {
+            h.set_bssid(bssid);
         }
     }
 
@@ -135,8 +193,8 @@ impl Board {
         self.key.verifying_key().to_bytes()
     }
 
-    /// Feed one received byte. Returns a profile to store and restart into.
-    pub fn on_byte(&mut self, b: u8, now: u64, out: &mut dyn Out) -> Option<Profile> {
+    /// Feed one received byte. Returns what the firmware must do, if anything.
+    pub fn on_byte(&mut self, b: u8, now: u64, out: &mut dyn Out) -> Option<Effect> {
         if b != b'\n' {
             if self.len < self.line.len() {
                 self.line[self.len] = b;
@@ -158,7 +216,7 @@ impl Board {
         self.handle(msg, now, out)
     }
 
-    fn handle(&mut self, msg: Option<HostMsg>, now: u64, out: &mut dyn Out) -> Option<Profile> {
+    fn handle(&mut self, msg: Option<HostMsg>, now: u64, out: &mut dyn Out) -> Option<Effect> {
         match msg {
             None => out.msg(KeyMsg::Err("bad line")),
             Some(HostMsg::Hello) => {
@@ -177,7 +235,7 @@ impl Board {
                 self.ask = None;
                 out.msg(KeyMsg::Ok);
                 if p != self.profile {
-                    return Some(p);
+                    return Some(Effect::SwitchProfile(p));
                 }
             }
             Some(HostMsg::Ask { .. }) if self.profile != Profile::Approver => {
@@ -196,6 +254,51 @@ impl Board {
                 }
                 None => out.msg(KeyMsg::Err("not in the sentry profile")),
             },
+            Some(
+                HostMsg::Heartbeat
+                | HostMsg::Watchdog { .. }
+                | HostMsg::Tail { .. }
+                | HostMsg::Console,
+            ) if self.oob.is_none() => out.msg(KeyMsg::Err("not in the oob profile")),
+            Some(HostMsg::Heartbeat) => {
+                if let Some(o) = &mut self.oob {
+                    o.heartbeat(now);
+                }
+            }
+            Some(HostMsg::Watchdog { seconds }) => {
+                if let Some(o) = &mut self.oob {
+                    let s = o.set_watchdog(seconds, now);
+                    let mut t: heapless::String<48> = heapless::String::new();
+                    let _ = core::fmt::Write::write_fmt(
+                        &mut t,
+                        format_args!("watchdog: {s} s (0 = off)"),
+                    );
+                    out.msg(KeyMsg::Log { level: rp_wire::Level::Info, text: &t });
+                    out.msg(KeyMsg::Ok);
+                }
+            }
+            Some(HostMsg::Tail { n }) => {
+                if let Some(o) = &self.oob {
+                    o.tail(n as usize, out);
+                    out.msg(KeyMsg::Ok);
+                }
+            }
+            Some(HostMsg::Console) => {
+                out.msg(KeyMsg::Ok);
+                return Some(Effect::Console);
+            }
+            Some(HostMsg::Decoy { ssid, len }) => {
+                if let Some(h) = &mut self.honeypot {
+                    let changed = h.ssid() != &ssid[..len as usize];
+                    h.set_ssid(&ssid[..len as usize]);
+                    out.msg(KeyMsg::Ok);
+                    if changed {
+                        return Some(Effect::Decoy(ssid, len));
+                    }
+                    return None;
+                }
+                out.msg(KeyMsg::Err("not in the honeypot profile"))
+            }
             Some(HostMsg::Cancel) => {
                 self.ask = None;
                 self.pressed_at = None;
@@ -209,6 +312,13 @@ impl Board {
     pub fn tick(&mut self, now: u64, down: bool, out: &mut dyn Out) -> Light {
         if let Some(s) = &mut self.sentry {
             s.tick(now, &mut |level, text| out.msg(KeyMsg::Log { level, text }));
+        }
+        self.now = now;
+        if let Some(h) = &mut self.honeypot {
+            h.tick(&mut |level, text| out.msg(KeyMsg::Log { level, text }));
+        }
+        if let Some(a) = self.oob.as_mut().and_then(|o| o.tick(now, out)) {
+            self.action = Some(a);
         }
         if down != self.was_down {
             self.was_down = down;
@@ -284,7 +394,7 @@ mod tests {
         Board::new(SigningKey::from_bytes(&[5; 32]), "esp32", "0.2.0", all, Some(profile))
     }
 
-    fn send(b: &mut Board, line: &str, now: u64, out: &mut Rec) -> Option<Profile> {
+    fn send(b: &mut Board, line: &str, now: u64, out: &mut Rec) -> Option<Effect> {
         let mut r = None;
         for c in line.bytes().chain(Some(b'\n')) {
             r = r.or(b.on_byte(c, now, out));
@@ -370,7 +480,10 @@ mod tests {
         assert_eq!(send(&mut b, "PROFILE sentry", 0, &mut out), None);
         assert!(out.lines.pop().unwrap().starts_with("ERR"), "not supported here");
         assert_eq!(send(&mut b, "PROFILE approver", 0, &mut out), None, "already running");
-        assert_eq!(send(&mut b, "PROFILE oob", 0, &mut out), Some(Profile::Oob));
+        assert_eq!(
+            send(&mut b, "PROFILE oob", 0, &mut out),
+            Some(Effect::SwitchProfile(Profile::Oob))
+        );
         assert_eq!(out.lines.pop().unwrap(), "OK");
     }
 
@@ -411,6 +524,41 @@ mod tests {
         send(&mut a, "WATCH 696f74", 0, &mut out);
         assert_eq!(out.lines.pop().as_deref(), Some("ERR not in the sentry profile"));
         a.on_frame(&beacon(1)); // ignored, no radio in approver
+    }
+
+    #[test]
+    fn oob_profile_console_watchdog_and_passthrough() {
+        let (mut b, mut out) = (board(Profile::Oob), Rec::default());
+        b.console_byte(b'o', &mut out);
+        b.console_byte(b'k', &mut out);
+        b.console_byte(b'\n', &mut out);
+        assert_eq!(out.lines.pop().as_deref(), Some("LOG info pi> ok"));
+        send(&mut b, "TAIL 5", 0, &mut out);
+        assert_eq!(out.lines, ["LOG info pi< ok", "OK"]);
+        out.lines.clear();
+
+        send(&mut b, "WATCHDOG 60", 1_000, &mut out);
+        assert_eq!(out.lines, ["LOG info watchdog: 60 s (0 = off)", "OK"]);
+        send(&mut b, "HB", 2_000, &mut out);
+        b.tick(61_000, false, &mut out);
+        assert_eq!(b.take_action(), None);
+        b.tick(62_000, false, &mut out);
+        assert_eq!(b.take_action(), Some(oob::Action::PowerCycle));
+        assert_eq!(b.take_action(), None, "taken once");
+
+        assert_eq!(send(&mut b, "CONSOLE", 0, &mut out), Some(Effect::Console));
+        assert!(!b.escape(oob::ESCAPE) && !b.escape(oob::ESCAPE) && b.escape(oob::ESCAPE));
+
+        // Other profiles refuse oob requests and never trip a watchdog.
+        let (mut a, mut out) = (board(Profile::Approver), Rec::default());
+        for l in ["HB", "WATCHDOG 60", "TAIL 3", "CONSOLE"] {
+            assert_eq!(send(&mut a, l, 0, &mut out), None);
+            assert_eq!(out.lines.pop().as_deref(), Some("ERR not in the oob profile"), "{l}");
+        }
+        assert!(!a.escape(oob::ESCAPE) && !a.escape(oob::ESCAPE) && !a.escape(oob::ESCAPE));
+        let decoy = HostMsg::decoy(b"guest").unwrap().to_string();
+        assert_eq!(send(&mut a, &decoy, 0, &mut out), None);
+        assert_eq!(out.lines.pop().as_deref(), Some("ERR not in the honeypot profile"));
     }
 
     #[test]
