@@ -178,7 +178,7 @@ class _DeviceScreenState extends State<DeviceScreen> with SingleTickerProviderSt
                 app: app,
                 device: device,
               ),
-              McpPage(client: client),
+              McpPage(client: client, keyRelay: app.services.keyRelay),
               SettingsPage(app: app, device: widget.device, client: client),
             ],
           );

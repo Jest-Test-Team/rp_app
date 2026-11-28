@@ -147,6 +147,10 @@ class FakeDevice implements Transport {
   String? keyPress = 'approve';
   Duration? lastTimeout;
 
+  /// Challenges issued for relayed hardware-key answers (action id -> nonce).
+  final hwkeyChallenges = <String, String>{};
+  int relayedApprovals = 0;
+
   /// The response timeout the app asked for on its last approval.
   Duration? approveTimeout;
   List<Map<String, Object?>> healthAlerts = [];
@@ -540,11 +544,31 @@ class FakeDevice implements Transport {
       secretValues[sec.group(1)!] = op['value'] as String;
       return {'name': sec.group(1), 'set': true, 'fingerprint': 'abc123'};
     }
+    final ch = RegExp(r'^/v1/actions/(\w+)/hwkey-challenge$').firstMatch(p);
+    if (ch != null) {
+      _bound(op, 'hwkey_challenge', 'action_id', ch.group(1));
+      final nonce = randomHex(16);
+      hwkeyChallenges[ch.group(1)!] = nonce;
+      return {'ask': 'ASK ${ch.group(1)} $nonce', 'expires': 1795790000};
+    }
     final act = RegExp(r'^/v1/actions/(\w+)/(approve|deny)$').firstMatch(p);
     if (act != null) {
       _bound(op, act.group(2)!, 'action_id', act.group(1));
       final a = actions.firstWhere((x) => x['id'] == act.group(1));
       if (act.group(2) == 'approve') approveTimeout = lastTimeout;
+      final relayed = op['hwkey_decide'];
+      if (act.group(2) == 'approve' && relayed is String) {
+        // The fake key answers "DECIDE <id> A|D <nonce>".
+        final nonce = hwkeyChallenges.remove(act.group(1));
+        final parts = relayed.split(' ');
+        if (nonce == null || parts.length != 4 || parts[1] != act.group(1) || parts[3] != nonce) {
+          throw _err(400, 'invalid', 'signature does not match any enrolled hardware key');
+        }
+        relayedApprovals++;
+        a['status'] = parts[2] == 'A' ? 'executed' : 'denied';
+        a['decided_by'] = 'admin:demo+key:main';
+        return a;
+      }
       if (act.group(2) == 'approve' && approver['required'] == true) {
         if (keyPress == null) {
           throw _err(400, 'invalid', 'nobody pressed the approval key within 60s; still pending');

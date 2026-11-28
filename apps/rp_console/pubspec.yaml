@@ -43,7 +43,7 @@ dependencies:
   crypto: ^3.0.8
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.5.0
-
+  universal_ble: ^3.4.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

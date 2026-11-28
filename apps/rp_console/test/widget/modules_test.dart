@@ -1,3 +1,5 @@
+import 'package:rp_console/core/hwkey/key_relay.dart';
+import 'package:rp_console/demo/fake_key_relay.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,10 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import '../support/fakes.dart';
 import 'harness.dart';
 
-Future<Harness> onDevice(WidgetTester t, String tab, {void Function(FakeDevice)? prep}) async {
+Future<Harness> onDevice(WidgetTester t, String tab, {void Function(FakeDevice)? prep, FakeKeyRelay? keyRelay}) async {
   await t.binding.setSurfaceSize(const Size(900, 1600));
   addTearDown(() => t.binding.setSurfaceSize(null));
-  final h = Harness();
+  final h = Harness(keyRelay: keyRelay);
   prep?.call(h.device);
   await h.start(t);
   await pairViaCode(t, h);
@@ -255,6 +257,42 @@ void main() {
     expect(h.device.actions.single['status'], 'denied', reason: 'a short press on the key denies');
     expect(find.byKey(const Key('approver-wait')), findsNothing, reason: 'the wait dialog closes');
     expect(find.byKey(const Key('mcp-none')), findsOneWidget);
+  });
+
+  testWidgets('MCP: approve with the key next to the user, relayed over Bluetooth', (t) async {
+    final relay = FakeKeyRelay();
+    final h = await onDevice(
+      t,
+      'MCP',
+      keyRelay: relay,
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 45, 'keys': 2};
+        d.actions.add({'id': 'act5', 'status': 'pending', 'tool': 'block_device', 'principal': 'p', 'summary': 'x'});
+      },
+    );
+    await tapKey(t, 'approve-act5');
+    expect(relay.asked.single, startsWith('ASK act5 '), reason: 'the device challenge went to the key');
+    expect(h.device.relayedApprovals, 1);
+    expect(h.device.actions.single['status'], 'executed');
+    final call = h.device.calls.lastWhere((c) => c.path == '/v1/actions/act5/approve');
+    expect(jsonDecode((call.body as Map)['payload'] as String)['hwkey_decide'], startsWith('DECIDE act5 A '));
+  });
+
+  testWidgets('MCP: no key nearby falls back to the key plugged into the device', (t) async {
+    final relay = FakeKeyRelay()..press = KeyRelayError.noKey;
+    final h = await onDevice(
+      t,
+      'MCP',
+      keyRelay: relay,
+      prep: (d) {
+        d.approver = {'required': true, 'wait_seconds': 45, 'keys': 2};
+        d.keyPress = 'approve';
+        d.actions.add({'id': 'act6', 'status': 'pending', 'tool': 'block_device', 'principal': 'p', 'summary': 'x'});
+      },
+    );
+    await tapKey(t, 'approve-act6');
+    expect(h.device.relayedApprovals, 0);
+    expect(h.device.actions.single['status'], 'executed', reason: 'the device asked its own key');
   });
 
   testWidgets('MCP: nobody presses the hardware key, the request stays pending', (t) async {

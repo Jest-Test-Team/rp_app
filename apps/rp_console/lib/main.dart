@@ -1,3 +1,4 @@
+import 'core/hwkey/ble_key_relay.dart';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
@@ -41,6 +42,7 @@ Future<void> main() async {
       desktop: Platform.isMacOS || Platform.isLinux || Platform.isWindows,
       scanQr: Platform.isAndroid || Platform.isIOS ? scanPairingQr : null,
       vpn: Platform.isAndroid ? AndroidVpnPlatform() : null,
+      keyRelay: Platform.isAndroid || Platform.isIOS || Platform.isMacOS ? BleKeyRelay() : null,
     );
   }
   final state = AppState(services);
