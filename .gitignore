@@ -10,3 +10,8 @@ __pycache__/
 .ignore/superset_bubble_fix_pr_description.md
 /.ignore
 .DS_Store
+/apps/rp_console/android/app/src/main
+/apps/rp_console/android/app/src/main
+/apps/rp_console/android/app/src
+/apps/rp_console
+/apps/rp_console/android/app
