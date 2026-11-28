@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../../app/strings.dart';
 import '../../core/api/client.dart';
 import '../../core/api/models.dart';
-import '../../core/api/transport.dart';
 import '../../widgets/change_sheet.dart';
 import '../../widgets/common.dart';
 
@@ -58,14 +57,18 @@ class _FeedsSectionState extends State<FeedsSection> {
     if (await showChange(context, widget.client, 'dns', {'dns.feeds': ordered})) widget.onSaved();
   }
 
+  /// Newest message wins (e.g. over the "change applied" one).
+  void _say(String text) =>
+      (ScaffoldMessenger.of(context)..clearSnackBars()).showSnackBar(SnackBar(content: Text(text)));
+
   Future<void> _updateNow() async {
     final s = S.of(context);
     setState(() => updating = true);
     try {
       await widget.client.updateDnsFeeds();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s('feeds.updating'))));
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      if (mounted) _say(s('feeds.updating'));
+    } catch (e) {
+      if (mounted) _say(errorText(s, e));
     } finally {
       if (mounted) setState(() => updating = false);
     }

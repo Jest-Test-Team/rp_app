@@ -40,8 +40,10 @@ class _LoaderState<T> extends State<Loader<T>> {
   );
 }
 
-String describeError(BuildContext context, Object e) {
-  final s = S.of(context);
+String describeError(BuildContext context, Object e) => errorText(S.of(context), e);
+
+/// An error in words for the person: never a stack trace or raw exception.
+String errorText(S s, Object e) {
   if (e is PinMismatch) return s('pair.pin');
   if (e is ApiException) {
     if (e.code == 'conflict') return s('change.conflict');

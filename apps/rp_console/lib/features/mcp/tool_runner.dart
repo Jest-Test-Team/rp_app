@@ -2,14 +2,13 @@
 // schema, then a readable result. Privileged tools only create a request;
 // the person approves it in the approval queue (signed with this app's key).
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
 import '../../app/strings.dart';
 import '../../core/api/client.dart';
 import '../../core/api/models.dart';
-import '../../core/api/transport.dart';
+import '../../widgets/common.dart';
+import 'mcp_page.dart' show OutcomeIcon;
 
 /// Arguments from form text, typed by the schema. Returns an error message
 /// key for the first invalid field, or null.
@@ -94,8 +93,9 @@ class _ToolRunnerPageState extends State<ToolRunnerPage> {
       if (!mounted) return;
       setState(() => result = r);
       if (privileged) widget.onRequested?.call();
-    } on ApiException catch (e) {
-      if (mounted) setState(() => error = e.message);
+    } catch (e) {
+      // Network, TLS or device errors: say so, never just stop the spinner.
+      if (mounted) setState(() => error = errorText(s, e));
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -127,15 +127,22 @@ class _ToolRunnerPageState extends State<ToolRunnerPage> {
             label: Text(privileged ? s('tool.request') : s('tool.run')),
           ),
           if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                error!,
+            Card(
+              margin: const EdgeInsets.only(top: 12),
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
                 key: const Key('tool-error'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                leading: const OutcomeIcon('failed'),
+                title: Text(s('tool.failed')),
+                subtitle: Text(error!),
               ),
             ),
           if (result != null) ...[
+            if (!privileged)
+              Card(
+                margin: const EdgeInsets.only(top: 12),
+                child: ListTile(key: const Key('tool-ok'), leading: const OutcomeIcon('ok'), title: Text(s('tool.ok'))),
+              ),
             const Divider(height: 32),
             ToolResult(name: name, result: asMap(result!['result']), privileged: privileged),
           ],
@@ -255,10 +262,21 @@ class ToolResult extends StatelessWidget {
           row(Icons.warning_amber, s('health.alert.${str(a['kind'])}', {}, str(a['kind'])), str(a['detail'])),
       ]);
     }
-    return SelectableText(
-      const JsonEncoder.withIndent('  ').convert(result),
-      key: const Key('tool-result'),
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-    );
+    // Unknown shape: the simple facts only, never the raw document.
+    String plain(Object? v) => switch (v) {
+      final bool b => s(b ? 'common.yes' : 'common.no'),
+      final num n => '$n',
+      final String t => t,
+      final List<Object?> l => s('tool.items', {'n': l.length}),
+      _ => '',
+    };
+    final facts = [
+      for (final e in result.entries)
+        if (plain(e.value).isNotEmpty) (s('tool.field.${e.key}', {}, e.key.replaceAll('_', ' ')), plain(e.value)),
+    ];
+    return rows([
+      if (facts.isEmpty) Text(s('tool.ok')),
+      for (final (k, v) in facts.take(12)) row(Icons.info_outline, k, v),
+    ]);
   }
 }

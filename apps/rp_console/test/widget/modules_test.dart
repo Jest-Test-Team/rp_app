@@ -1,5 +1,6 @@
 import 'package:rp_console/core/hwkey/key_relay.dart';
 import 'package:rp_console/demo/fake_key_relay.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -52,9 +53,18 @@ void main() {
     expect(find.text('use a 5V/2.5A supply'), findsOneWidget);
   });
 
+  testWidgets('MCP: a tool that cannot reach the device says so instead of doing nothing', (t) async {
+    final h = await onDevice(t, 'MCP');
+    h.device.unreachable = true;
+    await tapKey(t, 'tool-get_device_inventory');
+    expect(find.byKey(const Key('tool-error')), findsOneWidget);
+    expect(find.byKey(const Key('tool-result')), findsNothing);
+  });
+
   testWidgets('MCP: run a tool and read the result; a privileged tool only queues a request', (t) async {
     final h = await onDevice(t, 'MCP');
     await tapKey(t, 'tool-get_device_inventory');
+    expect(find.byKey(const Key('tool-ok')), findsOneWidget);
     expect(find.byKey(const Key('tool-result')), findsOneWidget);
     expect(find.text('plug'), findsOneWidget);
     expect(find.text('2 devices'), findsOneWidget);
@@ -92,9 +102,11 @@ void main() {
     await tapKey(t, 'dns-add-block');
     expect(find.byKey(const Key('block-tracker.example.com')), findsOneWidget);
     await tapKey(t, 'dns-save');
-    expect(find.textContaining('dns.block'), findsWidgets, reason: 'the diff is reviewed before applying');
+    expect(find.byKey(const Key('change-ready')), findsOneWidget, reason: 'the checks are summarised before applying');
+    expect(find.textContaining('dns.block'), findsNothing, reason: 'the raw configuration is not shown');
     await applySheet(t);
     expect((h.device.config['dns'] as Map)['block'], ['tracker.example.com']);
+    expect(find.textContaining('change applied successfully'), findsOneWidget, reason: 'the result is reported');
     final cs = h.device.changes.values.single;
     expect(cs['status'], 'confirmed');
   });
@@ -223,6 +235,12 @@ void main() {
     expect(find.text('block 198.51.100.150 for 60 min'), findsOneWidget);
     await tapKey(t, 'approve-act1');
     expect(h.device.actions.single['status'], 'executed');
+    expect(
+      find.text('Succeeded: the action was carried out.'),
+      findsWidgets,
+      reason: 'the outcome is said, not just a refresh',
+    );
+    expect(find.byKey(const Key('outcome-act1')), findsOneWidget, reason: 'and listed under recent results');
     final call = h.device.calls.lastWhere((c) => c.path == '/v1/actions/act1/approve');
     expect(jsonDecode((call.body as Map)['payload'] as String), {'op': 'approve', 'action_id': 'act1'});
     expect(find.byKey(const Key('mcp-none')), findsOneWidget);
@@ -332,8 +350,11 @@ void main() {
     await tapKey(t, 'profile-confirm');
     expect(h.device.boards.first['profile'], 'sentry');
     final call = h.device.calls.lastWhere((c) => c.path == '/v1/boards/profile');
-    expect(jsonDecode((call.body as Map)['payload'] as String),
-        {'op': 'set_board_profile', 'port': '/dev/rp-approver', 'profile': 'sentry'});
+    expect(jsonDecode((call.body as Map)['payload'] as String), {
+      'op': 'set_board_profile',
+      'port': '/dev/rp-approver',
+      'profile': 'sentry',
+    });
 
     // A profile the board does not support is not offered.
     await tapKey(t, 'board-switch-/dev/rp-approver');

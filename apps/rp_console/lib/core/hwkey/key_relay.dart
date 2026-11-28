@@ -23,6 +23,9 @@ enum KeyRelayError {
 
   /// The key answered with an error.
   refused,
+
+  /// Found the key, but the Bluetooth connection failed.
+  link,
 }
 
 class KeyRelayException implements Exception {

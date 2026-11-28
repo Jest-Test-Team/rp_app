@@ -55,6 +55,19 @@ class ApprovalQueue extends StatelessWidget {
   final VoidCallback onChanged;
 
   Map<String, Object?> get _approver => asMap(actions['approver']);
+
+  /// What happened, in words: executed / failed (with the device's reason) /
+  /// denied / approved but still running.
+  static String outcome(S s, Map<String, Object?> a) {
+    final st = str(a['status']);
+    return switch (st) {
+      'executed' => s('outcome.executed'),
+      'failed' => s('outcome.failed', {'why': str(a['result'], s('outcome.noreason'))}),
+      'denied' || 'expired' || 'approved' => s('outcome.$st'),
+      _ => s('outcome.done'),
+    };
+  }
+
   bool get _keyRequired => _approver['required'] == true && _approver['bypass_until'] == null;
 
   Future<void> _decide(BuildContext context, String id, bool approve) async {
@@ -80,9 +93,7 @@ class ApprovalQueue extends StatelessWidget {
           final a = await client.approve(id, hwkeyDecide: line);
           navigator.pop();
           dialogOpen = false;
-          messenger.showSnackBar(
-            SnackBar(content: Text(s(str(a['status']) == 'denied' ? 'approver.denied' : 'approver.approved'))),
-          );
+          messenger.showSnackBar(SnackBar(content: Text(outcome(s, a))));
           onChanged();
           return;
         } on KeyRelayException catch (e) {
@@ -112,13 +123,10 @@ class ApprovalQueue extends StatelessWidget {
         final a = await client.approve(id, keyWait: wait + const Duration(seconds: 20));
         if (dialogOpen) navigator.pop();
         dialogOpen = false;
-        messenger.showSnackBar(
-          SnackBar(content: Text(s(str(a['status']) == 'denied' ? 'approver.denied' : 'approver.approved'))),
-        );
-      } else if (approve) {
-        await client.approve(id);
+        messenger.showSnackBar(SnackBar(content: Text(outcome(s, a))));
       } else {
-        await client.deny(id);
+        final a = approve ? await client.approve(id) : await client.deny(id);
+        messenger.showSnackBar(SnackBar(content: Text(outcome(s, a))));
       }
       onChanged();
     } on ApiException catch (e) {
@@ -128,6 +136,11 @@ class ApprovalQueue extends StatelessWidget {
     } on TimeoutException {
       if (dialogOpen) navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text(s('approver.timeout'))));
+      onChanged();
+    } catch (e) {
+      // Anything else (network, Bluetooth plugin): never leave the dialog up.
+      if (dialogOpen) navigator.pop();
+      messenger.showSnackBar(SnackBar(content: Text(errorText(s, e))));
       onChanged();
     }
   }
@@ -148,7 +161,10 @@ class ApprovalQueue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
-    final pending = asList(actions['actions']).map(asMap).where((a) => str(a['status']) == 'pending').toList();
+    final all = asList(actions['actions']).map(asMap).toList();
+    final pending = all.where((a) => str(a['status']) == 'pending').toList();
+    final recent = all.where((a) => str(a['status']) != 'pending').toList()
+      ..sort((a, b) => integer(b['created']).compareTo(integer(a['created'])));
     return Section(
       title: s('mcp.approvals'),
       children: [
@@ -184,9 +200,35 @@ class ApprovalQueue extends StatelessWidget {
               ),
             ),
           ),
+        if (recent.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(s('mcp.recent'), style: Theme.of(context).textTheme.titleSmall),
+          for (final a in recent.take(5))
+            ListTile(
+              key: Key('outcome-${a['id']}'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: OutcomeIcon(str(a['status'])),
+              title: Text(str(a['summary'])),
+              subtitle: Text(outcome(s, a)),
+            ),
+        ],
       ],
     );
   }
+}
+
+/// ✓ succeeded, ✗ failed, — denied/expired, … still running.
+class OutcomeIcon extends StatelessWidget {
+  const OutcomeIcon(this.status, {super.key});
+  final String status;
+  @override
+  Widget build(BuildContext context) => switch (status) {
+    'executed' || 'ok' || 'allowed' => const Icon(Icons.check_circle, color: Colors.green),
+    'failed' || 'error' => Icon(Icons.error, color: Theme.of(context).colorScheme.error),
+    'approved' || 'pending' || 'requested' => const Icon(Icons.hourglass_top),
+    _ => const Icon(Icons.remove_circle_outline, color: Colors.grey),
+  };
 }
 
 /// Shown while the device waits for a press on its hardware approval key.
@@ -256,8 +298,10 @@ class _Clients extends StatelessWidget {
         builder: (c) => TokenDialog(token: str(res['token'])),
       );
       onChanged();
-    } on ApiException catch (e) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorText(S.of(context), e))));
+      }
     }
   }
 
@@ -285,7 +329,13 @@ class _Clients extends StatelessWidget {
               key: Key('mcp-remove-${c['name']}'),
               icon: const Icon(Icons.delete_outline),
               onPressed: () async {
-                await client.mcpRemoveClient(str(c['name']));
+                final m = ScaffoldMessenger.of(context);
+                try {
+                  await client.mcpRemoveClient(str(c['name']));
+                  m.showSnackBar(SnackBar(content: Text(s('mcp.client.removed'))));
+                } catch (e) {
+                  m.showSnackBar(SnackBar(content: Text(errorText(s, e))));
+                }
                 onChanged();
               },
             ),
@@ -412,8 +462,9 @@ class _Audit extends StatelessWidget {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text('${str(e['tool'])} · ${str(e['outcome'])}'),
-            subtitle: Text(str(e['principal'])),
+            leading: OutcomeIcon(str(e['outcome'])),
+            title: Text(s('tool.name.${str(e['tool'])}', {}, str(e['tool']))),
+            subtitle: Text('${s('outcome.${str(e['outcome'])}', {}, str(e['outcome']))} · ${str(e['principal'])}'),
           ),
       ],
     );
@@ -428,8 +479,11 @@ class _Guide extends StatelessWidget {
     const snippet =
         '{\n  "mcpServers": {\n    "rp-gateway": {\n      "command": "ssh",\n'
         '      "args": ["-i", "~/.ssh/rp_mcp", "<user>@<device>", "rp-mcp", "--stdio"]\n    }\n  }\n}';
-    return Section(
-      title: s('mcp.guide'),
+    return ExpansionTile(
+      key: const Key('mcp-guide'),
+      title: Text(s('mcp.guide')),
+      subtitle: Text(s('mcp.guide.hint')),
+      childrenPadding: const EdgeInsets.symmetric(horizontal: 16),
       children: [
         const SelectableText(snippet, style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
         Align(

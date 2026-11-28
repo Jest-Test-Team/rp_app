@@ -19,12 +19,29 @@ class BleKeyRelay implements KeyRelay {
   BleKeyRelay({this.scanTime = const Duration(seconds: 8)});
   final Duration scanTime;
 
-  Future<String> _find() async {
-    final state = await UniversalBle.getBluetoothAvailabilityState();
-    if (state != AvailabilityState.poweredOn) {
-      throw KeyRelayException(KeyRelayError.unavailable, '$state');
-    }
+  /// iOS reports `unknown` until CoreBluetooth has started (and while the
+  /// permission prompt is open): wait for a settled state instead of giving up.
+  Future<void> _ready() async {
     await UniversalBle.requestPermissions();
+    var state = await UniversalBle.getBluetoothAvailabilityState();
+    if (state == AvailabilityState.unknown || state == AvailabilityState.resetting) {
+      state = await UniversalBle.availabilityStream
+          .firstWhere((s) => s != AvailabilityState.unknown && s != AvailabilityState.resetting)
+          .timeout(const Duration(seconds: 30), onTimeout: () => state);
+    }
+    if (state != AvailabilityState.poweredOn) {
+      throw KeyRelayException(KeyRelayError.unavailable, state.name);
+    }
+  }
+
+  Future<String> _find() async {
+    try {
+      await _ready();
+    } on KeyRelayException {
+      rethrow;
+    } catch (e) {
+      throw KeyRelayException(KeyRelayError.unavailable, '$e');
+    }
     final found = Completer<String>();
     final sub = UniversalBle.scanStream.listen((d) {
       final name = d.name ?? '';
@@ -42,11 +59,11 @@ class BleKeyRelay implements KeyRelay {
   @override
   Future<String> sign(String ask, {Duration timeout = const Duration(minutes: 2)}) async {
     final id = await _find();
-    await UniversalBle.connect(id, timeout: const Duration(seconds: 15));
     final lines = StreamController<String>();
     final buf = <int>[];
     StreamSubscription<Uint8List>? sub;
     try {
+      await UniversalBle.connect(id, timeout: const Duration(seconds: 15));
       await UniversalBle.discoverServices(id);
       sub = UniversalBle.characteristicValueStream(id, _tx, serviceId: _service).listen((data) {
         for (final b in data) {
@@ -72,6 +89,12 @@ class BleKeyRelay implements KeyRelay {
       throw const KeyRelayException(KeyRelayError.timeout);
     } on TimeoutException {
       throw const KeyRelayException(KeyRelayError.timeout);
+    } on KeyRelayException {
+      rethrow;
+    } catch (e) {
+      // Connect / GATT failures from the platform plugin: the key is near but
+      // the link broke. Report it instead of letting it escape the UI.
+      throw KeyRelayException(KeyRelayError.link, '$e');
     } finally {
       await sub?.cancel();
       await lines.close();

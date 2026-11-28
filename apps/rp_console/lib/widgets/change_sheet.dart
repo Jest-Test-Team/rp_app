@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../app/strings.dart';
 import '../core/api/client.dart';
-import '../core/api/models.dart';
 import '../core/changes/change_runner.dart';
 
 /// Review and apply one change. Returns true when it was kept.
@@ -16,12 +15,23 @@ Future<bool> showChange(
   Future<void> Function()? before,
 }) async {
   final runner = ChangeRunner(client);
+  final messenger = ScaffoldMessenger.of(context);
+  final s = S.of(context);
   final kept = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     builder: (_) => ChangeSheet(runner: runner, module: module, patch: patch, before: before),
   );
+  final msg = switch (runner.phase) {
+    Phase.confirmed => s('change.done.ok', {'module': s.module(module)}),
+    Phase.rolledBack => s('change.rolledback'),
+    Phase.failed => s('change.done.failed', {'module': s.module(module)}),
+    _ => null, // closed before applying: nothing happened
+  };
+  if (msg != null) {
+    messenger.showSnackBar(SnackBar(content: Text(msg)));
+  }
   return kept ?? false;
 }
 
@@ -122,33 +132,20 @@ class _ChangeSheetState extends State<ChangeSheet> {
             ListTile(
               dense: true,
               leading: const Icon(Icons.close, color: Colors.red),
-              title: Text(c.name),
-              subtitle: Text(c.detail),
+              title: Text(s('check.${c.name}', {}, c.detail.isEmpty ? c.name : c.detail)),
             ),
-          if (cs != null && cs.configDiff.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(s('change.diff'), style: Theme.of(context).textTheme.titleSmall),
-            _Diff(text: cs.configDiff),
-          ],
-          if (cs != null && cs.files.isNotEmpty)
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: Text('${s('change.files')} (${cs.files.length})'),
-              children: [for (final f in cs.files) ListTile(dense: true, title: Text(str(f['path'])))],
-            ),
-          if (cs != null && cs.checks.isNotEmpty && r.phase == Phase.review)
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: Text('${s('change.checks')} (${cs.checks.where((c) => !c.failed).length}/${cs.checks.length})'),
-              children: [
-                for (final c in cs.checks)
-                  ListTile(
-                    dense: true,
-                    leading: Icon(c.failed ? Icons.close : Icons.check, color: c.failed ? Colors.red : Colors.green),
-                    title: Text(c.name),
-                    subtitle: Text(c.detail),
-                  ),
-              ],
+          // What the person needs: whether it is safe and whether it worked.
+          // The raw configuration, file paths and check internals stay on the device.
+          if (cs != null && r.phase == Phase.review)
+            Card(
+              child: ListTile(
+                key: const Key('change-ready'),
+                leading: const Icon(Icons.verified_user_outlined, color: Colors.green),
+                title: Text(s('change.ready')),
+                subtitle: Text(
+                  s('change.ready.body', {'ok': cs.checks.where((c) => !c.failed).length, 'n': cs.checks.length}),
+                ),
+              ),
             ),
           const SizedBox(height: 16),
           Row(
@@ -186,36 +183,4 @@ class _ChangeSheetState extends State<ChangeSheet> {
   Widget _result(IconData i, String text, Key key) => Card(
     child: ListTile(key: key, leading: Icon(i), title: Text(text)),
   );
-}
-
-class _Diff extends StatelessWidget {
-  const _Diff({required this.text});
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final lines = text.split('\n').where((l) => !l.startsWith('---') && !l.startsWith('+++')).toList();
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText.rich(
-        TextSpan(
-          children: [
-            for (final l in lines)
-              TextSpan(
-                text: '$l\n',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  color: l.startsWith('+') ? Colors.green.shade700 : (l.startsWith('-') ? Colors.red.shade700 : null),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 }
