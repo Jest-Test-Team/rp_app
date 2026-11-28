@@ -20,6 +20,11 @@
 //!   an optional relay on GPIO26 (active high) power-cycles the gateway when
 //!   the watchdog trips. `CONSOLE` turns the USB link into a raw passthrough
 //!   to the console until Ctrl-] is typed three times.
+//! * sentry profile (Wi-Fi detection; radio receive-only): promiscuous
+//!   receive, hopping channels 1-13 every 250 ms; rp-board's sentry reports
+//!   deauth floods, evil twins of the IoT network and channel load. Nothing
+//!   is transmitted. Same logic as the ESP32-S3; the WROOM's PCB antenna
+//!   just hears a little less.
 
 #![no_std]
 #![no_main]
@@ -57,13 +62,13 @@ const PROFILE_OFFSET: u32 = 0xA000;
 const MAGIC: &[u8; 4] = b"RPK1";
 const PROFILE_MAGIC: &[u8; 4] = b"RPP1";
 
-/// No sentry here (the S3 with its antenna does that); csi switches and
-/// reports but does nothing else so far.
+/// csi switches and reports but does nothing else so far.
 fn supported() -> Profiles {
     Profiles::empty()
         .with(Profile::Approver)
         .with(Profile::Oob)
         .with(Profile::Honeypot)
+        .with(Profile::Sentry)
         .with(Profile::Csi)
 }
 
@@ -175,8 +180,11 @@ struct Pkt {
 }
 static FRAMES: Mutex<RefCell<heapless::Deque<Pkt, 32>>> = Mutex::new(RefCell::new(heapless::Deque::new()));
 static DROPPED: AtomicU32 = AtomicU32::new(0);
+/// Frames of any kind since the last drain (sentry channel load).
+static TRAFFIC: AtomicU32 = AtomicU32::new(0);
 
 fn on_packet(p: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
+    TRAFFIC.fetch_add(1, Ordering::Relaxed);
     // Management frames only (type bits 2-3 of the first byte = 0).
     if p.data.first().is_none_or(|fc| (fc >> 2) & 0b11 != 0) {
         return;
@@ -278,25 +286,31 @@ fn main() -> ! {
     let mut board = Board::new(key, "esp32", VERSION, supported(), stored);
 
     // honeypot: radio on, decoy access point and promiscuous receive.
+    // sentry: radio on, station mode (never associates), promiscuous receive.
     let mut radio = None;
     let mut decoy_status: Option<(bool, [u8; 6])> = None;
     let mut decoy_pass: heapless::String<32> = heapless::String::new();
-    if board.profile() == Profile::Honeypot {
-        let mut raw = [0u8; 16];
-        trng.read(&mut raw);
-        for b in raw {
-            let _ = write!(decoy_pass, "{b:02x}");
-        }
+    let sentry = board.profile() == Profile::Sentry;
+    if board.profile() == Profile::Honeypot || sentry {
         esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
         let timg0 = esp_hal::timer::timg::TimerGroup::new(p.TIMG0);
         esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
         let mut ctl = esp_radio::wifi::WifiController::new(p.WIFI, Default::default())
             .expect("Wi-Fi controller");
-        let name = board.decoy_ssid().unwrap_or(rp_board::DEFAULT_DECOY);
-        let started = start_decoy(&mut ctl, name, &decoy_pass);
-        let bssid = esp_radio::wifi::Interface::access_point().mac_address();
-        board.set_decoy_bssid(bssid);
-        decoy_status = Some((started.is_ok(), bssid));
+        if sentry {
+            ctl.set_config(&esp_radio::wifi::Config::Station(Default::default())).expect("station mode");
+        } else {
+            let mut raw = [0u8; 16];
+            trng.read(&mut raw);
+            for b in raw {
+                let _ = write!(decoy_pass, "{b:02x}");
+            }
+            let name = board.decoy_ssid().unwrap_or(rp_board::DEFAULT_DECOY);
+            let started = start_decoy(&mut ctl, name, &decoy_pass);
+            let bssid = esp_radio::wifi::Interface::access_point().mac_address();
+            board.set_decoy_bssid(bssid);
+            decoy_status = Some((started.is_ok(), bssid));
+        }
         let mut sniffer = ctl.sniffer();
         sniffer.set_receive_cb(on_packet);
         sniffer.set_promiscuous_mode(true).expect("promiscuous mode");
@@ -335,6 +349,9 @@ fn main() -> ! {
     }
 
     let mut buf = [0u8; 64];
+    let mut channel = 1u8;
+    let mut hop_at = 0u64;
+    let mut dropped_reported = 0u32;
     loop {
         let now = boot.elapsed().as_millis();
         if uart.read_ready() {
@@ -367,9 +384,29 @@ fn main() -> ! {
                 }
             }
         }
-        if radio.is_some() {
+        if let Some((ctl, _)) = radio.as_mut() {
+            if sentry {
+                // Count what arrived on the channel we are leaving.
+                board.on_traffic(TRAFFIC.swap(0, Ordering::Relaxed));
+            }
             while let Some(pkt) = critical_section::with(|cs| FRAMES.borrow_ref_mut(cs).pop_front()) {
                 board.on_frame(&pkt.data[..pkt.len as usize]);
+            }
+            if sentry {
+                if now >= hop_at {
+                    channel = channel % 13 + 1;
+                    let _ = ctl.set_channel(channel, esp_radio::wifi::SecondaryChannel::None);
+                    board.on_channel(channel);
+                    hop_at = now + 250;
+                }
+                let dropped = DROPPED.load(Ordering::Relaxed);
+                if dropped >= dropped_reported + 1000 {
+                    dropped_reported = dropped;
+                    UartOut(&mut uart).msg(KeyMsg::Log {
+                        level: Level::Warn,
+                        text: "sentry: busy air, some management frames were not inspected",
+                    });
+                }
             }
             // Let the Wi-Fi task run (beacons): a busy loop would starve it.
             // 2 ms is ~23 bytes at 115200, well inside the 128-byte RX FIFO.
